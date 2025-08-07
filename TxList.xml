@@ -1,0 +1,60 @@
+<CanUsbXml>
+	<Frame>
+		<ID>411</ID>
+		<Data>11 22 33 44 55 66 77 BB</Data>
+		<Period>0</Period>
+		<LogLevel>0</LogLevel>
+		<Favourite>1</Favourite>
+		<Comment>First CAN msg</Comment>
+	</Frame>	
+	<Frame>
+		<ID>2C7</ID>
+		<Data>AA BB CC 44 55 66 77 BB</Data>
+		<Period>0</Period>
+		<LogLevel>0</LogLevel>
+		<Favourite>1</Favourite>
+		<Color>red</Color>
+		<Bold>true</Bold>
+		<Comment>Second CAN msg</Comment>
+	</Frame>	
+	<Frame>
+		<ID>18CC07BA</ID>
+		<Data>AA 11 22 33 44 55 66 77</Data>
+		<Period>0</Period>
+		<LogLevel>0</LogLevel>
+		<Favourite>1</Favourite>
+		<Comment>Second CAN msg</Comment>
+	</Frame>	
+	<Frame>
+		<ID>477</ID>
+		<Data>00 00 00 00 00 C0 00 00</Data>
+		<Period>100</Period>
+		<LogLevel>0</LogLevel>
+		<Favourite>1</Favourite>
+		<Comment>Wakeup</Comment>
+	</Frame>
+	<Frame>
+		<ID>5E4</ID>
+		<Data>00 00 00 00 A8 00 00 00</Data>
+		<Period>1000</Period>
+		<LogLevel>0</LogLevel>
+		<Favourite>1</Favourite>
+		<Comment>Wakeup 2</Comment>
+	</Frame>	
+	<Frame>
+		<ID>478</ID>
+		<Data>00 00 00 00 00 00 00 00</Data>
+		<Period>100</Period>
+		<LogLevel>0</LogLevel>
+		<Favourite>1</Favourite>
+		<Comment>Wakeup 3</Comment>
+	</Frame>	
+	<Frame>
+		<ID>47A</ID>
+		<Data>00 01 40 00 00 00 00 00</Data>
+		<Period>100</Period>
+		<LogLevel>0</LogLevel>
+		<Favourite>1</Favourite>
+		<Comment>Wakeup 4</Comment>
+	</Frame>
+</CanUsbXml>
