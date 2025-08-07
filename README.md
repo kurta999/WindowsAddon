@@ -1,10 +1,8 @@
-This is a personal project for myself to improve my daily computer usage, particularly with programming and testing. I've implemented things what I really needed to be more productive and accomplish things faster. It's open source, because why not, maybe somebody will benefit from it one day.
+This is a personal project I started out of boredom during my free time at home. I wanted to explore some ideas and build tools to improve my daily computer usage—especially for programming and testing. It was created before the rise of AI tools, so while it was genuinely useful to me back then, parts of it feel a bit outdated now. Still, it's open source—because why not? Maybe someone will find it helpful one day.
 
-If you want to use/resuse some part(s) of the project, you have a question or an idea, feel free to open a Pull Request. Bugs and anti patterns can happen, as this is just a side project beside my full time job. I do not have the time to always retest everything when I change something, how it's done in a proper managed company - this is a side project on which I'm working alone without getting paid, things has to be functional quickly.
+If you want to use or reuse any part of the project, have a question, or want to contribute an idea, feel free to open a Pull Request. Bugs and anti-patterns may exist—this is just a side project I work on alone, outside of my full-time job. I don’t always have the time to retest everything like you'd expect in a well-managed team environment. My main focus is keeping things functional and moving fast.
 
 Unfinished, abandoned Qt port of this application is available here, has no meaning to port everything to Qt from my perspective: https://github.com/kurta999/QustomKeyboard
-
-If the project is useful for you and you're able, please consider small amount of donation over PayPal: nmsstulaj@gmail.com
 
 # Quick overview
 ### 1. For Automotive development:
