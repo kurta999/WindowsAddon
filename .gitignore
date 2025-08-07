@@ -1,0 +1,80 @@
+.metadata
+bin/
+tmp/
+*.tmp
+*.bak
+*.swp
+*~.nib
+local.properties
+.settings/language.settings.xml
+commitid.h
+.loadpath
+.recommenders
+
+# External tool builders
+.externalToolBuilders/
+
+# PyDev specific (Python IDE for Eclipse)
+*.pydevproject
+
+# Java annotation processor (APT)
+.factorypath
+
+# PDT-specific (PHP Development Tools)
+.buildpath
+
+# sbteclipse plugin
+.target
+
+# Tern plugin
+.tern-project
+
+# TeXlipse plugin
+.texlipse
+
+# STS (Spring Tool Suite)
+.springBeans
+
+# Code Recommenders
+.recommenders/
+
+# Scala IDE specific (Scala & Java development for Eclipse)
+.cache-main
+.scala_dependencies
+.worksheet
+Debug/
+Backup_Debug/
+Backup_Release/
+Release/
+TrueSTUDIO/
+Screenshots/
+
+# Visual Studio
+.vs/
+Win32/
+x64/
+*.aps
+logfile.txt
+*.db
+output.txt
+struct_in.txt
+struct_out.txt
+
+# Graphs
+Graphs/Temperature.html
+Graphs/Humidity.html
+Graphs/CO2.html
+Graphs/Lux.html
+Graphs/VOC.html
+Graphs/CCT.html
+Graphs/PM10.html
+Graphs/PM25.html
+
+# Linux
+build/
+
+# Unit tests
+UnitTests/x64
+
+#Special
+tools/

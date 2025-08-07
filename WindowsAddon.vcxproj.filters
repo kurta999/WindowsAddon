@@ -1,0 +1,546 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="Header Files\utils">
+      <UniqueIdentifier>{f41e40f0-647a-4f83-897d-d28b3d661e37}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\utils">
+      <UniqueIdentifier>{882f18e5-820e-4a28-94bf-3b18f0a483f7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="libs">
+      <UniqueIdentifier>{30ed3812-466e-43d1-b8a2-367882daa7dd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\gui">
+      <UniqueIdentifier>{89a830e2-9a23-4ada-8f00-2e8e92ec48f5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\gui">
+      <UniqueIdentifier>{3363a75f-de1b-4e74-a09a-a1371011e66d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="libs\enumser">
+      <UniqueIdentifier>{d5edb721-26b3-48dd-9bd3-a42ff132cae0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="libs\sha256">
+      <UniqueIdentifier>{234ba694-100f-4adb-9649-c1f75f35be86}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\interface">
+      <UniqueIdentifier>{9c6a47d6-f75b-4e2b-8481-01238fbe0e0c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="libs\bitfield">
+      <UniqueIdentifier>{8647ab3f-75a7-4ffa-ad5b-71ebfc9ddd50}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="libs\isotp">
+      <UniqueIdentifier>{b54c9ce8-326b-400e-bd2b-aae2a28aaa38}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\gui\CanPanel">
+      <UniqueIdentifier>{69c58e68-407d-4fdb-9ce4-a7b80105b5f1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\gui\CanPanel">
+      <UniqueIdentifier>{fceea4ce-640e-474c-bb44-903f99757bd7}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="libs\enumser\enumser.h">
+      <Filter>libs\enumser</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\EscaperPanel.hpp">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\gui_id.hpp">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\LogPanel.hpp">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\MainFrame.hpp">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\MainPanel.hpp">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\TrayIcon.hpp">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\commitid.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\WindowsAddon.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\CustomMacro.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\DatabaseLogic.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\DirectoryBackup.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\framework.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Logger.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\PathSeparator.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\PrintScreenSaver.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Resource.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Sensors.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Server.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Session.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Settings.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\targetver.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\utils\AsyncSerial.hpp">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="src\utils\CSingleton.hpp">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="src\pch.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\pch.hpp">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\ConfigurationBackup.hpp">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="resource.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="libs\sha256\sha256.h">
+      <Filter>libs\sha256</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Utils.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\FilePanel.hpp">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\DatabaseImpl.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\SerialTcpBackend.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\SerialPort.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TerminalHotkey.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\CryptoPrice.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\CanSerialPort.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\CanEntryHandler.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\StringToCEscaper.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\DebugPanel.hpp">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\CorsairHid.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\ILogHelper.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\IDatabase.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\ITcpMessageExecutor.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TcpMessageExecutor.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\CmdExecutorPanel.hpp">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\CmdExecutor.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\ICmdHelper.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\IdlePowerSaver.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="libs\bitfield\8byte.h">
+      <Filter>libs\bitfield</Filter>
+    </ClInclude>
+    <ClInclude Include="libs\bitfield\bitfield.h">
+      <Filter>libs\bitfield</Filter>
+    </ClInclude>
+    <ClInclude Include="libs\bitfield\read.h">
+      <Filter>libs\bitfield</Filter>
+    </ClInclude>
+    <ClInclude Include="libs\bitfield\write.h">
+      <Filter>libs\bitfield</Filter>
+    </ClInclude>
+    <ClInclude Include="libs\isotp\isotp.h">
+      <Filter>libs\isotp</Filter>
+    </ClInclude>
+    <ClInclude Include="libs\isotp\isotp_config.h">
+      <Filter>libs\isotp</Filter>
+    </ClInclude>
+    <ClInclude Include="libs\isotp\isotp_defines.h">
+      <Filter>libs\isotp</Filter>
+    </ClInclude>
+    <ClInclude Include="libs\isotp\isotp_user.h">
+      <Filter>libs\isotp</Filter>
+    </ClInclude>
+    <ClInclude Include="src\CanDeviceStm32.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\CanDeviceLawicel.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\ICanDevice.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ExceptionHandler.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\CanScriptHandler.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\ICanResultPanel.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\DidPanel.hpp">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\DidHandler.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\IDidLoader.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\CanPanel\CanPanel.hpp">
+      <Filter>Header Files\gui\CanPanel</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\CanPanel\pch.hpp">
+      <Filter>Header Files\gui\CanPanel</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\CanPanel\BitEditorDialog.hpp">
+      <Filter>Header Files\gui\CanPanel</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\CanPanel\CanLogPanel.hpp">
+      <Filter>Header Files\gui\CanPanel</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\CanPanel\CanScriptPanel.hpp">
+      <Filter>Header Files\gui\CanPanel</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\CanPanel\CanUdsRawDialog.hpp">
+      <Filter>Header Files\gui\CanPanel</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\CanPanel\CanSenderPanel.hpp">
+      <Filter>Header Files\gui\CanPanel</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\ICanObserver.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\BsecHandler.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\ICanEntry.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\IBasicGuiCustomization.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\ICmdExecutor.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\ISerialPort.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\SerialPortBase.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ImageRecognition.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\IDataSender.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Alarms.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\IAlarmEntryLoader.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\AlarmPanel.hpp">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\WorkingDays.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TimeTracker.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gui\TimeTrackerPanel.hpp">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="libs\enumser\enumser.cpp">
+      <Filter>libs\enumser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\EscaperPanel.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\LogPanel.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\MainFrame.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\MainPanel.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\TrayIcon.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\AsyncSerial.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\WindowsAddon.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CustomMacro.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\DatabaseLogic.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\DirectoryBackup.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Logger.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\PathSeparator.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\PrintScreenSaver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Sensors.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Server.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Session.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Settings.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\pch.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\ConfigurationBackup.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="libs\sha256\sha256.c">
+      <Filter>libs\sha256</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Utils.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\FilePanel.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\DatabaseImpl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\SerialTcpBackend.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\SerialPort.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TerminalHotkey.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CryptoPrice.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CanSerialPort.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CanEntryHandler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\StringToCEscaper.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\DebugPanel.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CorsairHid.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TcpMessageExecutor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\CmdExecutorPanel.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CmdExecutor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\IdlePowerSaver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="libs\bitfield\8byte.c">
+      <Filter>libs\bitfield</Filter>
+    </ClCompile>
+    <ClCompile Include="libs\bitfield\bitarray.c">
+      <Filter>libs\bitfield</Filter>
+    </ClCompile>
+    <ClCompile Include="libs\bitfield\bitfield.c">
+      <Filter>libs\bitfield</Filter>
+    </ClCompile>
+    <ClCompile Include="libs\bitfield\read.c">
+      <Filter>libs\bitfield</Filter>
+    </ClCompile>
+    <ClCompile Include="libs\bitfield\write.c">
+      <Filter>libs\bitfield</Filter>
+    </ClCompile>
+    <ClCompile Include="libs\isotp\isotp.c">
+      <Filter>libs\isotp</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CanDeviceStm32.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CanDeviceLawicel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ExceptionHandler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CanScriptHandler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\DidPanel.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\DidHandler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\CanPanel\CanPanel.cpp">
+      <Filter>Source Files\gui\CanPanel</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\CanPanel\BitEditorDialog.cpp">
+      <Filter>Source Files\gui\CanPanel</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\CanPanel\CanLogPanel.cpp">
+      <Filter>Source Files\gui\CanPanel</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\CanPanel\CanScriptPanel.cpp">
+      <Filter>Source Files\gui\CanPanel</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\CanPanel\CanSenderPanel.cpp">
+      <Filter>Source Files\gui\CanPanel</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\CanPanel\CanUdsRawDialog.cpp">
+      <Filter>Source Files\gui\CanPanel</Filter>
+    </ClCompile>
+    <ClCompile Include="src\BsecHandler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\SerialPortBase.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ImageRecognition.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Alarms.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\AlarmPanel.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\WorkingDays.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TimeTracker.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\TimeTrackerPanel.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="WindowsAddon.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="small.ico">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="WindowsAddon.ico">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="icon.ico">
+      <Filter>Resource Files</Filter>
+    </Image>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="settings.ini" />
+    <None Include="README.md" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="CMakeLists.txt" />
+    <Text Include="libs\CMakeLists.txt">
+      <Filter>libs</Filter>
+    </Text>
+  </ItemGroup>
+  <ItemGroup>
+    <Xml Include="RxList.xml" />
+    <Xml Include="TxList.xml" />
+    <Xml Include="Cmds.xml" />
+    <Xml Include="FrameMapping.xml" />
+    <Xml Include="DidList.xml" />
+    <Xml Include="Modbus.xml" />
+    <Xml Include="DataSender.xml" />
+    <Xml Include="Alarms.xml" />
+  </ItemGroup>
+</Project>

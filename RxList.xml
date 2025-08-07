@@ -1,0 +1,12 @@
+<CanUsbRxXml>
+	<Frame>
+		<ID>4EE</ID>
+		<LogLevel>0</LogLevel>
+		<Comment>Test 1</Comment>
+	</Frame>
+	<Frame>
+		<ID>2C7</ID>
+		<LogLevel>0</LogLevel>
+		<Comment>Test 2</Comment>
+	</Frame>
+</CanUsbRxXml>
