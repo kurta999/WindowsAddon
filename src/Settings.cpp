@@ -349,19 +349,21 @@ void Settings::SaveFile(bool write_default_macros) /* tried boost::ptree ini wri
         for(auto& i : DirectoryBackup::Get()->backups)
         {
             out << std::format("\n[Backup_{}]\n", cnt++);
-            out << "From = " << i->from.generic_wstring() << '\n';
+            std::wstring from_wstr = i->from.generic_wstring();
+            out << "From = " << std::string(from_wstr.begin(), from_wstr.end()) << '\n';
             key.clear();
             for(auto& x : i->to)
             {
-                key += x.generic_wstring() + '|';
+                key += x.generic_wstring() + L"|";
             }
+
             if(!key.empty() && key.back() == '|')
                 key.pop_back();
-            out << "To = " << key << '\n';
+            out << "To = " << std::string(key.begin(), key.end()) << '\n';
             key.clear();
             for(auto& x : i->ignore_list)
             {
-                key += x + '|';
+                key += x + L"|";
             }
             if(!key.empty() && key.back() == '|')
                 key.pop_back();

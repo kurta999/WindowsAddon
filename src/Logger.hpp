@@ -207,7 +207,9 @@ public:
 
                 std::wstring wfilename_only = std::wstring(str_filename.begin(), str_filename.end());
                 std::wstring wfunction_name = std::wstring(str_function.begin(), str_function.end());
-                fLog << std::format(HelperTraits<string_type>::log_str, now_truncated_to_ms, HelperTraits<string_type>::serverities[lvl], wfilename_only, location.line(), wfunction_name, formatted_msg);
+                std::wstring wstr = std::format(HelperTraits<string_type>::log_str, now_truncated_to_ms, HelperTraits<string_type>::serverities[lvl], wfilename_only, location.line(), wfunction_name, formatted_msg);
+                std::string line(wstr.begin(), wstr.end());
+                fLog << line;
             }
             else
             {

@@ -97,7 +97,7 @@ void Sensors::HandleMeasurements(std::vector<std::string>& meas_vec)
     int co = utils::stoi<int>(meas_vec[MEAS_INDEX_CO]);
 
 #ifdef _WIN32 /* TODO: remove once std::chrono::current_zone() support is added to clang */
-    const auto now = std::chrono::current_zone()->to_local(std::chrono::system_clock::now());
+    const auto now = std::chrono::system_clock::now();
 
     Measurement temp_meas(temp, hum, co2, voc, co, pm25, pm10, pressure, r, g, b, lux, cct, uv, std::move(std::format("{:%H:%M:%OS}", now)));
 

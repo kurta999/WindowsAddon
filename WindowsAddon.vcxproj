@@ -295,7 +295,7 @@
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>WXUSINGDLL=1;WIN32;_DEBUG;_WINDOWS;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;_SILENCE_CXX23_DENORM_DEPRECATION_WARNING;USE_HIDAPI;USE_BSEC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalIncludeDirectories>.\libs;.\src\interface;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <PrecompiledHeader>Use</PrecompiledHeader>
@@ -360,7 +360,7 @@
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>WXUSINGDLL=1;WIN32;NDEBUG;_WINDOWS;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;_SILENCE_CXX23_DENORM_DEPRECATION_WARNING;USE_HIDAPI;USE_BSEC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalIncludeDirectories>.\libs;.\src\interface;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <PrecompiledHeader>Use</PrecompiledHeader>

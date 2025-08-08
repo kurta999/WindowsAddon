@@ -49,7 +49,7 @@ TcpMessageReturn TcpMessageExecutor::HandleOpenExplorer(std::any param)
 	std::replace_if(m_recv_data, m_recv_data + m_len, [](char c) { return c == '/'; }, '\\');
 #ifdef _WIN32 
 	std::wstring params = std::wstring(m_recv_data + FILE_EXPLORER_OPEN_FRAME_LEN, m_recv_data + (strlen(m_recv_data)));
-	std::wstring cmdline = std::wstring(std::string(1, Settings::Get()->shared_drive_letter) + ":" + params);
+	std::wstring cmdline = std::wstring(1, Settings::Get()->shared_drive_letter) + L":" + params;
 	ShellExecuteW(NULL, L"open", L"explorer.exe", cmdline.c_str(), NULL, SW_NORMAL);
 #else
 
