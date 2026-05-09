@@ -12,12 +12,12 @@ enum class AlarmTrigger
 };
 
 AlarmTrigger AlarmStringToTrigger(const std::string& in);
-const std::string AlarmTriggerToString(AlarmTrigger trigger);
+std::string AlarmTriggerToString(AlarmTrigger trigger);
 
 class AlarmEntry
 {
 public:
-    AlarmEntry(const std::string& name_, AlarmTrigger trigger_, const std::string& trigger_key_, const std::string execute_, bool show_dialog_) :
+    AlarmEntry(const std::string& name_, AlarmTrigger trigger_, const std::string& trigger_key_, const std::string& execute_, bool show_dialog_) :
         name(name_), trigger(trigger_), trigger_key(trigger_key_), execute(execute_), show_dialog(show_dialog_)
     {
 

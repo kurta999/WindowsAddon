@@ -1,5 +1,6 @@
 #pragma once
 
+#include <mutex>
 
 template<class T>
 class CSingleton
@@ -15,18 +16,15 @@ public:
 
 	inline static T* Get()
 	{
-		if (m_Instance == nullptr)
-			m_Instance = new T;
+		static std::once_flag s_flag;
+		std::call_once(s_flag, []() { m_Instance = new T; });
 		return m_Instance;
 	}
 
 	inline static void Destroy()
 	{
-		if (m_Instance != nullptr)
-		{
-			delete m_Instance;
-			m_Instance = nullptr;
-		}
+		delete m_Instance;
+		m_Instance = nullptr;
 	}
 };
 

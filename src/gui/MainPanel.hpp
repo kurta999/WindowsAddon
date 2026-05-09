@@ -4,11 +4,15 @@
 #include <wx/spinctrl.h>
 #include <wx/statline.h>
 
-class MainPanel : public wxPanel
+#include "interface/ISensorObserver.hpp"
+
+class MainPanel : public wxPanel, public ISensorObserver
 {
 public:
 	MainPanel(wxFrame* parent);
-	 
+
+	void OnMeasurementUpdated(const Measurement& m, size_t recv_count) override;
+
 	void UpdateKeybindings();
 	void UpdateStatuses();
 	void UpdateCryptoPrices(float eth_buy, float eth_sell, float btc_buy, float btc_sell);
@@ -49,5 +53,6 @@ private:
 	wxStaticText* m_TcpBackendStatus = nullptr;
 	wxStaticText* m_KeyboardStatus = nullptr;
 	wxStaticText* m_CanStatus = nullptr;
+	wxStaticText* m_ModbusStatus = nullptr;
 	wxDECLARE_EVENT_TABLE();
 };

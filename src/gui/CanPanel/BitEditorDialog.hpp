@@ -2,11 +2,9 @@
 
 #include <wx/wx.h>
 #include <wx/grid.h>
+#include "CanModels.hpp"
 
 #define MAX_BITEDITOR_FIELDS      32
-
-class CanMap;
-using CanBitfieldInfo = std::vector<std::tuple<std::string, std::string, CanMap*>>;
 
 class BitEditorDialog : public wxDialog
 {

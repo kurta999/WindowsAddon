@@ -1,13 +1,21 @@
 #pragma once
 
 #include <string>
+#include <chrono>
+#include <functional>
+
+#include "IComPortConfig.hpp"
+#include "ITcpEndpointConfig.hpp"
 
 class CallbackAsyncSerial;
 
 using SerialRecvFunction = std::function<void(const char*, size_t)>;
 using SerialSendFunction = std::function<void(CallbackAsyncSerial&)>;
 
-class ISerialPort
+// Combines the common port lifecycle with the two focused config sub-interfaces.
+// Code that only needs TCP configuration can depend on ITcpEndpointConfig alone,
+// and code that only needs serial configuration can depend on IComPortConfig alone.
+class ISerialPort : public IComPortConfig, public ITcpEndpointConfig
 {
 public:
     virtual ~ISerialPort() = default;
@@ -19,22 +27,11 @@ public:
     virtual void DeInitInternal() = 0;
     virtual void SetEnabled(bool enable) = 0;
     virtual bool IsEnabled() const = 0;
-    virtual void SetTcp(bool is_tcp) = 0;
-    virtual bool IsTcp() const = 0;
-
-    virtual void SetTcpIp(const std::string& ip) = 0;
-    virtual const std::string& GetTcpIp() const = 0;
-    virtual void SetTcpPort(uint16_t port) = 0;
-    virtual uint16_t GetTcpPort() const = 0;
 
     virtual bool IsOpen() = 0;
     virtual void Open() = 0;
     virtual void Close() = 0;
 
-    virtual void SetComPort(uint16_t port) = 0;
-    virtual uint16_t GetComPort() const = 0;
-    virtual void SetBaudrate(uint32_t baudrate) = 0;
-    virtual uint32_t GetBaudrate() const = 0;
     virtual bool IsOk() const = 0;
     virtual bool IsErrorPresent() const = 0;
 };

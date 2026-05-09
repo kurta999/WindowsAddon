@@ -148,7 +148,7 @@ void TimeTrackerGrid::AddRow(TimeEntry* entry)
 
     std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
     m_grid->SetColLabelValue(TimeTrackerCol::TimeTracker_TotalWork,
-        wxString::Format("%lld [h] / %lld€", totalDuration.hours(), totalDuration.hours() * time_tracker->GetHourlyRate()));
+        wxString::Format("%lld [h] / %lldï¿½", totalDuration.hours(), totalDuration.hours() * time_tracker->GetHourlyRate()));
 
     // Map the entry to the grid row
     grid_to_entry[cnt] = entry;
@@ -306,9 +306,13 @@ TimeTrackerPanel::TimeTrackerPanel(wxFrame* parent) :
     v_sizer_0->Add(m_WorktimeMonth);
 
     wxArrayString years;
-    years.Add("2023");
-    years.Add("2024");
-    years.Add("2025");
+    {
+        int currentYear = boost::gregorian::day_clock::local_day().year();
+        for (int y = 2023; y <= currentYear; ++y)
+        {
+            years.Add(wxString::Format("%d", y));
+        }
+    }
     m_WorktimeYear = new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, years);
     m_WorktimeYear->SetStringSelection("2024");
     v_sizer_0->Add(m_WorktimeYear);
@@ -345,8 +349,8 @@ TimeTrackerPanel::TimeTrackerPanel(wxFrame* parent) :
         });
 
     std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
-    m_WorktimeMonth->SetSelection(time_tracker->m_Month - 1);
-    m_WorktimeYear->SetSelection(time_tracker->m_Year - 2023);
+    m_WorktimeMonth->SetSelection(time_tracker->GetMonth() - 1);
+    m_WorktimeYear->SetSelection(time_tracker->GetYear() - 2023);
 
     bSizer1->Add(v_sizer_0);
 
@@ -695,7 +699,7 @@ void TimeTrackerPanel::HandleInit()
 
     std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
 
-    boost::gregorian::date date(time_tracker->m_Year, time_tracker->m_Month, 1);
+    boost::gregorian::date date(time_tracker->GetYear(), time_tracker->GetMonth(), 1);
     boost::posix_time::ptime posixt(date);  // time defaults to 00:00:00
 
 	int offset = time_tracker->CalculateMapDateOffset(posixt);

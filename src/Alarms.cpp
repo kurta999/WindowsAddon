@@ -10,7 +10,7 @@ AlarmTrigger AlarmStringToTrigger(const std::string& in)
     return ret;
 }
 
-const std::string AlarmTriggerToString(AlarmTrigger trigger)
+std::string AlarmTriggerToString(AlarmTrigger trigger)
 {
     std::string ret = "Invalid";
     switch (trigger)
@@ -43,7 +43,7 @@ bool XmlAlarmEntryLoader::Load(const std::filesystem::path& path, std::vector<st
             auto name_cnt = std::ranges::count(e, name, &AlarmEntry::name);
             if (name_cnt != 0)
             {
-                LOG(LogLevel::Warning, "Alarm with name {} has been already added to the list, skipping this one", name_cnt);
+                LOG(LogLevel::Warning, "Alarm with name {} has been already added to the list, skipping this one", name);
                 continue;
             }
 
@@ -101,8 +101,7 @@ AlarmEntryHandler::AlarmEntryHandler(IAlarmEntryLoader& loader) :
     m_AlarmEntryLoader(loader)
 {
     m_worker = std::make_unique<std::jthread>(std::bind_front(&AlarmEntryHandler::WorkerThread, this));
-    if(m_worker)
-        utils::SetThreadName(*m_worker, "AlarmEntryHandler");
+    utils::SetThreadName(*m_worker, "AlarmEntryHandler");
 }
 
 AlarmEntryHandler::~AlarmEntryHandler()
@@ -112,7 +111,7 @@ AlarmEntryHandler::~AlarmEntryHandler()
         m_cv.notify_all();
     }
 
-    m_worker.reset(nullptr);
+    m_worker.reset();
 }
 
 void AlarmEntryHandler::Init()
@@ -122,8 +121,7 @@ void AlarmEntryHandler::Init()
 
 bool AlarmEntryHandler::Load()
 {
-    bool ret = LoadAlarms(default_alarms);
-    return ret;
+    return LoadAlarms(default_alarms);
 }
 
 bool AlarmEntryHandler::LoadAlarms(std::filesystem::path& path)
@@ -145,42 +143,34 @@ bool AlarmEntryHandler::SaveAlarms(std::filesystem::path& path)
 {
     if (path.empty())
         path = default_alarms;
-    bool ret = m_AlarmEntryLoader.Save(path, entries);
-    return ret;
+    return m_AlarmEntryLoader.Save(path, entries);
 }
 
 void AlarmEntryHandler::SetupAlarm(uint8_t id)
 {
-    MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
+    MyFrame* frame = static_cast<MyFrame*>(wxGetApp().GetTopWindow());
     if (frame)
     {
         frame->alarm_panel->ShowAlarmDialog();
-
         frame->alarm_panel->On10MsTimer();
         frame->alarm_panel->WaitForAlarmSemaphore();
-
-        std::string duration_str = frame->alarm_panel->GetAlarmTime();
-
         SetupAlarm(entries[id].get());
     }
 }
 
 void AlarmEntryHandler::SetupAlarm(AlarmEntry* entry)
 {
-    MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
+    MyFrame* frame = static_cast<MyFrame*>(wxGetApp().GetTopWindow());
     if (frame)
     {
         frame->alarm_panel->ShowAlarmDialog();
-
         frame->alarm_panel->On10MsTimer();
         frame->alarm_panel->WaitForAlarmSemaphore();
 
-        std::string duration_str = frame->alarm_panel->GetAlarmTime();
- 
+        const std::string duration_str = frame->alarm_panel->GetAlarmTime();
         entry->is_armed = true;
         entry->duration = ParseDurationStringToSeconds(duration_str);
 
-        MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
         std::unique_lock lock(frame->mtx);
         frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::AlarmSetup), entry->name, entry->duration });
     }
@@ -194,7 +184,7 @@ void AlarmEntryHandler::CancelAlarm(AlarmEntry* entry)
 
 void AlarmEntryHandler::HandleKeypress(const std::string& key, bool force_timer_call)
 {
-    MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
+    MyFrame* frame = static_cast<MyFrame*>(wxGetApp().GetTopWindow());
     if(frame)
     {
         frame->alarm_panel->ShowAlarmDialog();
@@ -203,15 +193,14 @@ void AlarmEntryHandler::HandleKeypress(const std::string& key, bool force_timer_
             frame->alarm_panel->On10MsTimer();
         frame->alarm_panel->WaitForAlarmSemaphore();
 
-        std::string duration_str = frame->alarm_panel->GetAlarmTime();
+        const std::string duration_str = frame->alarm_panel->GetAlarmTime();
 
-        auto it = std::find_if(entries.begin(), entries.end(), [&key](std::unique_ptr<AlarmEntry>& e) { return e->trigger_key == key; });
+        auto it = std::ranges::find_if(entries, [&key](const std::unique_ptr<AlarmEntry>& e) { return e->trigger_key == key; });
         if(it != entries.end())
         {
             (*it)->is_armed = true;
             (*it)->duration = ParseDurationStringToSeconds(duration_str);
 
-            MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
             std::unique_lock lock(frame->mtx);
             frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::AlarmSetup), (*it)->name, (*it)->duration });
         }
@@ -233,7 +222,7 @@ void AlarmEntryHandler::WorkerThread(std::stop_token token)
                     {
                         CustomMacro::Get()->SimulateKeypress(a->trigger_key, true);
 
-                        MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
+                        MyFrame* frame = static_cast<MyFrame*>(wxGetApp().GetTopWindow());
                         std::unique_lock lock(frame->mtx);
                         frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::AlarmTriggered), a->name });
                     }
@@ -242,7 +231,7 @@ void AlarmEntryHandler::WorkerThread(std::stop_token token)
             }
         }
         std::unique_lock lock{ m };
-        m_cv.wait_for(lock, token, 1000ms, []() {return 0 == 1;});
+        m_cv.wait_for(lock, token, 1000ms, []{ return false; });
     }
 }
 
@@ -251,30 +240,18 @@ std::chrono::seconds AlarmEntryHandler::ParseDurationStringToSeconds(const std::
     int hours = 0;
     int minutes = 0;
     int seconds = 0;
-    std::chrono::duration<int> ret = std::chrono::seconds(0);
+    std::chrono::seconds ret{};
     if(sscanf(input.c_str(), "%dh%dm%ds", &hours, &minutes, &seconds) == 3)
-    {
         ret = std::chrono::hours(hours) + std::chrono::minutes(minutes) + std::chrono::seconds(seconds);
-	}
     else if(sscanf(input.c_str(), "%dh%dm", &hours, &minutes) == 2)
-    {
         ret = std::chrono::hours(hours) + std::chrono::minutes(minutes);
-    }    
     else if(sscanf(input.c_str(), "%dm%ds", &minutes, &seconds) == 2)
-    {
         ret = std::chrono::minutes(minutes) + std::chrono::seconds(seconds);
-    }
-    else if(sscanf(input.c_str(), "%d[^hour]", &hours) == 1 && input.find("hour") != std::string::npos)
-    {
+    else if(sscanf(input.c_str(), "%d", &hours) == 1 && input.find("hour") != std::string::npos)
         ret = std::chrono::hours(hours);
-    }
-    else if(sscanf(input.c_str(), "%d[^min]", &minutes) == 1 && input.find("min") != std::string::npos)
-    {
+    else if(sscanf(input.c_str(), "%d", &minutes) == 1 && input.find("min") != std::string::npos)
         ret = std::chrono::minutes(minutes);
-    }    
-    else if(sscanf(input.c_str(), "%d[^sec]", &seconds) == 1 && input.find("sec") != std::string::npos)
-    {
+    else if(sscanf(input.c_str(), "%d", &seconds) == 1 && input.find("sec") != std::string::npos)
         ret = std::chrono::seconds(seconds);
-    }    
     return ret;
 }

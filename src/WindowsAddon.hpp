@@ -5,6 +5,7 @@
 #endif
 
 #include <wx/wx.h>
+#include "CanXmlLoaders.hpp"
 #include "CanEntryHandler.hpp"
 #include "CmdExecutor.hpp"
 #include "DidHandler.hpp"

@@ -25,7 +25,7 @@ void PathSeparator::ReplaceClipboard(ReplaceType type)
 			}
 
 			wxTheClipboard->SetData(new wxTextDataObject(input));
-			MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
+			MyFrame* frame = static_cast<MyFrame*>(wxGetApp().GetTopWindow());
 			{
 				std::lock_guard lock(frame->mtx);
 				frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::PathSeparatorsReplaced), std::move(input) });
@@ -37,8 +37,7 @@ void PathSeparator::ReplaceClipboard(ReplaceType type)
 
 void PathSeparator::ReplaceString(std::string& str)
 {
-	size_t pos = str.find('\\');
-	if(pos != std::string::npos)
+	if(str.find('\\') != std::string::npos)
 		boost::algorithm::replace_all(str, "\\", "/");
 	else
 		boost::algorithm::replace_all(str, "/", "\\");
@@ -46,13 +45,15 @@ void PathSeparator::ReplaceString(std::string& str)
 
 void PathSeparator::ReplaceStringFromWindowsToWsl(std::string& str)
 {
-	size_t pos = str.find("/mnt/");
-	if(pos != std::string::npos)
+	if(str.find("/mnt/") != std::string::npos)
 	{
 		boost::algorithm::replace_all(str, "/", "\\");
-		str.erase(0, 5); // erase mnt
-		str[0] = std::toupper(str[0]);
-		str.insert(1, ":");
+		str.erase(0, 5); // strip leading \mnt\ prefix (slashes already replaced above)
+		if(!str.empty())
+		{
+			str[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(str[0])));
+			str.insert(1, ":");
+		}
 	}
 	else
 	{

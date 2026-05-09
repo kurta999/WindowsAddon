@@ -1,8 +1,10 @@
 #include "pch.hpp"
 
-constexpr int HID_READ_TIMEOUT = 100;  /* Timeout value for hid_read_timeout function */
-constexpr int READ_DATA_BUFFER_SIZE = 64;  /* Buffer size for hid_read_timeout function */
-constexpr int MIN_READ_DATA_SIZE = 20;  /* Minimum data size which should be read if everything is OK */
+namespace {
+    constexpr int HID_READ_TIMEOUT      = 100;
+    constexpr int READ_DATA_BUFFER_SIZE = 64;
+    constexpr int MIN_READ_DATA_SIZE    = 20;
+}
 
 CorsairHid::~CorsairHid()
 {
@@ -60,7 +62,7 @@ const std::string& CorsairHid::GetDeviceName() const
     return m_DeviceName;
 }
 
-bool CorsairHid::IsOk()
+bool CorsairHid::IsOk() const
 {
     return m_IsOk;
 }
@@ -80,7 +82,7 @@ bool CorsairHid::ExecuteInitSequence()
     const char* hid_path = nullptr;
 
     hid_device_info* device_info = hid_enumerate(0, 0);  /* Enumerate over all HID devices */
-    while(device_info != NULL)
+    while(device_info != nullptr)
     {
         LOG(LogLevel::Normal, L"HID Device: \"{}\", VID: 0x{:X}, PID: 0x{:X}, UsagePage: 0x{:X}, Usage: 0x{:X}",
             device_info->product_string, device_info->vendor_id, device_info->product_id, device_info->usage_page, device_info->usage);
@@ -111,14 +113,14 @@ bool CorsairHid::ExecuteInitSequence()
         if(!hid_handle)
         {
             LOG(LogLevel::Critical, "hid_open failed");
-            m_DeviceName = "Corsair device is'nt found";
+            m_DeviceName = "Corsair device isn't found";
             return false;
         }
     }
     else
     {
         LOG(LogLevel::Error, "Unable to find Corsair K95");
-        m_DeviceName = "Corsair device is'nt found";
+        m_DeviceName = "Corsair device isn't found";
         return false;
     }
 #endif
@@ -133,8 +135,8 @@ void CorsairHid::DestroyWorkingThread()
     hid_handle = nullptr;
     hid_inited = false;
 
-    bool ret = hid_exit();
-    m_worker.reset(nullptr);
+    hid_exit();
+    m_worker.reset();
 #endif
 }
 
@@ -150,45 +152,44 @@ void CorsairHid::ThreadFunc(std::stop_token token)
         {
             uint8_t recv_data[READ_DATA_BUFFER_SIZE];
             int read_bytes = hid_read_timeout(hid_handle, recv_data, sizeof(recv_data), HID_READ_TIMEOUT);
-            if(read_bytes == 0xFFFFFFFF)
+            if(read_bytes < 0)
             {
                 m_IsOk = false;
                 LOG(LogLevel::Error, L"HID read error: {}", hid_error(hid_handle));
 
                 std::unique_lock lock{ m_Mutex };
-                m_cv.wait_for(lock, token, 1000ms, []() { return 0 == 1; }); /* Sleep for one second after error happend */
+                m_cv.wait_for(lock, token, 1000ms, []() { return false; }); /* Back-off after error */
             }
             else if(read_bytes > MIN_READ_DATA_SIZE)
             {
                 m_IsOk = true;
 
-                uint32_t gkey_code = *reinterpret_cast<uint32_t*>(recv_data + 16);
+                uint32_t gkey_code = 0;
+                std::memcpy(&gkey_code, recv_data + 16, sizeof(gkey_code));
                 auto it = corsair_GKeys.find(gkey_code);
                 if(it != corsair_GKeys.end())
-                {
                     HandleKeypress(it->second);
-                }
             }
                 
         }
 
         std::unique_lock lock{ m_Mutex };
-        m_cv.wait_for(lock, token, 1ms, []() { return 0 == 1; });
+        m_cv.wait_for(lock, token, 1ms, []() { return false; });
     }
 #endif
 }
 
 void CorsairHid::HandleKeypress(const std::string& key)
 {
-    std::chrono::steady_clock::time_point time_now = std::chrono::steady_clock::now();
-    uint64_t elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(time_now - last_keypress).count();
+    const auto time_now = std::chrono::steady_clock::now();
+    const uint64_t elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(time_now - last_keypress).count();
     if(elapsed > m_DebouncingInterval)
     {
-        last_keypress = std::chrono::steady_clock::now();
+        last_keypress = time_now;
         CustomMacro::Get()->SimulateKeypress(key);
     }
     else
     {
-        LOG(LogLevel::Normal, "Bouncing detected, keypress has been skippped. Elapsed time (ms): {}", elapsed);
+        LOG(LogLevel::Normal, "Bouncing detected, keypress has been skipped. Elapsed time (ms): {}", elapsed);
     }
 }

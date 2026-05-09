@@ -27,5 +27,7 @@ private:
     // !\param str [in] Reference to string where separators will be replaced
     void ReplaceString(std::string& str);    
     
+    // !\brief Convert a WSL path (/mnt/c/...) to a Windows path (C:\...)
+    // !\param str [in] Reference to string where the path will be converted
     void ReplaceStringFromWindowsToWsl(std::string& str);
 };

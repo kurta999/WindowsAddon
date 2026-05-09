@@ -40,7 +40,7 @@ void TcpMessageExecutor::SetCurrentSession(SharedSession session, size_t len)
 
 TcpMessageReturn TcpMessageExecutor::HandleAirQualityData(std::any param)
 {
-	Sensors::Get()->HandleAndForwardIncommingMeasurements(m_recv_data, m_len, m_session->sessionAddress.c_str());
+	Sensors::Get()->HandleAndForwardIncomingMeasurements(m_recv_data, m_len, m_session->sessionAddress.c_str());
 	return std::make_tuple(true, true, "");
 }
 
@@ -49,7 +49,9 @@ TcpMessageReturn TcpMessageExecutor::HandleOpenExplorer(std::any param)
 	std::replace_if(m_recv_data, m_recv_data + m_len, [](char c) { return c == '/'; }, '\\');
 #ifdef _WIN32 
 	std::wstring params = std::wstring(m_recv_data + FILE_EXPLORER_OPEN_FRAME_LEN, m_recv_data + (strlen(m_recv_data)));
-	std::wstring cmdline = std::wstring(std::string(1, Settings::Get()->shared_drive_letter) + ":" + params);
+
+	std::string shared_driver_letter = std::string(1, Settings::Get()->shared_drive_letter);
+	std::wstring cmdline = std::wstring(std::wstring(shared_driver_letter.begin(), shared_driver_letter.end()) + L":" + params);
 	ShellExecuteW(NULL, L"open", L"explorer.exe", cmdline.c_str(), NULL, SW_NORMAL);
 #else
 

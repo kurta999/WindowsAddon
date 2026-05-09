@@ -18,7 +18,7 @@ enum class CanDeviceType
 class CanData
 {
 public:
-    CanData(uint32_t frame_id_, uint8_t data_len, uint8_t* data_)
+    CanData(uint32_t frame_id_, uint8_t data_len, const uint8_t* data_)
         : frame_id(frame_id_), data_len(data_len)
     {
         memset(data, 0, sizeof(data));
@@ -57,7 +57,7 @@ public:
     void SetDevice(std::unique_ptr<ICanDevice>&& device);
 
     // !\brief Add CAN frame to TX queue
-    void AddToTxQueue(uint32_t frame_id, uint8_t data_len, uint8_t* data);
+    void AddToTxQueue(uint32_t frame_id, uint8_t data_len, const uint8_t* data);
 
     // !\brief Add CAN frame to RX queue
     void AddToRxQueue(uint32_t frame_id, uint8_t data_len, uint8_t* data);

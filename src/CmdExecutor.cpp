@@ -11,7 +11,8 @@ void Command::Execute()
     si.wShowWindow = IsConsoleHidden() ? SW_HIDE : SW_SHOW;  // Prevents cmd window from flashing.
 
     PROCESS_INFORMATION pi = { 0 };
-    BOOL fSuccess = CreateProcessA(NULL, (LPSTR)std::format("C:\\windows\\system32\\cmd.exe /c {}", cmd_to_execute).c_str(), NULL, NULL, TRUE, NORMAL_PRIORITY_CLASS, NULL, NULL, &si, &pi);
+    std::string cmd_line = std::format("C:\\windows\\system32\\cmd.exe /c {}", cmd_to_execute);
+    BOOL fSuccess = CreateProcessA(nullptr, cmd_line.data(), nullptr, nullptr, TRUE, NORMAL_PRIORITY_CLASS, nullptr, nullptr, &si, &pi);
     if(fSuccess)
     {
         CloseHandle(pi.hProcess);
@@ -28,10 +29,10 @@ void Command::Execute()
 
 void CmdExecutor::ExecuteByName(const std::string& page_name, const std::string& cmd_name)
 {
-    auto page_it = std::find_if(m_CommandPageNames.begin(), m_CommandPageNames.end(), [&page_name](const auto& item) { return item == page_name; });
+    auto page_it = std::ranges::find(m_CommandPageNames, page_name);
     if(page_it != m_CommandPageNames.end())
     {
-        int id = m_CommandPageNames.begin() - page_it;
+        ptrdiff_t id = page_it - m_CommandPageNames.begin();
 
         for(auto& col : m_Commands[id])
         {
@@ -151,7 +152,6 @@ void Command::SaveParametersToString()
             DBG("ret: %s", ret.c_str());
 
             size_t to_erase = ret.length();
-            size_t replace_len = to_erase;
 
             if(m_params.size() <= param_count)
             {
@@ -161,7 +161,7 @@ void Command::SaveParametersToString()
             new_cmd.erase(first_pos + param_len, to_erase);
             new_cmd.insert(first_pos + param_len, m_params[param_count]);
 
-            pos = first_pos + param_len + replace_len;
+            pos = first_pos + param_len + to_erase;
             ++param_count;
         }
         else
@@ -301,19 +301,16 @@ bool XmlCommandLoader::Load(const std::filesystem::path& path, CommandStorage& s
                             bg_color.has_value() ? utils::ColorStringToInt(*bg_color) : 0xFFFFFF,
                             is_bold.has_value() ? utils::stob(*is_bold) : false,
                             font_face.has_value() ? *font_face : "",
-                            scale.has_value() ? boost::lexical_cast<float>(*scale) : 1.0,
+                            scale.has_value() ? std::stof(*scale) : 1.0f,
                             minimum_size,
                             use_sizer.has_value() ? utils::stob(*use_sizer) : false,
                             add_to_prev_sizer.has_value() ? utils::stob(*add_to_prev_sizer) : false);
 
-                        if(command)
-                        {
-                            temp_cmds.push_back(command);
+                        temp_cmds.push_back(command);
 
-                            //DBG("loading command page: %d, col: %d\n", p, i);
-                            if(m_Mediator)
-                                m_Mediator->OnCommandLoaded(p, i, command);
-                        }
+                        //DBG("loading command page: %d, col: %d\n", p, i);
+                        if(m_Mediator)
+                            m_Mediator->OnCommandLoaded(p, i, command);
                     }
                     else if(v.first == "Separator")
                     {
@@ -352,16 +349,13 @@ bool XmlCommandLoader::Save(const std::filesystem::path& path, CommandStorage& s
     auto& root_node = pt.add_child("Commands", boost::property_tree::ptree{});
     root_node.put("Pages", std::to_string(storage.size()));
 
-    uint8_t page_cnt = 1;
-    for(auto& page : storage)
+    for(uint8_t page_cnt = 1; auto& page : storage)
     {
-        uint8_t cnt = 1;
-        
         auto& page_node = root_node.add_child(std::format("Page_{}", page_cnt), boost::property_tree::ptree{});
         page_node.put("<xmlattr>.name", names[page_cnt - 1]);
         page_node.put("<xmlattr>.icon", icons[page_cnt - 1]);
         page_node.put("Columns", std::to_string(page.size()));
-        for(auto& col : page)
+        for(uint8_t cnt = 1; auto& col : page)
         {
             auto& col_node = page_node.add_child(std::format("Col_{}", cnt), boost::property_tree::ptree{});
             for(auto& i : col)
@@ -395,7 +389,7 @@ bool XmlCommandLoader::Save(const std::filesystem::path& path, CommandStorage& s
                         }
                         else if constexpr(std::is_same_v<T, Separator>)
                         {
-                            auto& separator_node = col_node.add("Separator", c.width);
+                            col_node.add("Separator", c.width);
                         }
                         else
                             static_assert(always_false_v<T>, "XmlCommandLoader::Save Bad visitor!");
@@ -430,7 +424,7 @@ void CmdExecutor::SetMediator(ICmdHelper* mediator)
 
 void CmdExecutor::AddCommand(uint8_t page, uint8_t col, Command cmd)
 {
-    std::shared_ptr<Command> cmd_ptr = std::make_shared<Command>(cmd);
+    std::shared_ptr<Command> cmd_ptr = std::make_shared<Command>(std::move(cmd));
     if(AddItem(page, col, std::move(cmd_ptr)))
     {
         if(m_CmdMediator)
@@ -452,9 +446,9 @@ void CmdExecutor::AddSeparator(uint8_t page, uint8_t col, Separator sep)
 
 bool CmdExecutor::AddItem(uint8_t page, uint8_t col, std::shared_ptr<Command>&& cmd)
 {
-    if(col <= m_Commands.size())
+    if(page <= m_Commands.size() && col <= m_Commands[page - 1].size())
     {
-        m_Commands[page - 1][col - 1].push_back(cmd);
+        m_Commands[page - 1][col - 1].push_back(std::move(cmd));
         return true;
     }
     return false;
@@ -479,7 +473,7 @@ void CmdExecutor::AddPage(uint8_t page, uint8_t dest_index)
     cmd_types.push_back(std::make_shared<Command>("New cmd, empty", "& ping 127.0.0.1 -n 3 > nul", "", false, 0x33FF33, 0xFFFFFF, false, "", 2.0f));
     temp_cmds_per_page.push_back(std::move(cmd_types));
 
-    m_Commands.insert(m_Commands.begin() + dest_index, temp_cmds_per_page);
+    m_Commands.insert(m_Commands.begin() + dest_index, std::move(temp_cmds_per_page));
     m_CommandPageNames.insert(m_CommandPageNames.begin() + dest_index, "New Page");
     m_CommandPageIcons.insert(m_CommandPageIcons.begin() + dest_index, "wxART_HARDDISK");
 }
@@ -510,7 +504,7 @@ void CmdExecutor::CopyPage(uint8_t page, uint8_t dest_index)
         }
         temp_cmds_per_page.push_back(std::move(cmd_types));
     }
-    m_Commands.insert(m_Commands.begin() + dest_index, temp_cmds_per_page);
+    m_Commands.insert(m_Commands.begin() + dest_index, std::move(temp_cmds_per_page));
     m_CommandPageNames.insert(m_CommandPageNames.begin() + dest_index, m_CommandPageNames[page]);
     m_CommandPageIcons.insert(m_CommandPageIcons.begin() + dest_index, m_CommandPageIcons[page]);
 }
@@ -567,53 +561,53 @@ CommandPageIcons& CmdExecutor::GetPageIcons()
 
 void CmdExecutor::WriteDefaultCommandsFile()
 {
-    std::string file_content = "<Commands>\
-  <Pages>2</Pages>\
-  <Page_1 name = \"Board\">\
-    <Columns>4</Columns>\
-    <Col_1>\
-	    <Cmd>\
-        <Name>Directory</Name>\
-        <Execute>cd C:\\ & dir & ping 127.0.0.1 -n [({PARAM:3})] > nul</Execute>\
-        <Color>0xFF0000</Color>\
-        <BackgroundColor>green</BackgroundColor>\
-        <Bold>true</Bold>\
-        <Scale>2.0</Scale>\
-      </Cmd>\
-	  <Cmd>\
-        <Name>Set date</Name>\
-        <Execute>cd C:\\ & dir & ping 127.0.0.1 -n 3 > nul</Execute>\
-        <Color>0xFF0000</Color>\
-        <BackgroundColor>green</BackgroundColor>\
-        <Bold>true</Bold>\
-        <Scale>2.0</Scale>\
-      </Cmd>\
-	    <Cmd>cd ..</Cmd>\
-      <Separator>4</Separator>\
-      <Cmd>cd2 ..</Cmd>\
-    </Col_1>  \
-    <Col_2>\
-	    <Cmd>dir C:</Cmd>\
-	    <Cmd>cd ../..</Cmd>\
-    </Col_2>\
-  </Page_1>\
-  <Page_2 name = \"Liunx VM\">\
-    <Columns>2</Columns>\
-    <Col_1>\
-      <Cmd>\
-        <Name>Print directory</Name>\
-        <Execute>cd C:\\ & dir & ping 127.0.0.1 -n 3 > nul</Execute>\
-        <Color>0xFF0000</Color>\
-        <BackgroundColor>green</BackgroundColor>\
-        <Bold>true</Bold>\
-        <Scale>2.0</Scale>\
-      </Cmd>\
-    </Col_1>>\
-    </Page_2>\
-</Commands>";
+    std::string_view file_content = R"xml(<Commands>
+  <Pages>2</Pages>
+  <Page_1 name="Board">
+    <Columns>4</Columns>
+    <Col_1>
+      <Cmd>
+        <Name>Directory</Name>
+        <Execute>cd C:\ &amp; dir &amp; ping 127.0.0.1 -n [({PARAM:3})] > nul</Execute>
+        <Color>0xFF0000</Color>
+        <BackgroundColor>green</BackgroundColor>
+        <Bold>true</Bold>
+        <Scale>2.0</Scale>
+      </Cmd>
+      <Cmd>
+        <Name>Set date</Name>
+        <Execute>cd C:\ &amp; dir &amp; ping 127.0.0.1 -n 3 > nul</Execute>
+        <Color>0xFF0000</Color>
+        <BackgroundColor>green</BackgroundColor>
+        <Bold>true</Bold>
+        <Scale>2.0</Scale>
+      </Cmd>
+      <Cmd>cd ..</Cmd>
+      <Separator>4</Separator>
+      <Cmd>cd2 ..</Cmd>
+    </Col_1>
+    <Col_2>
+      <Cmd>dir C:</Cmd>
+      <Cmd>cd ../..</Cmd>
+    </Col_2>
+  </Page_1>
+  <Page_2 name="Linux VM">
+    <Columns>2</Columns>
+    <Col_1>
+      <Cmd>
+        <Name>Print directory</Name>
+        <Execute>cd C:\ &amp; dir &amp; ping 127.0.0.1 -n 3 > nul</Execute>
+        <Color>0xFF0000</Color>
+        <BackgroundColor>green</BackgroundColor>
+        <Bold>true</Bold>
+        <Scale>2.0</Scale>
+      </Cmd>
+    </Col_1>
+  </Page_2>
+</Commands>)xml";
     std::ofstream out(COMMAND_FILE_PATH, std::ofstream::binary);
     if(out)
-        out << file_content;
+        out.write(file_content.data(), static_cast<std::streamsize>(file_content.size()));
     else
         LOG(LogLevel::Error, "Failed to write default commands file!");
 }

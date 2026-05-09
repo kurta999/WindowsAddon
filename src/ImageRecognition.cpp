@@ -2,7 +2,6 @@
 
 namespace ImageRecognition
 {
-HMONITOR primaryMonitor;
 
 bool FindImageOnScreen(const std::string& image_name, int& x, int& y)
 {
@@ -14,21 +13,22 @@ bool FindImageOnScreen(const std::string& image_name, int& x, int& y)
     }
 
     // Get the handle to the primary monitor
-    primaryMonitor = MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
-
+    HMONITOR primaryMonitor = MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
 
     // Get the handle to the secondary monitor, if it exists
     HMONITOR secondaryMonitor = NULL;
     int  monitor_count = GetSystemMetrics(SM_CMONITORS);
     if(monitor_count > 1) {
+        struct MonitorSearchData { HMONITOR primary; HMONITOR* secondary; };
+        MonitorSearchData searchData{ primaryMonitor, &secondaryMonitor };
         EnumDisplayMonitors(NULL, NULL, [](HMONITOR monitor, HDC, LPRECT, LPARAM lParam) -> BOOL {
-            HMONITOR* secondaryMonitorPtr = reinterpret_cast<HMONITOR*>(lParam);
-            if(monitor != primaryMonitor) {
-                *secondaryMonitorPtr = monitor;
+            auto* data = reinterpret_cast<MonitorSearchData*>(lParam);
+            if(monitor != data->primary) {
+                *data->secondary = monitor;
                 return FALSE; // Stop enumeration
             }
             return TRUE; // Continue enumeration
-            }, reinterpret_cast<LPARAM>(&secondaryMonitor));
+            }, reinterpret_cast<LPARAM>(&searchData));
     }
 
     // Capture a screenshot from the primary monitor
@@ -37,16 +37,16 @@ bool FindImageOnScreen(const std::string& image_name, int& x, int& y)
     int primaryScreenWidth = GetDeviceCaps(primaryMonitorDC, HORZRES) * monitor_count;
     int primaryScreenHeight = GetDeviceCaps(primaryMonitorDC, VERTRES);
     HBITMAP primaryScreenshotBitmap = CreateCompatibleBitmap(primaryMonitorDC, primaryScreenWidth, primaryScreenHeight);
-    SelectObject(primaryScreenshotDC, primaryScreenshotBitmap);
+    HBITMAP oldBitmap = static_cast<HBITMAP>(SelectObject(primaryScreenshotDC, primaryScreenshotBitmap));
     BitBlt(primaryScreenshotDC, 0, 0, primaryScreenWidth, primaryScreenHeight, primaryMonitorDC, 0, 0, SRCCOPY | CAPTUREBLT);
 
     cv::Mat primaryScreenshotMat = cv::Mat(primaryScreenHeight, primaryScreenWidth, CV_8UC3);
-    auto aaa = (BITMAPINFOHEADER{ sizeof(BITMAPINFOHEADER), primaryScreenshotMat.cols, -primaryScreenshotMat.rows, 1, 24, BI_RGB, 0, 0, 0, 0, });
-    GetDIBits(primaryMonitorDC, primaryScreenshotBitmap, 0, primaryScreenshotMat.rows, primaryScreenshotMat.data, (BITMAPINFO*)&aaa, DIB_RGB_COLORS);
-    SelectObject(primaryMonitorDC, primaryScreenshotBitmap);
+    BITMAPINFOHEADER bitmapInfo{ sizeof(BITMAPINFOHEADER), primaryScreenshotMat.cols, -primaryScreenshotMat.rows, 1, 24, BI_RGB, 0, 0, 0, 0, 0 };
+    GetDIBits(primaryMonitorDC, primaryScreenshotBitmap, 0, primaryScreenshotMat.rows, primaryScreenshotMat.data, (BITMAPINFO*)&bitmapInfo, DIB_RGB_COLORS);
+    SelectObject(primaryScreenshotDC, oldBitmap);
     DeleteDC(primaryMonitorDC);
+    DeleteDC(primaryScreenshotDC);
     DeleteObject(primaryScreenshotBitmap);
-    ReleaseDC(NULL, primaryMonitorDC);
 
 
     /*

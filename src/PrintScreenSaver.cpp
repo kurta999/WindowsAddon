@@ -2,11 +2,12 @@
 
 //#define SAVE_BMP_TOO
 
-constexpr size_t MAX_TIMESTAMP_LEN = 80;
+namespace {
+    constexpr size_t MAX_TIMESTAMP_LEN = 80;
+}
 
 void PrintScreenSaver::Init()
 {
-    //SaveScreenshot();
 }
 
 void PrintScreenSaver::SaveScreenshot()
@@ -14,7 +15,7 @@ void PrintScreenSaver::SaveScreenshot()
     if(screenshot_future.valid())
         screenshot_future.get();
 
-    screenshot_future = std::async(&PrintScreenSaver::DoSave, this);
+    screenshot_future = std::async(std::launch::async, &PrintScreenSaver::DoSave, this);
 }
 
 void PrintScreenSaver::FormatTimestamp(char* buf, size_t len)
@@ -32,10 +33,10 @@ void PrintScreenSaver::FormatTimestamp(char* buf, size_t len)
 
 void PrintScreenSaver::DoSave()
 {
-    std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
+    const auto t1 = std::chrono::steady_clock::now();
 #ifdef _WIN32
-    OpenClipboard(NULL);
-    HGLOBAL ClipboardDataHandle = (HGLOBAL)GetClipboardData(CF_DIB);
+    OpenClipboard(nullptr);
+    HGLOBAL ClipboardDataHandle = static_cast<HGLOBAL>(GetClipboardData(CF_DIB));
     if(!ClipboardDataHandle)
     {
         // Clipboard object is not a DIB, and is not auto-convertible to DIB
@@ -43,72 +44,80 @@ void PrintScreenSaver::DoSave()
         return;
     }
 
-    BITMAPINFOHEADER* BitmapInfoHeader = (BITMAPINFOHEADER*)GlobalLock(ClipboardDataHandle);
-    assert(BitmapInfoHeader); // This can theoretically fail if mapping the HGLOBAL into local address space fails. Very pathological, just act as if it wasn't a bitmap in the clipboard.
+    BITMAPINFOHEADER* BitmapInfoHeader = static_cast<BITMAPINFOHEADER*>(GlobalLock(ClipboardDataHandle));
+    if(!BitmapInfoHeader)
+    {
+        CloseClipboard();
+        return;
+    }
 
-    SIZE_T ClipboardDataSize = GlobalSize(ClipboardDataHandle);
-    assert(ClipboardDataSize >= sizeof(BITMAPINFOHEADER)); // Malformed data. While older DIB formats exist (e.g. BITMAPCOREHEADER), they are not valid data for CF_DIB; it mandates a BITMAPINFO struct. If this fails, just act as if it wasn't a bitmap in the clipboard.
+    const SIZE_T ClipboardDataSize = GlobalSize(ClipboardDataHandle);
+    if(ClipboardDataSize < sizeof(BITMAPINFOHEADER))
+    {
+        // Malformed data — CF_DIB mandates a BITMAPINFO struct
+        GlobalUnlock(ClipboardDataHandle);
+        CloseClipboard();
+        return;
+    }
 
-    INT PixelDataOffset = GetPixelDataOffsetForPackedDIB(BitmapInfoHeader);
-    size_t TotalBitmapFileSize = sizeof(BITMAPFILEHEADER) + ClipboardDataSize;
+    const INT PixelDataOffset = GetPixelDataOffsetForPackedDIB(BitmapInfoHeader);
+    const size_t TotalBitmapFileSize = sizeof(BITMAPFILEHEADER) + ClipboardDataSize;
 
     BITMAPFILEHEADER BitmapFileHeader = {};
-    BitmapFileHeader.bfType = 0x4D42;
-    BitmapFileHeader.bfSize = (DWORD)TotalBitmapFileSize; // Will fail if bitmap size is nonstandard >4GB
+    BitmapFileHeader.bfType    = 0x4D42; // 'BM' signature
+    BitmapFileHeader.bfSize    = static_cast<DWORD>(TotalBitmapFileSize);
     BitmapFileHeader.bfOffBits = sizeof(BITMAPFILEHEADER) + PixelDataOffset;
+
+    // Copy all clipboard data into local buffers before releasing the clipboard
+    std::vector<unsigned char> clipboard_bmp;
+    clipboard_bmp.reserve(TotalBitmapFileSize);
+    std::copy(reinterpret_cast<const unsigned char*>(&BitmapFileHeader),
+              reinterpret_cast<const unsigned char*>(&BitmapFileHeader) + sizeof(BITMAPFILEHEADER),
+              std::back_inserter(clipboard_bmp));
+    std::copy(reinterpret_cast<const unsigned char*>(BitmapInfoHeader),
+              reinterpret_cast<const unsigned char*>(BitmapInfoHeader) + ClipboardDataSize,
+              std::back_inserter(clipboard_bmp));
+
+    GlobalUnlock(ClipboardDataHandle);
     CloseClipboard();
-    GlobalUnlock(BitmapInfoHeader);
 
     char buf[MAX_TIMESTAMP_LEN];
     FormatTimestamp(buf, MAX_TIMESTAMP_LEN);
-#ifdef SAVE_BMP_TOO
-    HANDLE FileHandle = CreateFileA((std::string(buf) + ".bmp").c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if(FileHandle != INVALID_HANDLE_VALUE)
-    {
-        DWORD dummy = 0;
-        BOOL Success = true;
-        Success &= WriteFile(FileHandle, &BitmapFileHeader, sizeof(BITMAPFILEHEADER), &dummy, NULL);
-        Success &= WriteFile(FileHandle, BitmapInfoHeader, (DWORD)ClipboardDataSize, &dummy, NULL);
-        Success &= CloseHandle(FileHandle);
-        if(Success)
-        {
-            wprintf(L"File saved.\r\n");
-        }
-    }
-#endif
-    std::vector<unsigned char> png;
-    std::vector<unsigned char> clipboard_bmp;
-    std::vector<unsigned char> bmp_to_encode;
-    std::copy((char*)(&BitmapFileHeader), (char*)(&BitmapFileHeader) + sizeof(BITMAPFILEHEADER), std::back_inserter(clipboard_bmp));
-    std::copy((char*)(BitmapInfoHeader), (char*)(BitmapInfoHeader)+ClipboardDataSize, std::back_inserter(clipboard_bmp));
 
-    unsigned w_, h_;
-    unsigned error = decodeBMP(bmp_to_encode, w_, h_, clipboard_bmp);
-    unsigned long error_code = lodepng::encode(png, bmp_to_encode, BitmapInfoHeader->biWidth, BitmapInfoHeader->biHeight, LCT_RGBA, 8);
+    std::vector<unsigned char> png;
+    std::vector<unsigned char> bmp_to_encode;
+    unsigned w_ = 0, h_ = 0;
+    const unsigned decode_error = decodeBMP(bmp_to_encode, w_, h_, clipboard_bmp);
+    if(decode_error != 0)
+    {
+        LOG(LogLevel::Error, "Failed to decode BMP from clipboard, error: {}", decode_error);
+        MyFrame* frame = static_cast<MyFrame*>(wxGetApp().GetTopWindow());
+        std::lock_guard lock(frame->mtx);
+        frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::ScreenshotSaveFailed) });
+        return;
+    }
+
+    unsigned long error_code = lodepng::encode(png, bmp_to_encode, w_, h_, LCT_RGBA, 8);
 
     std::string save_path = screenshot_path.string() + "\\" + buf;
     if(!error_code)
         error_code = lodepng::save_file(png, save_path.c_str());
 
-    std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
-    int64_t dif = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
-    if(!error_code)
-    {
-        LOG(LogLevel::Notification, "Image saved to {}", save_path);
-    }
-    else
-    {
-        LOG(LogLevel::Error, "Failed to save image from the clipboard!");
-    }
+    const auto t2 = std::chrono::steady_clock::now();
+    const int64_t dif = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 
-    MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
+    if(!error_code)
+        LOG(LogLevel::Notification, "Image saved to {}", save_path);
+    else
+        LOG(LogLevel::Error, "Failed to save image from the clipboard!");
+
+    MyFrame* frame = static_cast<MyFrame*>(wxGetApp().GetTopWindow());
     {
         std::lock_guard lock(frame->mtx);
         if(!error_code)
             frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::ScreenshotSaved), dif, std::move(save_path) });
         else
             frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::ScreenshotSaveFailed) });
-
     }
 #endif
 }
@@ -161,14 +170,14 @@ INT PrintScreenSaver::GetPixelDataOffsetForPackedDIB(const BITMAPINFOHEADER* Bit
 //output image is always given in RGBA (with alpha channel), even if it's a BMP without alpha channel
 unsigned PrintScreenSaver::decodeBMP(std::vector<unsigned char>& image, unsigned& w, unsigned& h, const std::vector<unsigned char>& bmp)
 {
-    static const unsigned MINHEADER = 54; //minimum BMP header size
+    constexpr unsigned MINHEADER = 54; // minimum BMP header size
 
-    if(bmp.size() < MINHEADER) return -1;
+    if(bmp.size() < MINHEADER) return 4;
     if(bmp[0] != 'B' || bmp[1] != 'M') return 1; //It's not a BMP file if it doesn't start with marker 'BM'
     unsigned pixeloffset = bmp[10] + 256 * bmp[11]; //where the pixel data starts
     //read width and height from BMP header
     w = bmp[18] + bmp[19] * 256;
-    h = (signed short)(bmp[22] + bmp[23] * 256);
+    h = static_cast<int16_t>(bmp[22] + bmp[23] * 256);
     //read number of channels from BMP header
     if(bmp[28] != 24 && bmp[28] != 32) return 2; //only 24-bit and 32-bit BMPs are supported.
     unsigned numChannels = bmp[28] / 8;

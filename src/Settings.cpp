@@ -30,6 +30,7 @@ void Settings::LoadFile()
                 utils::ini::ReadValueIfexists(opt_section, "UsePerApplicationMacros", CustomMacro::Get()->use_per_app_macro);
                 utils::ini::ReadValueIfexists(opt_section, "UseAdvancedKeyBinding", CustomMacro::Get()->advanced_key_binding);
                 utils::ini::ReadValueIfexists(opt_section, "BringToForegroundKey", CustomMacro::Get()->bring_to_foreground_key);
+                utils::ini::ReadValueIfexists(opt_section, "ScriptLauncherKey", ScriptLauncher::Get()->launcher_key);
             }
         }
 
@@ -221,6 +222,8 @@ void Settings::SaveFile(bool write_default_macros) /* tried boost::ptree ini wri
     out << "\n";
     out << "# If set to valid key, pressing this key will bring this application to foreground or minimize it to the tray\n";
     out << "BringToForegroundKey = " << CustomMacro::Get()->bring_to_foreground_key << "\n";
+    out << "# Key to launch (.py, .js) scripts from file explorer\n";
+    out << "ScriptLauncherKey = " << ScriptLauncher::Get()->launcher_key << "\n";
     out << "\n";
 
     if(!write_default_macros)  /* True if settings.ini file doesn't exists - write a few macro lines here as example */
@@ -245,7 +248,7 @@ void Settings::SaveFile(bool write_default_macros) /* tried boost::ptree ini wri
                 for(auto& k : x.second)
                 {
                     IKey* p = k.get();
-                    key += p->GenerateText(true);
+                    key += p->GenerateText(TextFormat::Ini);
                 }
                 out << key << '\n';
                 key.clear();
@@ -260,7 +263,7 @@ void Settings::SaveFile(bool write_default_macros) /* tried boost::ptree ini wri
         out << "\n";
         out << "[Keys_Macro1]\n";
         out << "AppName = Notepad\n";
-        out << "NUM_1 = BIND_NAME[close notepad++] KEY_TYPE[test string from WindowsAddon.exe] DELAY[100] KEY_TYPE[Closing window...] DELAY[100-3000] KEY_SEQ[LALT+F4] DELAY[100] KEY_SEQ[RIGHT] KEY_SEQ[ENTER]\n";
+        out << "NUM_1 = BIND_NAME[close notepad++] KEY_TYPE[test string from WindowsHelper.exe] DELAY[100] KEY_TYPE[Closing window...] DELAY[100-3000] KEY_SEQ[LALT+F4] DELAY[100] KEY_SEQ[RIGHT] KEY_SEQ[ENTER]\n";
     }
 
     out << "\n";
@@ -349,19 +352,19 @@ void Settings::SaveFile(bool write_default_macros) /* tried boost::ptree ini wri
         for(auto& i : DirectoryBackup::Get()->backups)
         {
             out << std::format("\n[Backup_{}]\n", cnt++);
-            out << "From = " << i->from.generic_wstring() << '\n';
+            out << "From = " << i->from.generic_string() << '\n';
             key.clear();
             for(auto& x : i->to)
             {
-                key += x.generic_wstring() + '|';
+                key += x.generic_wstring() + L'|';
             }
             if(!key.empty() && key.back() == '|')
                 key.pop_back();
-            out << "To = " << key << '\n';
+            out << "To = " << std::string(key.begin(), key.end()) << '\n';
             key.clear();
             for(auto& x : i->ignore_list)
             {
-                key += x + '|';
+                key += x + L'|';
             }
             if(!key.empty() && key.back() == '|')
                 key.pop_back();
@@ -418,6 +421,8 @@ UsedPages Settings::ParseUsedPagesFromString(const std::string& in)
         pages.can = 1;
     if(boost::icontains(in, "Did"))
         pages.did = 1;
+    if(boost::icontains(in, "ModbusMaster"))
+        pages.modbus_master = 1;
     if(boost::icontains(in, "AlarmPanel"))
         pages.alarm_panel = 1;
     if(boost::icontains(in, "TimeTracker"))
@@ -444,6 +449,8 @@ std::string Settings::ParseUsedPagesToString(UsedPages& in)
         pages += "CanSender, ";
     if(in.did)
         pages += "Did, ";
+    if(in.modbus_master)
+        pages += "ModbusMaster, ";
     if(in.alarm_panel)
         pages += "AlarmPanel, ";    
     if(in.time_tracker)

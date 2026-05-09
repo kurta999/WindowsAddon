@@ -8,6 +8,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <boost/asio/deadline_timer.hpp>
 
 #include "TcpMessageExecutor.hpp"
 

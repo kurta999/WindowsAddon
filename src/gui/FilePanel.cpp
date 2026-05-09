@@ -78,7 +78,7 @@ void FilePanel::OnItemActivated(wxTreeListEvent& evt)
 	for(; it != vec_path.end(); ++it)
 		final_path += *it + L"\\";
 #ifdef _WIN32
-	std::wstring cmdline = std::wstring("/select,\"" + final_path);
+	std::wstring cmdline = std::wstring(L"/select,\"" + final_path);
 	ShellExecuteW(NULL, L"open", L"explorer.exe", cmdline.c_str(), NULL, SW_NORMAL);
 #else
 

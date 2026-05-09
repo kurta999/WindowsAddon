@@ -32,13 +32,16 @@ void CanDeviceStm32::ProcessReceivedFrames(std::mutex& rx_mutex)
             char uart_data[sizeof(UartCanData)] = {};
             std::copy(m_CircBuff.begin(), m_CircBuff.begin() + sizeof(UartCanData), uart_data);
 
-            if(*(uint32_t*)&uart_data == MAGIC_NUMBER_RECV_DATA_FROM_CAN_BUS)
+            UartCanData* d = reinterpret_cast<UartCanData*>(uart_data);
+            if(d->magic_number == MAGIC_NUMBER_RECV_DATA_FROM_CAN_BUS)
             {
-                UartCanData* d = (UartCanData*)uart_data;
-                uint16_t crc = utils::crc16_modbus((void*)uart_data, sizeof(UartCanData) - sizeof(UartCanData::crc));
+                uint16_t crc = utils::crc16_modbus(reinterpret_cast<void*>(uart_data), sizeof(UartCanData) - sizeof(UartCanData::crc));
                 if(crc == d->crc)
                 {
-                    CanSerialPort::Get()->AddToRxQueue(d->frame_id, d->data_len, d->data);
+                    if(d->data_len <= sizeof(d->data))
+                        CanSerialPort::Get()->AddToRxQueue(d->frame_id, d->data_len, d->data);
+                    else
+                        LOG(LogLevel::Warning, "Invalid CAN data_len: {}", d->data_len);
                 }
                 else
                 {
@@ -54,7 +57,7 @@ void CanDeviceStm32::ProcessReceivedFrames(std::mutex& rx_mutex)
             }
             else
             {
-                LOG(LogLevel::Verbose, "Invalid magic number: {:X}", *(uint32_t*)&uart_data);
+                LOG(LogLevel::Verbose, "Invalid magic number: {:X}", d->magic_number);
                 m_CircBuff.erase(m_CircBuff.begin());
             }
         } while(m_CircBuff.size() >= sizeof(UartCanData));  /* This second nested loop is needed for recovering when invalid data is received */

@@ -40,7 +40,7 @@ void CanSerialPort::SetDevice(std::unique_ptr<ICanDevice>&& device)
     m_Device = std::move(device);
 }
 
-void CanSerialPort::AddToTxQueue(uint32_t frame_id, uint8_t data_len, uint8_t* data)
+void CanSerialPort::AddToTxQueue(uint32_t frame_id, uint8_t data_len, const uint8_t* data)
 {
     if(!data || !data_len)
         return;

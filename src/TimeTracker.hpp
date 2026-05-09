@@ -2,11 +2,12 @@
 
 #include "utils/CSingleton.hpp"
 #include <atomic>
-#include <condition_variable>
+#include <memory>
 #include <string>
 #include <map>
+#include <boost/date_time/posix_time/ptime.hpp>
 
-#include "IDatabase.hpp" 
+#include "IDatabase.hpp"
 
 class TimeEntry
 {
@@ -22,6 +23,20 @@ public:
     std::string desc;
     int sql_id;
     bool is_overlap{ false };
+};
+
+class TimeGroupEntry
+{
+public:
+    TimeGroupEntry(const std::string& _name, uint32_t _color, int _sql_id) :
+        name(_name), color(_color), sql_id(_sql_id)
+    {
+
+    }
+
+    std::string name;
+    uint32_t color;
+    int sql_id;
 };
 
 class TimeEntrySerialized
@@ -63,29 +78,30 @@ public:
     TimeTracker();
     ~TimeTracker();
 
-    // !\brief Initialize sensors
+    // !\brief Initialize the time tracker and load current month entries
     void Init();
 
     void LoadEntries(int year, int month);
     void LoadEntriesForOneMonth(int year, int month);
+    void LoadGroups();
     void UpdateEntries();
 
     TimeEntry* AddEntry(boost::posix_time::ptime start, boost::posix_time::ptime end, const std::string& comment = "", int sqlid = 0);
-	void EditEntry(TimeEntry* entry, boost::posix_time::ptime start, boost::posix_time::ptime end, const std::string& comment = "");
+    void EditEntry(TimeEntry* entry, boost::posix_time::ptime start, boost::posix_time::ptime end, const std::string& comment = "");
     void SaveEntry(TimeEntry* entry);
     void RemoveEntry(TimeEntry* entry);
 
     std::map<int, std::unique_ptr<MonthlyTimeEntry>>& GetEntries() { return m_Entries; }
 
-	void SetHourlyRate(int rate) { hourly_rate = rate; }
-	int GetHourlyRate() { return hourly_rate; }
+    void SetHourlyRate(int rate) { hourly_rate = rate; }
+    int GetHourlyRate() const { return hourly_rate; }
 
     void SetToggleKey(const std::string& key) { toggle_key = key; }
-    const std::string GetToggleKey() { return toggle_key; }
+    const std::string& GetToggleKey() const { return toggle_key; }
 
-    int GetLastId() { return m_LastId; }
+    int GetLastId() const { return m_LastId; }
 
-    int CalculateMapDateOffset(boost::posix_time::ptime start);
+    int CalculateMapDateOffset(const boost::posix_time::ptime& start);
 
     void SetActualYearMonth(int year, int month)
     {
@@ -93,16 +109,18 @@ public:
         m_Month = month;
     }
 
-    int m_Year = 0;
+    int GetYear() const { return m_Year; }
+    int GetMonth() const { return m_Month; }
 
-    int m_Month = 0;
 private:
+    int m_Year = 0;
+    int m_Month = 0;
 
-    void Query_OneMonth(std::unique_ptr<Result>& result, std::any param);
+    void Query_OneMonth(std::unique_ptr<Result>& result, int year, int month);
     void SerializeEntriesForOneMonth(int year, int month);
-    void ReorganizeSerializedEntries(std::map<int, std::vector<std::unique_ptr<TimeEntrySerialized>>>& serialized_entries);
 
-    std::map<int, std::unique_ptr<MonthlyTimeEntry>> m_Entries;  /* [year + month] = MonthlyTimeEntry */
+    std::map<int, std::unique_ptr<MonthlyTimeEntry>> m_Entries;  /* [YYYYMM] = MonthlyTimeEntry */
+    std::map<int, std::unique_ptr<TimeGroupEntry>> m_Groups;     /* [id]    = TimeGroupEntry */
     boost::gregorian::date today;
 
     // !\brief Pointer to database
@@ -117,5 +135,5 @@ private:
 
     int m_LastId = 0;
 
-    bool m_destructing = false;
+    std::atomic<bool> m_destructing{ false };
 };

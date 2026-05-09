@@ -18,6 +18,7 @@ public:
             uint8_t cmd_executor : 1;
             uint8_t can : 1;
             uint8_t did : 1;
+            uint8_t modbus_master : 1;
             uint8_t alarm_panel : 1;
             uint8_t time_tracker : 1;
             uint8_t log : 1;

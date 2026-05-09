@@ -8,8 +8,7 @@ wxEND_EVENT_TABLE()
 CanScriptPanel::CanScriptPanel(wxWindow* parent)
     : wxPanel(parent, wxID_ANY)
 {
-    std::unique_ptr<CanEntryHandler>& can_handler = wxGetApp().can_entry;
-    m_Script = std::make_unique<CanScriptHandler>(*this);
+    m_Script = std::make_unique<CanScriptHandler>(*this, *wxGetApp().can_entry);
 
     wxBoxSizer* bSizer1 = new wxBoxSizer(wxVERTICAL);
 

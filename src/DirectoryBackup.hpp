@@ -17,7 +17,7 @@ public:
 
     // !\brief Return true if the given file is in ignore list
     // !\param p [in] File to check
-    bool IsInIgnoreList(std::wstring&& p) const;
+    bool IsInIgnoreList(const std::wstring& p) const;
 
     // !\brief Backup source path
     std::filesystem::path from;
@@ -51,7 +51,7 @@ public:
     ~DirectoryBackup() = default;
 
     // !\brief Initialize DirectoryBackup
-    void Init(void);
+    void Init();
 
     // !\brief Construct backup entry from string
     void LoadEntry(const std::string& from, const std::string& to, const std::string& ignore, int max_backups, bool compress_, bool calculate_hash, size_t buffer_size);
@@ -60,7 +60,7 @@ public:
     // \param id [in] ID of backup entry to execute
     void BackupFile(int id);
 
-    // !\brief Is backup in progess?
+    // !\brief Is backup in progress?
     bool IsInProgress() const;
 
     // !\brief Delete all backups from backup list
@@ -88,7 +88,7 @@ protected:
     // !\param backup [in] Backup entry to execute
     void BackupRotation(BackupEntry* backup);
 
-    // !\brief Execute backup rotation (removing older backups)
+    // !\brief Restore file attributes (e.g. hidden flag) from src to dst
     void RestoreAttributes(const std::filesystem::path& src, const std::filesystem::path& dst);
 
     // !\brief Compresses and remove the final backup

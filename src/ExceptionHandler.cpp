@@ -102,7 +102,7 @@ LONG WINAPI SehCrashHandler(EXCEPTION_POINTERS* e)
     out.flush();
     out.close();
 
-    wxTextEntryDialog d(wxGetApp().GetTopWindow(), "WindowsAddon has crashed. The error reported has been generated below.", "Unhandled exception - WindowsAddon", ret, wxTE_MULTILINE | wxOK);
+    wxTextEntryDialog d(wxGetApp().GetTopWindow(), "WindowsHelper has crashed. The error reported has been generated below.", "Unhandled exception - WindowsHelper", ret, wxTE_MULTILINE | wxOK);
     d.SetSize(wxSize(800, 600));
     d.ShowModal();
 

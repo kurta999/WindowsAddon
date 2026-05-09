@@ -1,213 +1,156 @@
 #pragma once
 
 #include "utils/CSingleton.hpp"
-#include "Logger.hpp"
-#include "DatabaseLogic.hpp"
+#include "interface/ISensorObserver.hpp"
 
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <string>
+#include <vector>
 
 #pragma pack(push, 1)
 class Measurement
 {
 public:
-    enum
-    {
-        TEMPERATURE, HUMIDITY, CO2, VOC, PM25, PM10, LUX, CCT, TIME
-    };
+    Measurement() = default;
 
-    Measurement()
-    {
+    Measurement(float _temp, float _hum, int _co2, float _voc, int _co, int _pm25, int _pm10,
+                float _pressure, float _r, float _g, float _b, int _lux, int _cct, int _uv,
+                std::string&& time_) :
+        temp(_temp), hum(_hum), co2(_co2), voc(_voc), co(_co), pm25(_pm25), pm10(_pm10),
+        pressure(_pressure), r(_r), g(_g), b(_b), lux(_lux), cct(_cct), uv(_uv),
+        time(std::move(time_))
+    {}
 
-    }
-
-    Measurement(float _temp, float _hum, int _co2, float _voc, int _co, int _pm25, int _pm10, float _pressure, float _r, float _g, float _b, int _lux, int _cct, int _uv, std::string&& time_) :
-        temp(_temp), hum(_hum), co2(_co2), voc(_voc), co(_co), pm25(_pm25), pm10(_pm10), pressure(_pressure), r(_r), g(_g), b(_b), lux(_lux), cct(_cct), uv(_uv), time(std::move(time_))
-    {
-
-    }
     ~Measurement() = default;
-    Measurement(const Measurement&rhs)
-    {
-        this->operator+=(rhs);
-    }
 
-    Measurement& operator =(const Measurement& rhs)
+    Measurement(const Measurement& rhs) { *this += rhs; }
+
+    Measurement& operator=(const Measurement& rhs)
     {
-        temp = rhs.temp;
-        hum = rhs.hum;
-        pressure = rhs.pressure;
-        r = rhs.r;
-        g = rhs.g;
-        b = rhs.b;
-        co2 = rhs.co2;
-        voc = rhs.voc;
-        co = rhs.co;
-        pm25 = rhs.pm25;
-        pm10 = rhs.pm10;
-        lux = rhs.lux;
-        cct = rhs.cct;
-        uv = rhs.uv;
+        temp = rhs.temp; hum = rhs.hum; pressure = rhs.pressure;
+        r = rhs.r; g = rhs.g; b = rhs.b;
+        co2 = rhs.co2; voc = rhs.voc; co = rhs.co;
+        pm25 = rhs.pm25; pm10 = rhs.pm10;
+        lux = rhs.lux; cct = rhs.cct; uv = rhs.uv;
         time = rhs.time;
         return *this;
     }
 
-    Measurement& operator +=(const Measurement& rhs)
+    Measurement& operator+=(const Measurement& rhs)
     {
-        temp += rhs.temp;
-        hum += rhs.hum;
-        pressure += rhs.pressure;
-        r += rhs.r;
-        g += rhs.g;
-        b += rhs.b;
-        co2 += rhs.co2;
-        voc += rhs.voc;
-        co += rhs.co;
-        pm25 += rhs.pm25;
-        pm10 += rhs.pm10;
-        lux += rhs.lux;
-        cct += rhs.cct;
-        uv += rhs.uv;
-        /* time isn't changed, keep the original */
+        temp += rhs.temp; hum += rhs.hum; pressure += rhs.pressure;
+        r += rhs.r; g += rhs.g; b += rhs.b;
+        co2 += rhs.co2; voc += rhs.voc; co += rhs.co;
+        pm25 += rhs.pm25; pm10 += rhs.pm10;
+        lux += rhs.lux; cct += rhs.cct; uv += rhs.uv;
         cnt++;
         return *this;
     }
 
     void Finalize()
     {
-        temp /= static_cast<float>(cnt);
-        hum /= static_cast<float>(cnt);
-        pressure /= static_cast<float>(cnt);
-        r /= static_cast<float>(cnt);
-        g /= static_cast<float>(cnt);
-        b /= static_cast<float>(cnt);
-        co2 /= cnt;
-        voc /= static_cast<float>(cnt);
-        co /= cnt;
-        pm25 /= cnt;
-        pm10 /= cnt;
-        lux /= cnt;
-        cct /= cnt;
-        uv /= cnt;
+        const auto n = static_cast<float>(cnt);
+        temp /= n; hum /= n; pressure /= n;
+        r /= n; g /= n; b /= n; voc /= n;
+        co2 /= cnt; co /= cnt; pm25 /= cnt; pm10 /= cnt;
+        lux /= cnt; cct /= cnt; uv /= cnt;
         cnt = 1;
     }
 
-    float temp = 0.0f, hum = 0.0f, voc = 0, pressure = 0.0f, r = 0.0f, g = 0.0f, b = 0.0f;
-    int co2 = 0, co = 0, pm25 = 0, pm10 = 0, lux = 0, cct = 0, uv = 0;
+    float   temp = 0.f, hum = 0.f, voc = 0.f, pressure = 0.f, r = 0.f, g = 0.f, b = 0.f;
+    int     co2 = 0, co = 0, pm25 = 0, pm10 = 0, lux = 0, cct = 0, uv = 0;
     std::string time;
-
     uint8_t cnt = 0;
 };
 #pragma pack(pop)
 
-class Sensors : public CSingleton < Sensors >
+class Sensors : public CSingleton<Sensors>
 {
-    friend class CSingleton < Sensors >;
+    friend class CSingleton<Sensors>;
+
 public:
-    // !\brief Initialize sensors
     void Init();
 
-    void HandleAndForwardIncommingMeasurements(const char* recv_data, size_t data_len, const char* from_ip);
+    void AddObserver(ISensorObserver* observer);
+    void RemoveObserver(ISensorObserver* observer);
 
-    // !\brief Process incomming data
-    // !\param recv_data [in] - received data C string
-    // !\param data_len [in] - received data len
-    // !\param from_ip [in] - sender ip C string
-    bool ProcessIncommingData(const char* recv_data, size_t data_len, const char* from_ip);
+    // Entry point for raw incoming TCP data; parses, accumulates, and forwards.
+    void HandleAndForwardIncomingMeasurements(const char* data, size_t len, const char* from_ip);
 
-    // !\brief Write graphs from memory to .html files
+    // Parse a raw sensor broadcast string and drive the accumulation pipeline.
+    bool ProcessIncomingData(const char* data, size_t len, const char* from_ip);
+
+    // Write all sensor metrics to their respective HTML graph files.
     void WriteGraphs();
 
-    // !\brief Add measurement to last_meas queue
-    // !\param meas [in] - pointer to measure to add
+    // Add a finalised measurement to the rolling display window.
     void AddMeasurement(std::unique_ptr<Measurement>&& meas);
 
-    // !\brief Returns last X measurements
-    const std::deque<std::unique_ptr<Measurement>>& GetMeasurements() { return last_meas; }
+    const std::deque<std::unique_ptr<Measurement>>& GetMeasurements() const { return m_last_meas; }
 
-    void SetGraphGenerationInterval(uint16_t interval) { m_GraphGenerationInterval = interval; }
-    uint16_t GetGraphGenerationInterval() { return m_GraphGenerationInterval; }
+    void     SetGraphGenerationInterval(uint16_t v) { m_graphGenerationInterval = v; }
+    uint16_t GetGraphGenerationInterval()     const { return m_graphGenerationInterval; }
 
-    void SetGraphResolution(uint16_t resolution) { m_GraphResolution = resolution; }
-    uint16_t GetGraphResolution() { return m_GraphResolution; }
+    void     SetGraphResolution(uint16_t v) { m_graphResolution = v; }
+    uint16_t GetGraphResolution()     const { return m_graphResolution; }
 
-    void SetIntegrationTime(uint16_t integration_time) { m_IntegrationTime = integration_time; }
-    uint16_t GetIntegrationTime() { return m_IntegrationTime; }
+    void     SetIntegrationTime(uint16_t v) { m_integrationTime = v; }
+    uint16_t GetIntegrationTime()     const { return m_integrationTime; }
 
-    // !\brief Reset measurements on GUI and it's counter
     void ResetMeasurements();
 
-    // !\brief Vector of last day's measurement, array order is: avg, max, min
+    // Graph data filled by GraphGenerator (array order: avg[0], max[1], min[2]).
     std::vector<std::unique_ptr<Measurement>> last_day[3];
-
-    // !\brief Vector of last week's measurement, array order is: avg, max, min
     std::vector<std::unique_ptr<Measurement>> last_week[3];
 
 private:
-    enum
+    enum FieldIndex
     {
-        MEAS_INDEX_SCD_TEMP,
-        MEAS_INDEX_SCD_HUM,
-        MEAS_INDEX_SCD_CO2,
-        MEAS_INDEX_CO,
-        MEAS_INDEX_BME680_TEMP,
-        MEAS_INDEX_BME680_HUM,
-        MEAS_INDEX_BME680_PRESSURE,
-        MEAS_INDEX_BME680_GAS_RESISTANCE,
-        MEAS_INDEX_BME680_TIMESTAMP,
-        MEAS_INDEX_PM25,
-        MEAS_INDEX_PM10,
-        MEAS_INDEX_UV,
-        MEAS_INDEX_R,
-        MEAS_INDEX_G,
-        MEAS_INDEX_B,
-        MEAS_INDEX_CCT,
-        MEAS_INDEX_Lux,
-        MEAS_INDEX_Max
+        IDX_SCD_TEMP,
+        IDX_SCD_HUM,
+        IDX_SCD_CO2,
+        IDX_CO,
+        IDX_BME680_TEMP,
+        IDX_BME680_HUM,
+        IDX_BME680_PRESSURE,
+        IDX_BME680_GAS_RESISTANCE,
+        IDX_BME680_TIMESTAMP,
+        IDX_PM25,
+        IDX_PM10,
+        IDX_UV,
+        IDX_R,
+        IDX_G,
+        IDX_B,
+        IDX_CCT,
+        IDX_Lux,
+        IDX_Max
     };
 
-    // !\brief Main function for measurement handling
-    // !\param meas_vec [in] - vector of string containing measurements
-    void HandleMeasurements(std::vector<std::string>& meas_vec);
-
-    // !\brief Update GUI with given measurements
-    // !\param m [in] - Measurement object whose params will be printed to the GUI
-    void UpdateGui(Measurement& m);
-
-    // !\param Update measurement database if specified period elapsed
+    void HandleMeasurements(const std::vector<std::string>& fields);
+    void UpdateGui(const Measurement& m);
     void UpdateDatabaseIfNeeded();
 
-    template<typename T> T GetValueFromDequeue(const std::unique_ptr<Measurement>& meas, int offset);
-    template<int i, typename T1, typename T2> int CalculateMinMaxAvg_Final(int ai, std::string* labels, std::string* data_values, T2* container, size_t offset);
-    template<int i, typename T1, typename T2> int CalculateMinMaxAvg(int ai, std::string* labels, std::string* data_values, T2* container, size_t offset);
-    template<typename T1, typename T2> void WriteDataToHtmlFromContainer(std::string* labels, std::string* data_values, T2* container, size_t offset);
-    template<typename T1> void WriteGraph(const char* filename, uint16_t min_val, uint16_t max_val, const char* name, size_t offset_1);
+    // Graph-writing helpers (templated to work with any Measurement field type).
+    template<typename FieldType, typename Container>
+    static void CollectSeries(const Container& c, size_t offset,
+                               std::string& labels, std::string& values);
 
-    // !\brief Start of current integration period timestamp
-    std::chrono::steady_clock::time_point m_IntegrationStartTimestamp;
+    template<typename FieldType>
+    void WriteGraph(const char* filename, uint16_t min_val, uint16_t max_val,
+                    const char* name, size_t offset);
 
-    // !\brief Pointer to current measurement
-    std::unique_ptr<Measurement> m_CurrMeas = nullptr;
+    // --- state ---
+    std::vector<ISensorObserver*>          m_observers;
+    std::unique_ptr<Measurement>           m_currMeas;
+    std::chrono::steady_clock::time_point  m_integrationStart;
+    std::deque<std::unique_ptr<Measurement>> m_last_meas;
+    std::string                            m_templateStr;
+    std::mutex                             m_mtx;
+    size_t                                 m_recvCount = 0;
 
-    // !\brief Dequeue for last X measurement
-    std::deque<std::unique_ptr<Measurement>> last_meas;
-
-    // !\brief Basic HTML template file for measurement graphs
-    std::string template_str;
-
-    // !\brief Mutex for generating measurements
-    std::mutex mtx;
-
-    // !\brief Number of received measurements
-    size_t num_recv_meas = 0;
-
-    // !\brief Graph (re)generation interval [min]
-    uint16_t m_GraphGenerationInterval = 10;
-
-    // !\brief Number of different measurement points in generated graph
-    uint16_t m_GraphResolution = 150;
-
-    // !\brief Integration time for measurements [s]
-    uint16_t m_IntegrationTime = 10;
+    uint16_t m_graphGenerationInterval = 10;
+    uint16_t m_graphResolution         = 150;
+    uint16_t m_integrationTime         = 10;
 };

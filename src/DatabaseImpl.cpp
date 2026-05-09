@@ -3,7 +3,6 @@
 Result::Result(sqlite3_stmt* stmt) :
     m_stmt(stmt)
 {
-
 }
 
 Result::~Result()
@@ -12,57 +11,55 @@ Result::~Result()
         sqlite3_finalize(m_stmt);
 }
 
-int Result::GetColumnInt(int col)
+int Result::GetColumnInt(int col) const
 {
-    int ret = sqlite3_column_int(m_stmt, col);
-    return ret;
+    return sqlite3_column_int(m_stmt, col);
 }
 
-const uint8_t* Result::GetColumnText(int col)
+std::string_view Result::GetColumnText(int col) const
 {
-    const uint8_t* ret = sqlite3_column_text(m_stmt, col);
-    return ret;
+    const auto* text = sqlite3_column_text(m_stmt, col);
+    return text ? reinterpret_cast<const char*>(text) : std::string_view{};
 }
 
-int Result::GetColumnCount()
+int Result::GetColumnCount() const
 {
-    int cols = sqlite3_column_count(m_stmt);
-    return cols;
+    return sqlite3_column_count(m_stmt);
 }
 
 bool Result::StepNext()
 {
-    int err_code = sqlite3_step(m_stmt);
-    if(err_code == SQLITE_DONE)
-        return false;
-    if(err_code != SQLITE_ROW)
-    {
-        return false;
-        //DBG("error: %s!\n", sqlite3_errmsg(db));
-    }
-    return true;
+    return sqlite3_step(m_stmt) == SQLITE_ROW;
+}
+
+Sqlite3Database::~Sqlite3Database()
+{
+    if(m_db)
+        sqlite3_close(m_db);
 }
 
 bool Sqlite3Database::Open(const char* db_name)
 {
-    int ret = sqlite3_open(db_name, &db);
+    int ret = sqlite3_open(db_name, &m_db);
     if(ret != SQLITE_OK)
-        LOG(LogLevel::Error, "Can't open database: {}", sqlite3_errmsg(db));
+        LOG(LogLevel::Error, "Can't open database: {}", sqlite3_errmsg(m_db));
     return ret == SQLITE_OK;
 }
 
 bool Sqlite3Database::Close()
 {
-    int ret = sqlite3_close(db);
+    int ret = sqlite3_close(m_db);
     if(ret != SQLITE_OK)
-        LOG(LogLevel::Error, "Can't close database: {}", sqlite3_errmsg(db));
+        LOG(LogLevel::Error, "Can't close database: {}", sqlite3_errmsg(m_db));
+    else
+        m_db = nullptr;
     return ret == SQLITE_OK;
 }
 
 void Sqlite3Database::ExecuteQuery(const std::string& query)
 {
-    char* zErrMsg = 0;
-    int ret = sqlite3_exec(db, query.c_str(), NULL, 0, &zErrMsg);
+    char* zErrMsg = nullptr;
+    int ret = sqlite3_exec(m_db, query.c_str(), nullptr, nullptr, &zErrMsg);
     if(ret != SQLITE_OK)
     {
         LOG(LogLevel::Error, "SQL Error: {}", zErrMsg);
@@ -72,57 +69,58 @@ void Sqlite3Database::ExecuteQuery(const std::string& query)
 
 int Sqlite3Database::ExecuteQueryAndGetLastId(const std::string& query)
 {
-    char* zErrMsg = 0;
-    int ret = sqlite3_exec(db, query.c_str(), NULL, 0, &zErrMsg);
-    int last_row_id = sqlite3_last_insert_rowid(db);
+    char* zErrMsg = nullptr;
+    int ret = sqlite3_exec(m_db, query.c_str(), nullptr, nullptr, &zErrMsg);
     if(ret != SQLITE_OK)
     {
         LOG(LogLevel::Error, "SQL Error: {}", zErrMsg);
         sqlite3_free(zErrMsg);
+        return -1;
     }
-    return last_row_id;
+    return static_cast<int>(sqlite3_last_insert_rowid(m_db));
 }
 
-void Sqlite3Database::SendQueryAndFetch(const std::string& query, std::function<void(std::unique_ptr<Result>&, std::any)> function, std::any params)
+void Sqlite3Database::SendQueryAndFetch(const std::string& query, DbFetchCallback callback)
 {
-    sqlite3_stmt* stmt;
-    int ret = sqlite3_prepare_v2(db, query.c_str(), -1, &stmt, 0);
-    if(ret == SQLITE_OK)
+    sqlite3_stmt* stmt = nullptr;
+    if(sqlite3_prepare_v2(m_db, query.c_str(), -1, &stmt, nullptr) == SQLITE_OK)
     {
-        std::unique_ptr<Result> res = std::make_unique<Result>(stmt);
-        function(res, params);
+        auto res = std::make_unique<Result>(stmt);
+        callback(res);
     }
 }
 
-DBStream::DBStream(const char* db_name, std::unique_ptr<IDatabase>& db) :
+DBStream::DBStream(const char* db_name, IDatabase& db) :
     m_db(db)
 {
-    is_opened = m_db->Open(db_name);
+    m_opened = m_db.Open(db_name);
 }
 
-DBStream::~DBStream() noexcept(false)
+DBStream::~DBStream()
 {
-    if(is_opened)
-        m_db->Close();
+    if(m_opened)
+    {
+        if(!m_db.Close())
+            LOG(LogLevel::Error, "Failed to close database on DBStream destruction");
+    }
 }
 
 DBStream::operator bool() const
 {
-    return is_opened;
+    return m_opened;
 }
 
 void DBStream::ExecuteQuery(const std::string& query)
 {
-    m_db->ExecuteQuery(query);
+    m_db.ExecuteQuery(query);
 }
 
 int DBStream::ExecuteQueryAndGetLastId(const std::string& query)
 {
-    int last_id = m_db->ExecuteQueryAndGetLastId(query);
-    return last_id;
+    return m_db.ExecuteQueryAndGetLastId(query);
 }
 
-void DBStream::SendQueryAndFetch(const std::string& query, std::function<void(std::unique_ptr<Result>&, std::any)> function, std::any params)
+void DBStream::SendQueryAndFetch(const std::string& query, DbFetchCallback callback)
 {
-    m_db->SendQueryAndFetch(query, function, params);
+    m_db.SendQueryAndFetch(query, callback);
 }

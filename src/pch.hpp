@@ -50,7 +50,10 @@ namespace std
 #include "Logger.hpp"
 #include "CustomMacro.hpp"
 #include "DatabaseImpl.hpp"
+#include "MeasurementRepository.hpp"
+#include "GraphGenerator.hpp"
 #include "DatabaseLogic.hpp"
+#include "SensorDataParser.hpp"
 #include "Settings.hpp"
 #include "Server.hpp"
 #include "Sensors.hpp"
@@ -67,6 +70,8 @@ namespace std
 #include "CanDeviceStm32.hpp"
 #include "CanDeviceLawicel.hpp"
 #include "CryptoPrice.hpp"
+#include "CanModels.hpp"
+#include "CanXmlLoaders.hpp"
 #include "CanEntryHandler.hpp"
 #include "DidHandler.hpp"
 #include "CanScriptHandler.hpp"
@@ -80,6 +85,7 @@ namespace std
 #include "Alarms.hpp"
 #include "WorkingDays.hpp"
 #include "TimeTracker.hpp"
+#include "ScriptLauncher.hpp"
 #include "Utils.hpp"
 
 #include <wx/aui/aui.h>
@@ -156,6 +162,7 @@ namespace std
 #include <powrprof.h>
 #include <tlhelp32.h>
 #include "Wtsapi32.h"
+#include <wlanapi.h>
 #endif
 
 #include <any>
@@ -172,6 +179,7 @@ namespace std
 #include <unordered_set>
 #include <unordered_map>
 #include <algorithm>
+#include <ranges>
 #include <future> 
 #include <tuple>
 #include <set>
@@ -182,7 +190,8 @@ namespace std
 #include <deque>
 #include <cstdint>
 #include <stack>
-#include <charconv>
+#include <stack>
+#include <regex>
 
 #ifdef _WIN32
 #include <enumser/enumser.h>

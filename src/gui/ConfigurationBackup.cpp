@@ -105,7 +105,7 @@ void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
 			wxString str;
 			for(auto& i : DirectoryBackup::Get()->backups[id]->ignore_list)
 			{
-				str += i + "\n";
+				str += i + L"\n";
 			}
 			if(str[str.length() - 1] == '\n')
 				str.erase(str.length() - 1, str.length());
@@ -206,7 +206,7 @@ void BackupPanel::UpdateMainTree()
 		wxString str_ignore;
 		for(auto& i : i->ignore_list)
 		{
-			str_ignore += i + " ";
+			str_ignore += i + L" ";
 			if(str_ignore.length() > 80)
 				break;
 		}

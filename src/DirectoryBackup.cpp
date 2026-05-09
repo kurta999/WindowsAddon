@@ -25,7 +25,7 @@ bool BackupEntry::IsValid() const
 	return true;
 }
 
-bool BackupEntry::IsInIgnoreList(std::wstring&& p) const
+bool BackupEntry::IsInIgnoreList(const std::wstring& p) const
 {
 	for(auto& i : ignore_list)
 	{
@@ -49,22 +49,22 @@ void DirectoryBackup::LoadEntry(const std::string& from, const std::string& to, 
 	std::vector<std::filesystem::path> to_path;
 	boost::split(to_path, to, [](char input) { return input == '|'; }, boost::algorithm::token_compress_on);
 
-	std::vector<std::wstring> ignore_list;
 	std::wstring ignore_w;
 	utils::MBStringToWString(ignore, ignore_w);
-	boost::split(ignore_list, ignore, [](char input) { return input == '|'; }, boost::algorithm::token_compress_on);
-	std::unique_ptr<BackupEntry> b = std::make_unique<BackupEntry>(std::move(from_path), std::move(to_path), std::move(ignore_list), max_backups, compress_, calculate_hash, buffer_size);
+	std::vector<std::wstring> ignore_list;
+	boost::split(ignore_list, ignore_w, [](wchar_t input) { return input == L'|'; }, boost::algorithm::token_compress_on);
 
-	DirectoryBackup::Get()->backups.push_back(std::move(b));
+	backups.push_back(std::make_unique<BackupEntry>(std::move(from_path), std::move(to_path), std::move(ignore_list), max_backups, compress_, calculate_hash, buffer_size));
 }
+
 
 void DirectoryBackup::BackupFile(int id)
 {
-	if(id < backups.size())
+	if(id >= 0 && static_cast<size_t>(id) < backups.size())
 	{
 		if(backup_future.valid())
 			backup_future.get();
-		backup_future = std::async(&DirectoryBackup::DoBackup, this, backups[id].get());
+		backup_future = std::async(std::launch::async, &DirectoryBackup::DoBackup, this, backups[id].get());
 	}
 }
 
@@ -159,10 +159,9 @@ void DirectoryBackup::DoBackup(BackupEntry* backup)
 			bool is_file = std::filesystem::is_regular_file(p.path());
 
 			if(backup->IsInIgnoreList(rel_path.generic_wstring())) continue;
-			//DBGW(L"f: %d, %s\n", is_file, p.path().c_str());
 
 			std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
-			int64_t dif = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - backup_start).count();
+			int64_t dif = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - backup_start).count();
 
 			if(dif > 3500 || m_currentFile.empty())
 			{
@@ -174,7 +173,7 @@ void DirectoryBackup::DoBackup(BackupEntry* backup)
 			bool is_symlink = std::filesystem::is_symlink(p.path());
 			if(is_symlink)
 			{
-				std::filesystem::path symlink_path; /* settings.ini */
+				std::filesystem::path symlink_path;
 				std::error_code ec;
 				symlink_path = std::filesystem::read_symlink(p.path(), ec);
 				if(ec)
@@ -192,7 +191,7 @@ void DirectoryBackup::DoBackup(BackupEntry* backup)
 				auto destination_symlink_path = path / destination_dir / sim_base_path;
 				{
 					std::error_code ec;
-					std::filesystem::create_symlink(path / destination_path, destination_symlink_path);
+					std::filesystem::create_symlink(path / destination_path, destination_symlink_path, ec);
 					if(ec)
 					{
 						LOG(LogLevel::Error, "Error with create_symlink ({}, {}): {}", destination_path.generic_string(), destination_symlink_path.generic_string(), ec.message());
@@ -239,7 +238,7 @@ void DirectoryBackup::DoBackup(BackupEntry* backup)
 						while(f.good())
 						{
 							std::streamsize chars_read = f.read(hash_buf.get(), backup->hash_buf_size * 1024 * 1024).gcount();
-							sha256_update(&ctx_to, (uint8_t*)hash_buf.get(), chars_read);
+							sha256_update(&ctx_to, reinterpret_cast<uint8_t*>(hash_buf.get()), chars_read);
 						}
 						f.close();
 					}
@@ -264,7 +263,7 @@ void DirectoryBackup::DoBackup(BackupEntry* backup)
 						while(f.good())
 						{
 							std::streamsize chars_read = f.read(hash_buf.get(), backup->hash_buf_size * 1024 * 1024).gcount();
-							sha256_update(&ctx_from, (uint8_t*)hash_buf.get(), chars_read);
+							sha256_update(&ctx_from, reinterpret_cast<uint8_t*>(hash_buf.get()), chars_read);
 						}
 						f.close();
 					}
@@ -348,7 +347,7 @@ void DirectoryBackup::BackupRotation(BackupEntry* backup)
 			std::filesystem::remove_all(to_remove, ec);
 			if(ec)
 			{
-				LOG(LogLevel::Error, "Error with remove_all ({}): {}", std::string(to_remove.begin(), to_remove.end()), ec.message());
+				LOG(LogLevel::Error, "Error with remove_all ({}): {}", std::filesystem::path(to_remove).generic_string(), ec.message());
 			}
 		}
 	}
@@ -357,10 +356,10 @@ void DirectoryBackup::BackupRotation(BackupEntry* backup)
 void DirectoryBackup::RestoreAttributes(const std::filesystem::path& src, const std::filesystem::path& dst)
 {
 #ifdef _WIN32
-	DWORD attributes = GetFileAttributesA(src.generic_string().c_str());
+	DWORD attributes = GetFileAttributesW(src.generic_wstring().c_str());
 	if(attributes & FILE_ATTRIBUTE_HIDDEN)
 	{
-		SetFileAttributesA(dst.generic_string().c_str(), attributes);
+		SetFileAttributesW(dst.generic_wstring().c_str(), attributes);
 	}
 #endif
 }
@@ -371,10 +370,9 @@ bool DirectoryBackup::CompressAndRemoveFinalBackup(const std::filesystem::path& 
 	std::filesystem::path dest_dir_name = dst.filename();
 
 	std::string cmdline = std::format("7z a \"{}\" \"{}\"", dst.generic_string(), dst.generic_string());
-	std::wstring cmdlinew(cmdline.begin(), cmdline.end());
 
 	std::string result = utils::exec(cmdline.c_str());
-	if(result.find("Everything is Ok"))
+	if(result.find("Everything is Ok") != std::string::npos)
 	{
 		std::filesystem::remove_all(dst);
 	}

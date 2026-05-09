@@ -56,12 +56,12 @@ public:
 
     // !\brief Is keyboard status OK?
     // !\return true if OK, false in case of error with HID communication
-    bool IsOk();
+    bool IsOk() const;
 
 private:
     // !\brief Execute init sequence for HID
-    // !\details Initialization can't be in main thread because sometime hid_open_path take more than 1 minute to finish
-    //            and entrie app will be blocked
+    // !\details Initialization can't be in main thread because sometimes hid_open_path takes more than 1 minute to finish
+    //            and the entire app will be blocked
     bool ExecuteInitSequence();
 
     // !\brief Destroys working thread
@@ -85,7 +85,7 @@ private:
     std::chrono::steady_clock::time_point last_keypress;
 
     // !\brief Is enabled?
-    uint16_t m_IsEnabled = false;
+    bool m_IsEnabled = false;
 
     // !\brief Debouncing interval [ms]
     uint16_t m_DebouncingInterval = 350;
@@ -100,10 +100,10 @@ private:
     std::mutex m_Mutex;
 
     // !\brief Name of the device
-    std::string m_DeviceName = "Corsair device is'nt found";
+    std::string m_DeviceName = "Corsair device isn't found";
 
     // !\brief Type of the device
-    CorsairDeviceType m_DeviceType;
+    CorsairDeviceType m_DeviceType{ CorsairDeviceType::NONE };
 
     // !\brief Is HID communication OK?
     bool m_IsOk = true;

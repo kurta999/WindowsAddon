@@ -8,8 +8,10 @@
 #include <unordered_map>
 #include <map>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <array>
+#include <filesystem>
 
 #include "Logger.hpp"
 #include <thread>
@@ -18,10 +20,11 @@
 #include <random>
 
 #ifdef _WIN32
+#include <windows.h>
 #include <shellapi.h>
 #endif
 
-#ifndef _WIN32
+#ifndef _WINDEF_
 typedef struct tagPOINT
 {
     long  x;
@@ -51,338 +54,239 @@ enum MacroTypes : uint8_t
     BIND_NAME, KEY_SEQ, KEY_TYPE, DELAY, MOUSE_MOVE, MOUSE_INTERPOLATE, MOUSE_PRESS, MOUSE_RELEASE, MOUSE_CLICK, BASH, CMD, CMD_XML, CMD_FG, CMD_IMG, MAX
 };
 
+enum class TextFormat { Plain, Ini };
+
 class IKey
 {
 public:
-    IKey() {}
-    IKey(const IKey&) {}
+    IKey() = default;
+    IKey(const IKey&) = default;
     virtual ~IKey() = default;
 
-    virtual IKey* Clone() = 0;
+    virtual std::unique_ptr<IKey> Clone() const = 0;
     virtual void Execute() = 0;
-    virtual std::string GenerateText(bool is_ini_format) = 0;
-    virtual const char* GetName() = 0;
+    virtual std::string GenerateText(TextFormat fmt) const = 0;
+    virtual const char* GetName() const = 0;
 };
+
+// Base for MousePress / MouseRelease / MouseClick — shared string parsing and INI text generation
+class MouseButtonAction : public IKey
+{
+public:
+    uint16_t GetKey() const { return key; }
+    std::string GenerateText(TextFormat fmt) const override;
+protected:
+    MouseButtonAction(uint16_t key_, std::string_view ini_prefix) : key(key_), ini_prefix_(ini_prefix) {}
+    MouseButtonAction(std::string&& str, std::string_view ini_prefix);
+    MouseButtonAction(const MouseButtonAction& from) : key(from.key), ini_prefix_(from.ini_prefix_) {}
+    static std::string ButtonToString(uint16_t key);
+    uint16_t key = 0;
+private:
+    std::string_view ini_prefix_;
+};
+
+// Base for MouseMovement / MouseInterpolate — shared x,y string parsing and INI text generation
+class MousePositionAction : public IKey
+{
+public:
+    POINT& GetPos() { return m_pos; }
+    std::string GenerateText(TextFormat fmt) const override;
+protected:
+    MousePositionAction(std::string&& str, std::string_view ini_prefix);
+    MousePositionAction(const POINT& pos, std::string_view ini_prefix) : m_pos(pos), ini_prefix_(ini_prefix) {}
+    MousePositionAction(const MousePositionAction& from) : m_pos(from.m_pos), ini_prefix_(from.ini_prefix_) {}
+    POINT m_pos = {};
+private:
+    std::string_view ini_prefix_;
+};
+
+// Base for BashCommand / CommandExecute / CommandXml — shared string storage and INI text generation
+class StringCommand : public IKey
+{
+public:
+    const std::string& GetCmd() const { return cmd; }
+    std::string GenerateText(TextFormat fmt) const override;
+protected:
+    explicit StringCommand(std::string&& cmd_, std::string_view ini_prefix) : cmd(std::move(cmd_)), ini_prefix_(ini_prefix) {}
+    StringCommand(const StringCommand& from) : cmd(from.cmd), ini_prefix_(from.ini_prefix_) {}
+    std::string cmd;
+private:
+    std::string_view ini_prefix_;
+};
+
+// --- Concrete macro action types ---
 
 class KeyText final : public IKey
 {
 public:
-    KeyText(std::string&& keys) { seq = std::move(keys); }
-    KeyText(const KeyText& from) { seq = from.seq; }
-    virtual ~KeyText() = default;
-    KeyText* Clone() override { return new KeyText(*this); }
+    KeyText(std::string&& keys) : seq(std::move(keys)) {}
+    KeyText(const KeyText& from) : seq(from.seq) {}
+    std::unique_ptr<IKey> Clone() const override { return std::make_unique<KeyText>(*this); }
     void Execute() override;
-    std::string GenerateText(bool is_ini_format) override;
-    const char* GetName() override { return name; }
-
-    std::string& GetString()
-    {
-        return seq;
-    }
-
+    std::string GenerateText(TextFormat fmt) const override;
+    const char* GetName() const override { return "TEXT"; }
+    std::string& GetString() { return seq; }
 private:
 #ifdef _WIN32
     void TypeCharacter(uint16_t character);
 #endif
-    std::string seq; /* characters to press and release*/
-    static inline const char* name = "TEXT";
+    std::string seq;
 };
 
 class KeyCombination final : public IKey
 {
 public:
-    KeyCombination(std::vector<uint16_t>&& keys) { seq = std::move(keys); }    
+    KeyCombination(std::vector<uint16_t>&& keys) : seq(std::move(keys)) {}
     KeyCombination(std::string&& str);
-    KeyCombination(const KeyCombination& from) { seq = from.seq; }
-    virtual ~KeyCombination() = default;
-    KeyCombination* Clone() override { return new KeyCombination(*this); }
+    KeyCombination(const KeyCombination& from) : seq(from.seq) {}
+    std::unique_ptr<IKey> Clone() const override { return std::make_unique<KeyCombination>(*this); }
     void Execute() override;
-
-    std::string GenerateText(bool is_ini_format) override;
-    const char* GetName() override { return name; }
-
-    std::vector<uint16_t>& GetVec()
-    {
-        return seq;
-    }
-
+    std::string GenerateText(TextFormat fmt) const override;
+    const char* GetName() const override { return "SEQUENCE"; }
+    std::vector<uint16_t>& GetVec() { return seq; }
 private:
     void PressReleaseKey(uint16_t scancode, bool press = true);
-
-    std::vector<uint16_t> seq; /* scan codes to press and release*/
-    static inline const char* name = "SEQUENCE";
+    std::vector<uint16_t> seq;
 };
 
 class KeyDelay final : public IKey
 {
 public:
-    KeyDelay(uint32_t delay_) : delay(delay_)
-    {
-        
-    }    
-    KeyDelay(uint32_t start_, uint32_t end_) : delay(std::array<uint32_t, 2>{start_, end_}) { }
+    KeyDelay(uint32_t delay_) : delay(delay_) {}
+    KeyDelay(uint32_t start_, uint32_t end_) : delay(std::array<uint32_t, 2>{start_, end_}) {}
     KeyDelay(std::string&& str);
-    KeyDelay(const KeyDelay& from) { delay = from.delay; }
-    virtual ~KeyDelay() = default;
-    KeyDelay* Clone() override { return new KeyDelay(*this); }
-
+    KeyDelay(const KeyDelay& from) : delay(from.delay) {}
+    std::unique_ptr<IKey> Clone() const override { return std::make_unique<KeyDelay>(*this); }
     void Execute() override;
-    std::string GenerateText(bool is_ini_format) override;
-    const char* GetName() override { return std::holds_alternative<uint32_t>(delay) ? name_delay : name_random; }
-    
+    std::string GenerateText(TextFormat fmt) const override;
+    const char* GetName() const override { return std::holds_alternative<uint32_t>(delay) ? "DELAY" : "DELAY RANDOM"; }
     std::variant<uint32_t, std::array<uint32_t, 2>>& GetDelay() { return delay; }
-
 private:
     std::variant<uint32_t, std::array<uint32_t, 2>> delay;
-    static inline const char* name_delay = "DELAY";
-    static inline const char* name_random = "DELAY RANDOM";
 };
 
-class MouseMovement final : public IKey
+class MouseMovement final : public MousePositionAction
 {
 public:
-    MouseMovement(LPPOINT* pos_) { memcpy(&m_pos, pos_, sizeof(m_pos)); }
-    MouseMovement(const MouseMovement& from) { memcpy(&m_pos, &from.m_pos, sizeof(m_pos)); }
-    MouseMovement(std::string&& str);
-    virtual ~MouseMovement() = default;
-    MouseMovement* Clone() override { return new MouseMovement(*this); }
+    MouseMovement(LPPOINT* pos_) : MousePositionAction(**pos_, "MOUSE_MOVE") {}
+    MouseMovement(std::string&& str) : MousePositionAction(std::move(str), "MOUSE_MOVE") {}
+    MouseMovement(const MouseMovement& from) : MousePositionAction(from) {}
+    std::unique_ptr<IKey> Clone() const override { return std::make_unique<MouseMovement>(*this); }
     void Execute() override;
-
-    std::string GenerateText(bool is_ini_format) override;
-    const char* GetName() override { return name; }
-
-    POINT& GetPos()
-    {
-        return m_pos;
-    }
-
-private:
-    POINT m_pos = {};
-    static inline const char* name = "MOUSE MOVE";
+    const char* GetName() const override { return "MOUSE MOVE"; }
 };
 
-class MouseInterpolate final : public IKey
+class MouseInterpolate final : public MousePositionAction
 {
 public:
-    MouseInterpolate(LPPOINT* pos_) { memcpy(&m_pos, pos_, sizeof(m_pos)); }
-    MouseInterpolate(const MouseInterpolate& from) { memcpy(&m_pos, &from.m_pos, sizeof(m_pos)); }
-    MouseInterpolate(std::string&& str);
-    virtual ~MouseInterpolate() = default;
-    MouseInterpolate* Clone() override { return new MouseInterpolate(*this); }
+    MouseInterpolate(LPPOINT* pos_) : MousePositionAction(**pos_, "MOUSE_INTERPOLATE") {}
+    MouseInterpolate(std::string&& str) : MousePositionAction(std::move(str), "MOUSE_INTERPOLATE") {}
+    MouseInterpolate(const MouseInterpolate& from) : MousePositionAction(from) {}
+    std::unique_ptr<IKey> Clone() const override { return std::make_unique<MouseInterpolate>(*this); }
     void Execute() override;
-
-    std::string GenerateText(bool is_ini_format) override;
-    const char* GetName() override { return name; }
-
-    POINT& GetPos()
-    {
-        return m_pos;
-    }
-
-private:
-    POINT m_pos = {};
-    static inline const char* name = "MOUSE INTERPOLATE";
+    const char* GetName() const override { return "MOUSE INTERPOLATE"; }
 };
 
-class MousePress final : public IKey
+class MousePress final : public MouseButtonAction
 {
 public:
-    MousePress(uint16_t key_) : key(key_) {}
-    MousePress(const MousePress& from) { key = from.key; }
-    MousePress(const std::string&& str);
-    virtual ~MousePress() = default;
-    MousePress* Clone() override { return new MousePress(*this); }
+    MousePress(uint16_t key_) : MouseButtonAction(key_, "MOUSE_PRESS") {}
+    MousePress(std::string&& str) : MouseButtonAction(std::move(str), "MOUSE_PRESS") {}
+    MousePress(const MousePress& from) : MouseButtonAction(from) {}
+    std::unique_ptr<IKey> Clone() const override { return std::make_unique<MousePress>(*this); }
     void Execute() override;
-
-    std::string GenerateText(bool is_ini_format) override;
-    const char* GetName() override { return name; }
-
-    uint16_t GetKey()
-    {
-        return key;
-    }
+    const char* GetName() const override { return "MOUSE PRESS"; }
 private:
     void PressMouse(uint16_t mouse_button);
-
-    uint16_t key;
-    static inline const char* name = "MOUSE PRESS";
 };
 
-class MouseRelease final : public IKey
+class MouseRelease final : public MouseButtonAction
 {
 public:
-    MouseRelease(uint16_t key_) : key(key_) {}
-    MouseRelease(const MouseRelease& from) { key = from.key; }
-    MouseRelease(const std::string&& str);
-    virtual ~MouseRelease() = default;
-    MouseRelease* Clone() override { return new MouseRelease(*this); }
+    MouseRelease(uint16_t key_) : MouseButtonAction(key_, "MOUSE_RELEASE") {}
+    MouseRelease(std::string&& str) : MouseButtonAction(std::move(str), "MOUSE_RELEASE") {}
+    MouseRelease(const MouseRelease& from) : MouseButtonAction(from) {}
+    std::unique_ptr<IKey> Clone() const override { return std::make_unique<MouseRelease>(*this); }
     void Execute() override;
-
-    std::string GenerateText(bool is_ini_format) override;
-    const char* GetName() override { return name; }
-
-    uint16_t GetKey()
-    {
-        return key;
-    }
+    const char* GetName() const override { return "MOUSE RELEASE"; }
 private:
     void ReleaseMouse(uint16_t mouse_button);
-
-    uint16_t key;
-    static inline const char* name = "MOUSE RELEASE";
 };
 
-class MouseClick final : public IKey
+class MouseClick final : public MouseButtonAction
 {
 public:
-    MouseClick(uint16_t key_) : key(key_) {}
-    MouseClick(const MouseClick& from) { key = from.key; }
-    MouseClick(const std::string&& str);
-    virtual ~MouseClick() = default;
-    MouseClick* Clone() override { return new MouseClick(*this); }
+    MouseClick(uint16_t key_) : MouseButtonAction(key_, "MOUSE_CLICK") {}
+    MouseClick(std::string&& str) : MouseButtonAction(std::move(str), "MOUSE_CLICK") {}
+    MouseClick(const MouseClick& from) : MouseButtonAction(from) {}
+    std::unique_ptr<IKey> Clone() const override { return std::make_unique<MouseClick>(*this); }
     void Execute() override;
-
-    std::string GenerateText(bool is_ini_format) override;
-    const char* GetName() override { return name; }
-
-    uint16_t GetKey()
-    {
-        return key;
-    }
+    const char* GetName() const override { return "MOUSE CLICK"; }
 private:
     void PressReleaseMouse(uint16_t mouse_button);
-
-    uint16_t key;
-    static inline const char* name = "MOUSE CLICK";
 };
 
-class BashCommand final : public IKey
+class BashCommand final : public StringCommand
 {
 public:
-    BashCommand(std::string cmd_) : cmd(cmd_) {}
-    BashCommand(const BashCommand& from) { cmd = from.cmd; }
-    /*BashCommand(const std::string&& str) : cmd(str)
-    {}*/
-    virtual ~BashCommand() = default;
-    BashCommand* Clone() override { return new BashCommand(*this); }
+    BashCommand(std::string cmd_) : StringCommand(std::move(cmd_), "BASH") {}
+    BashCommand(const BashCommand& from) : StringCommand(from) {}
+    std::unique_ptr<IKey> Clone() const override { return std::make_unique<BashCommand>(*this); }
     void Execute() override;
-
-    std::string GenerateText(bool is_ini_format) override;
-    const char* GetName() override { return name; }
-
-    std::string GetCmd()
-    {
-        return cmd;
-    }
-
-private:
-    std::string cmd;
-    static inline const char* name = "BASH";
+    const char* GetName() const override { return "BASH"; }
 };
 
-class CommandExecute final : public IKey
+class CommandExecute final : public StringCommand
 {
 public:
-    CommandExecute(std::string cmd_) : cmd(cmd_) {}
-    CommandExecute(const CommandExecute& from) { cmd = from.cmd; }
-    /*CommandExecute(const std::string&& str) : cmd(str)
-    {}*/
-    virtual ~CommandExecute() = default;
-    CommandExecute* Clone() override { return new CommandExecute(*this); }
+    CommandExecute(std::string cmd_) : StringCommand(std::move(cmd_), "CMD") {}
+    CommandExecute(const CommandExecute& from) : StringCommand(from) {}
+    std::unique_ptr<IKey> Clone() const override { return std::make_unique<CommandExecute>(*this); }
     void Execute() override;
-
-    std::string GenerateText(bool is_ini_format) override;
-    const char* GetName() override { return name; }
-
-    std::string GetCmd()
-    {
-        return cmd;
-    }
-
-private:
-    std::string cmd;
-    static inline const char* name = "CMD";
+    const char* GetName() const override { return "CMD"; }
 };
 
-class CommandXml final : public IKey
+class CommandXml final : public StringCommand
 {
 public:
-    CommandXml(std::string cmd_) : cmd(cmd_) {}
-    CommandXml(const CommandXml& from) { cmd = from.cmd; }
-    /*CommandXml(const std::string&& str) : cmd(str)
-    {}*/
-    virtual ~CommandXml() = default;
-    CommandXml* Clone() override { return new CommandXml(*this); }
+    CommandXml(std::string cmd_) : StringCommand(std::move(cmd_), "CMD_XML") {}
+    CommandXml(const CommandXml& from) : StringCommand(from) {}
+    std::unique_ptr<IKey> Clone() const override { return std::make_unique<CommandXml>(*this); }
     void Execute() override;
-
-    std::string GenerateText(bool is_ini_format) override;
-    const char* GetName() override { return name; }
-
-    std::string GetCmd()
-    {
-        return cmd;
-    }
-
-private:
-    std::string cmd;
-    static inline const char* name = "CMD_XML";
+    const char* GetName() const override { return "CMD_XML"; }
 };
 
 class KeyBringAppToForeground final : public IKey
 {
 public:
-    KeyBringAppToForeground(std::string app_, std::string title_) : app(app_), title(title_) {}
-    KeyBringAppToForeground(const KeyBringAppToForeground& from) { title = from.title; app = from.app; }
-    KeyBringAppToForeground(const std::string&& str);
-    virtual ~KeyBringAppToForeground() = default;
-    KeyBringAppToForeground* Clone() override { return new KeyBringAppToForeground(*this); }
+    KeyBringAppToForeground(std::string app_, std::string title_) : app(std::move(app_)), title(std::move(title_)) {}
+    KeyBringAppToForeground(const KeyBringAppToForeground& from) : app(from.app), title(from.title) {}
+    KeyBringAppToForeground(std::string&& str);
+    std::unique_ptr<IKey> Clone() const override { return std::make_unique<KeyBringAppToForeground>(*this); }
     void Execute() override;
-
-    std::string GenerateText(bool is_ini_format) override;
-    const char* GetName() override { return name; }
-
-    std::string GetApp()
-    {
-        return app;
-    }
-    std::string GetTitle()
-    {
-        return title;
-    }
-
+    std::string GenerateText(TextFormat fmt) const override;
+    const char* GetName() const override { return "CMD_FG"; }
+    const std::string& GetApp() const { return app; }
+    const std::string& GetTitle() const { return title; }
 private:
     std::string app;
     std::string title;
-    static inline const char* name = "CMD_FG";
 };
 
 class KeyFindImageOnScreen final : public IKey
 {
 public:
-    //KeyFindImageOnScreen(std::string app_, std::string title_) : app(app_), title(title_) {}
-    //KeyFindImageOnScreen(const KeyFindImageOnScreen& from) { title = from.title; app = from.app; }
-    KeyFindImageOnScreen(const std::string&& str);
-    virtual ~KeyFindImageOnScreen() = default;
-    KeyFindImageOnScreen* Clone() override { return new KeyFindImageOnScreen(*this); }
+    KeyFindImageOnScreen(std::string&& str);
+    KeyFindImageOnScreen(const KeyFindImageOnScreen& from) : image_path(from.image_path), offset(from.offset) {}
+    std::unique_ptr<IKey> Clone() const override { return std::make_unique<KeyFindImageOnScreen>(*this); }
     void Execute() override;
-
-    std::string GenerateText(bool is_ini_format) override;
-    const char* GetName() override { return name; }
-
-    std::filesystem::path GetImagePath()
-    {
-        return image_path;
-    }
-
-    POINT GetOffset()
-    {
-        return offset;
-    }
-
+    std::string GenerateText(TextFormat fmt) const override;
+    const char* GetName() const override { return "CMD_IMG"; }
+    std::filesystem::path GetImagePath() const { return image_path; }
+    POINT GetOffset() const { return offset; }
 private:
     std::filesystem::path image_path;
     POINT offset = {};
-    static inline const char* name = "CMD_FG";
 };
 
 enum class MacroFlags
@@ -391,28 +295,15 @@ enum class MacroFlags
     Alarm,
 };
 
-/* each given macro per-app get's a macro container */
-class MacroAppProfile
+struct MacroAppProfile
 {
-public:
     MacroAppProfile() = default;
-    MacroAppProfile(std::string&& name)
-    {
-        app_name = std::move(name);
-    }
+    explicit MacroAppProfile(std::string&& name) : app_name(std::move(name)) {}
 
-    // \brief Map of macros per code, [Key code] = macro list (KeyText, KeySequence, etc...)
     std::map<std::string, std::vector<std::unique_ptr<IKey>>> key_vec;
-
-    // \brief Binding name - [Key code] = bind name text
     std::map<std::string, std::string> bind_name;
-
-    // \brief Macro flags - [Key code] = flags
     std::map<std::string, MacroFlags> flags;
-
-    // \brief Name of assigned application - like Visual Studio
     std::string app_name;
-private:
 };
 
 class CustomMacro : public CSingleton < CustomMacro >
@@ -423,65 +314,30 @@ public:
     CustomMacro() = default;
     ~CustomMacro() = default;
 
-    // !\brief Parse and insert macro keys from ini format to it's container 
-    // !\param id [in] ID of given entry
-    // !\param key_code [in] Reference to key code
-    // !\param str [in] String to parse
-    // !\param c [in] Reference to macro profile's unique pointer
-    // !\param flags [in] Additonal macro flags for given key
     void ParseMacroKeys(size_t id, const std::string& key_code, std::string& str, std::unique_ptr<MacroAppProfile>& c, MacroFlags flags);
-    
-    // !\brief Simulate keypress (blocking function!)
-    // !\param key [in] Key sequence to simulate
-    // !\param directly_execute_alarm [in] Execute alarm directly without showing alarm dialog?
     void SimulateKeypress(const std::string& key, bool directly_execute_alarm = false);
-
-    // !\brief Process received data
     void ProcessReceivedData(const char* data, unsigned int len);
 
-    // !\brief Return macro container
     std::vector<std::unique_ptr<MacroAppProfile>>& GetMacros() { return macros; }
-
-    // !\brief Get key scan code by name
     uint16_t GetKeyScanCode(const std::string& str);
-
-    // !\brief Get key name by scan code
     std::string GetKeyStringFromScanCode(int scancode);
-
-    // !\brief Return HID scan code map
     const std::unordered_map<std::string, int>& GetHidScanCodeMap() { return scan_codes; }
 
-    // !\brief Use per application macro?
     bool use_per_app_macro = true;
-
-    // !\brief Use advanced key bindings? (eg: SHIFT+NUM_1, LCTRL+NUM_2)
     bool advanced_key_binding = true;
-
-    // !\brief Key which will bring this app to foreground or hide it in the tray
     std::string bring_to_foreground_key = "N/A";
-
-    // !\brief Pointer to macro container which is being edited
     std::vector<std::unique_ptr<IKey>>* editing_macro = nullptr;
-
-    // !\brief Pointer to key entry which is being edited
     IKey* editing_item = nullptr;
 
 private:
     friend class Settings;
 
-    // !\brief Execute keypresses
+    bool IsKeyReserved(const std::string& key_code) const;
     void ExecuteKeypresses(bool directly_execute_alarm = false);
-
-    // !\brief Execute foreground keypress
     void ExecuteForegroundKeypress();
 
-    // !\brief Pressed keys sequence
     std::string pressed_keys;
-
-    // !\brief Mutex for protecting the executor
     std::mutex executor_mtx;
-
-    // !\brief Vector contains all macros
     std::vector<std::unique_ptr<MacroAppProfile>> macros;
     static const std::unordered_map<std::string, int> scan_codes;
     static const std::unordered_map<int, std::string> hid_scan_codes;

@@ -76,7 +76,7 @@ MainPanel::MainPanel(wxFrame* parent)
 	var_name->SetToolTip(tooltip"\nPress MIDDLE CLICK to open graphs in browser"); \
 	bSizer1->Add(var_name, 0, wxALL, 5); 
 #endif
-	ADD_MEASUREMENT_TEXT(m_textTemp, "Temperature", "Temperature: N/A", "Unit: °C", wxColour(244, 99, 11));
+	ADD_MEASUREMENT_TEXT(m_textTemp, "Temperature", "Temperature: N/A", "Unit: ï¿½C", wxColour(244, 99, 11));
 	ADD_MEASUREMENT_TEXT(m_textHum, "Humidity", "Humidity: N/A", "Unit: % RH", wxColour(29, 79, 252));
 	ADD_MEASUREMENT_TEXT(m_textCO2, "CO2", "CO2: N/A", "Unit: ppm", wxColour(237, 60, 251));
 	ADD_MEASUREMENT_TEXT(m_textVOC, "VOC", "VOC: N/A", "Unit: ppb", wxColour(185, 4, 200));
@@ -272,6 +272,10 @@ MainPanel::MainPanel(wxFrame* parent)
 	m_CanStatus->SetFont(wxFont(18, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD, false, wxEmptyString));
 	v_status_sizer->Add(m_CanStatus);
 
+	m_ModbusStatus = new wxStaticText(this, wxID_ANY, "Modbus: ", wxDefaultPosition, wxSize(-1, -1), 0);
+	m_ModbusStatus->SetFont(wxFont(18, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD, false, wxEmptyString));
+	v_status_sizer->Add(m_ModbusStatus);
+
 	split_sizer->Add(v_status_sizer);
 	UpdateKeybindings();
 	UpdateStatuses();
@@ -317,11 +321,16 @@ void MainPanel::UpdateKeybindings()
 	if(it != key_map.end())
 	{
 		MarkFunctionalKey(it->second, "TOGGLE");
-	}
+	}	
 	it = key_map.find(time_tracker->GetToggleKey());
 	if (it != key_map.end())
 	{
 		MarkFunctionalKey(it->second, "WORK_START");
+	}
+	it = key_map.find(ScriptLauncher::Get()->launcher_key);
+	if (it != key_map.end())
+	{
+		MarkFunctionalKey(it->second, "SCRIPT");
 	}
 
 	if(CorsairHid::Get()->GetDeviceType() == CorsairDeviceType::NONE)
@@ -426,6 +435,32 @@ void MainPanel::UpdateStatuses()
 		m_CanStatus->SetLabelText("CAN: OFF");
 		m_CanStatus->SetForegroundColour(*wxBLUE);
 	}
+}
+
+void MainPanel::OnMeasurementUpdated(const Measurement& m, size_t recv_count)
+{
+	m_textTemp->SetLabelText(wxString::Format(wxT("Temperature: %.1f"), m.temp));
+	m_textHum->SetLabelText(wxString::Format(wxT("Humidity: %.1f"), m.hum));
+	m_textCO2->SetLabelText(wxString::Format(wxT("CO2: %i"), m.co2));
+	m_textVOC->SetLabelText(wxString(std::format("IAQ: {:.1f}, Gas: {:.1f}%", m.voc, BsecHandler::Get()->GetGasPercentage())));
+	m_textCO->SetLabelText(wxString::Format(wxT("CO: %i"), m.co));
+	m_textPM25->SetLabelText(wxString::Format(wxT("PM2.5: %i"), m.pm25));
+	m_textPM10->SetLabelText(wxString::Format(wxT("PM10: %i"), m.pm10));
+	m_textPressure->SetLabelText(wxString::Format(wxT("Pressure: %.1f"), m.pressure));
+	m_textR->SetLabelText(wxString::Format(wxT("R: %.1f"), m.r));
+	m_textG->SetLabelText(wxString::Format(wxT("G: %.1f"), m.g));
+	m_textB->SetLabelText(wxString::Format(wxT("B: %.1f"), m.b));
+	m_textLux->SetLabelText(wxString::Format(wxT("Lux: %i"), m.lux));
+	m_textCCT->SetLabelText(wxString::Format(wxT("CCT: %i"), m.cct));
+	m_textUV->SetLabelText(wxString::Format(wxT("UV: %i"), m.uv));
+
+	const auto now = std::chrono::current_zone()->to_local(std::chrono::system_clock::now());
+	m_textTime->SetLabelText(wxString(std::format("{:%Y.%m.%d %H:%M:%OS} - {}", now, recv_count)));
+
+	MyFrame* frame = static_cast<MyFrame*>(GetParent());
+	frame->SetIconTooltip(wxString::Format(
+		wxT("T: %.1f, H: %.1f, CO2: %d, IAQ: %.1f, CO: %d, PM2.5: %d, PM10: %d, Pressure: %.1f, Lux: %d, CCT: %d, UV: %d"),
+		m.temp, m.hum, m.co2, m.voc, m.co, m.pm25, m.pm10, m.pressure, m.lux, m.cct, m.uv));
 }
 
 void MainPanel::UpdateCryptoPrices(float eth_buy, float eth_sell, float btc_buy, float btc_sell)

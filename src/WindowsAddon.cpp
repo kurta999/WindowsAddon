@@ -50,7 +50,7 @@ bool MyApp::OnInit()
 
     if(!wxTaskBarIcon::IsAvailable())
         LOG(LogLevel::Warning, "There appears to be no system tray support in your current environment. This app may not behave as expected.");
-    MyFrame* frame = new MyFrame(wxT("WindowsAddon"));
+    MyFrame* frame = new MyFrame(wxT("WindowsHelper"));
     SetTopWindow(frame);
     is_init_finished = true;
     TerminalHotkey::Get()->UpdateHotkeyRegistration();
@@ -66,7 +66,7 @@ int MyApp::OnExit()
     did_handler.reset(nullptr);  /* First this has to be destructed, because it uses CanEntryHandler */
     can_entry.reset(nullptr);
     cmd_executor.reset(nullptr);
-
+    
     IdlePowerSaver::CSingleton::Destroy();  /* Restore CPU power to 100%, this has to be destructed before Logger */
     Settings::CSingleton::Destroy();
     CustomMacro::CSingleton::Destroy();

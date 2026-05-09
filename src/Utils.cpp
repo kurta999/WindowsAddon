@@ -267,48 +267,72 @@ namespace utils
 	std::vector<std::wstring> GetSelectedItemsFromFileExplorer()
 	{
 		std::vector<std::wstring> selected_items;
+
 #ifdef _WIN32
-		IFolderView2* pfv = GetFolderView2();  /* null if clicked on desktop and not in file explorer */
-		if(pfv)
+		CComPtr<IFolderView2> pfv = nullptr;
+
+		// Try to get the current folder view (Explorer window)
+		pfv = GetFolderView2();  // Your existing helper
+		if (!pfv)
 		{
-			IShellItemArray* sia = NULL;
-			if(FAILED(pfv->GetSelection(FALSE, &sia)))
+			// If null, try to get the desktop folder view
+			CComPtr<IShellWindows> spShellWindows;
+			if (SUCCEEDED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&spShellWindows))))
 			{
-				pfv->Release();
-				return {};
-			}
-			DWORD	num = 0;
-			if(FAILED(sia->GetCount(&num)))
-			{
-				pfv->Release();
-				sia->Release();
-				return {};
-			}
-			for(DWORD i = 0; i < num; i++)
-			{
-				IShellItem* si = NULL;
-				if(FAILED(sia->GetItemAt(i, &si)))
-				{
-					pfv->Release();
-					sia->Release();
-					return {};
-				}
+				CComVariant vtLoc(CSIDL_DESKTOP);
+				CComVariant vtEmpty;
+				long lhwnd;
+				CComPtr<IDispatch> spdisp;
 
-				PWSTR path = NULL;
-				if(FAILED(si->GetDisplayName(SIGDN_FILESYSPATH, &path)))
+				if (SUCCEEDED(spShellWindows->FindWindowSW(&vtLoc, &vtEmpty, SWC_DESKTOP, &lhwnd, SWFO_NEEDDISPATCH, &spdisp)))
 				{
-					pfv->Release();
-					si->Release();
-					continue;
+					CComPtr<IServiceProvider> spProv;
+					if (SUCCEEDED(spdisp->QueryInterface(IID_PPV_ARGS(&spProv))))
+					{
+						CComPtr<IShellBrowser> spBrowser;
+						if (SUCCEEDED(spProv->QueryService(SID_STopLevelBrowser, IID_PPV_ARGS(&spBrowser))))
+						{
+							CComPtr<IShellView> spView;
+							if (SUCCEEDED(spBrowser->QueryActiveShellView(&spView)))
+							{
+								spView->QueryInterface(IID_PPV_ARGS(&pfv)); // Desktop view also supports IFolderView2
+							}
+						}
+					}
 				}
-
-				if(path)
-					selected_items.push_back(path);
 			}
-			pfv->Release();
 		}
-		return selected_items;
+
+		if (pfv)
+		{
+			CComPtr<IShellItemArray> sia;
+			if (FAILED(pfv->GetSelection(FALSE, &sia)))
+				return selected_items;
+
+			DWORD num = 0;
+			if (FAILED(sia->GetCount(&num)))
+				return selected_items;
+
+			for (DWORD i = 0; i < num; ++i)
+			{
+				CComPtr<IShellItem> si;
+				if (FAILED(sia->GetItemAt(i, &si)))
+					continue;
+
+				PWSTR path = nullptr;
+				if (SUCCEEDED(si->GetDisplayName(SIGDN_FILESYSPATH, &path)))
+				{
+					if (path)
+					{
+						selected_items.push_back(path);
+						CoTaskMemFree(path);
+					}
+				}
+			}
+		}
 #endif
+
+		return selected_items;
 	}
 
 	std::wstring GetDestinationPathFromFileExplorer()
@@ -648,5 +672,4 @@ namespace utils
 		// Return hours and the decimal representation of minutes as an integer
 		return std::make_pair(hours, decimalMinutes);
 	}
-
 }

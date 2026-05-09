@@ -38,7 +38,7 @@ void MyFrame::OnAbout(wxCommandEvent& event)
 {
 	wxString platform = (sizeof(void*) == 4 ? " x86" : " x64");
 	std::string wxwidgets_version = std::format("{}.{}.{}", wxMAJOR_VERSION, wxMINOR_VERSION, wxRELEASE_NUMBER);
-	wxMessageBox(wxString("WindowsAddon") + platform + " v" + COMMIT_TAG + " (" + COMMIT_ID + ")" + "\n\n"
+	wxMessageBox(wxString("WindowsHelper") + platform + " v" + COMMIT_TAG + " (" + COMMIT_ID + ")" + "\n\n"
 "MIT License\n\
 \n\
 Copyright (c) 2021 - 2025 Attila Kiss \"kurta999\" <nmsstulaj@gmail.com>\n\
@@ -341,11 +341,10 @@ void MyFrame::HandleAlwaysOnNumlock()
 void MyFrame::HandleCryptoPriceUpdate()
 {
 	CryptoPrice::Get()->UpdatePrices();
-	if(CryptoPrice::Get()->is_pending)
+	if(CryptoPrice::Get()->ConsumePending())
 	{
 		if(main_panel)
-			main_panel->UpdateCryptoPrices(CryptoPrice::Get()->eth_buy, CryptoPrice::Get()->eth_sell, CryptoPrice::Get()->btc_buy, CryptoPrice::Get()->btc_sell);
-		CryptoPrice::Get()->is_pending = false;
+			main_panel->UpdateCryptoPrices(CryptoPrice::Get()->GetEthBuy(), CryptoPrice::Get()->GetEthSell(), CryptoPrice::Get()->GetBtcBuy(), CryptoPrice::Get()->GetBtcSell());
 	}
 }
 
@@ -449,16 +448,19 @@ MyFrame::MyFrame(const wxString& title)
 	CreateStatusBar();
 	wxString platform = (sizeof(void*) == 4 ? "x86" : "x64");
 #ifdef DEBUG
-	SetStatusText("WindowsAddon " + platform + " v" + COMMIT_TAG + " DEBUG BUILD " + COMMIT_ID);
+	SetStatusText("WindowsHelper " + platform + " v" + COMMIT_TAG + " DEBUG BUILD " + COMMIT_ID);
 #else
-	SetStatusText("WindowsAddon " + platform + " v" + COMMIT_TAG);
+	SetStatusText("WindowsHelper " + platform + " v" + COMMIT_TAG);
 #endif
 
 	SetClientSize(Settings::Get()->window_size);
 
 	UsedPages used_pages = Settings::Get()->used_pages;
 	if(used_pages.main)
+	{
 		main_panel = new MainPanel(this);
+		Sensors::Get()->AddObserver(main_panel);
+	}
 	if(used_pages.escaper)
 		escape_panel = new EscaperPanel(this);
 	if(used_pages.debug)

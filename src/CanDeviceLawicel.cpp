@@ -22,8 +22,8 @@ void CanDeviceLawicel::ProcessReceivedFrames(std::mutex& rx_mutex)
     while(m_CircBuff.size() > 0)
     {
         uint8_t data_type = 0;
-        boost::circular_buffer<char>::iterator it_start;
-        boost::circular_buffer<char>::iterator it_end;
+        boost::circular_buffer<char>::iterator it_start = m_CircBuff.end();
+        boost::circular_buffer<char>::iterator it_end = m_CircBuff.end();
         for(boost::circular_buffer<char>::iterator i = m_CircBuff.begin(); i != m_CircBuff.end(); ++i)
         {
             char start_char = *i;
@@ -56,9 +56,7 @@ void CanDeviceLawicel::ProcessReceivedFrames(std::mutex& rx_mutex)
             size_t data_len = it_end - it_start;
             if(data_len >= sizeof(data))
             {
-                std::string hex;
-                utils::ConvertHexBufferToString((const char*)data, data_len, hex);
-                LOG(LogLevel::Warning, "Invalid CAN data received, {} is more than {}! Erasing circular buffer: {}", data_len, sizeof(data), hex);
+                LOG(LogLevel::Warning, "Invalid CAN data received, {} is more than {}! Erasing circular buffer", data_len, sizeof(data));
                 m_CircBuff.erase(m_CircBuff.begin(), it_end);
                 return;
             }
@@ -80,17 +78,17 @@ void CanDeviceLawicel::ProcessReceivedFrames(std::mutex& rx_mutex)
             uint8_t newline = 0;
 
             if(data_type == MESSAGE_TRANSMIT_STANDARD_FRAME)  // (00:58 : 20.531) t3F4 7 80 83 00 00 00 00 00 66 90
-                ret = sscanf(data, "%*c%03s%c%64[^\r]%c", frame_id_str, &frame_length, response, &newline);
+                ret = sscanf(data, "%*c%03s%c%63[^\r]%c", frame_id_str, &frame_length, response, &newline);
             else
-                ret = sscanf(data, "%*c%08s%c%64[^\r]%c", frame_id_str, &frame_length, response, &newline);
+                ret = sscanf(data, "%*c%08s%c%63[^\r]%c", frame_id_str, &frame_length, response, &newline);
             if(ret == 4 && newline == '\r')
             {
                 frame_length = frame_length - '0';
 
                 std::string out;
                 boost::algorithm::unhex(response, response + (frame_length * 2), std::back_inserter(out));
-                uint32_t frame_id = std::stoi(frame_id_str, 0, 16);
-                CanSerialPort::Get()->AddToRxQueue(frame_id, frame_length, (uint8_t*)out.c_str());
+                uint32_t frame_id = std::stoi(frame_id_str, nullptr, 16);
+                CanSerialPort::Get()->AddToRxQueue(frame_id, frame_length, const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(out.c_str())));
             }
             else
             {
@@ -155,7 +153,7 @@ size_t CanDeviceLawicel::PrepareSendDataFormat(const std::shared_ptr<CanData>& d
         }
         default:
         {
-            assert(true);
+            assert(false);
             break;
         }
     }

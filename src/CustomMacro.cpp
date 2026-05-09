@@ -1,29 +1,99 @@
 #include "pch.hpp"
 
+// --- MouseButtonAction base ---
+
+MouseButtonAction::MouseButtonAction(std::string&& str, std::string_view ini_prefix) : ini_prefix_(ini_prefix)
+{
+    uint16_t mouse_button = 0xFFFF;
+#ifdef _WIN32
+    if(str == "L" || str == "LEFT")
+        mouse_button = MOUSEEVENTF_LEFTDOWN;
+    else if(str == "R" || str == "RIGHT")
+        mouse_button = MOUSEEVENTF_RIGHTDOWN;
+    else if(str == "M" || str == "MIDDLE")
+        mouse_button = MOUSEEVENTF_MIDDLEDOWN;
+#else
+    mouse_button = 0;
+#endif
+    if(mouse_button != 0xFFFF)
+        key = mouse_button;
+    else
+        throw std::invalid_argument(std::format("Invalid mouse button input: {}", str));
+}
+
+std::string MouseButtonAction::ButtonToString(uint16_t key)
+{
+#ifdef _WIN32
+    switch(key)
+    {
+    case MOUSEEVENTF_LEFTDOWN:   return "LEFT";
+    case MOUSEEVENTF_RIGHTDOWN:  return "RIGHT";
+    case MOUSEEVENTF_MIDDLEDOWN: return "MIDDLE";
+    default: assert(0); return "INVALID";
+    }
+#else
+    return "INVALID";
+#endif
+}
+
+std::string MouseButtonAction::GenerateText(TextFormat fmt) const
+{
+    std::string text = ButtonToString(key);
+    return fmt == TextFormat::Ini ? std::format(" {}[{}]", ini_prefix_, text) : text;
+}
+
+// --- MousePositionAction base ---
+
+MousePositionAction::MousePositionAction(std::string&& str, std::string_view ini_prefix) : ini_prefix_(ini_prefix)
+{
+    size_t separator_pos = str.find(',');
+    if(separator_pos != std::string::npos)
+    {
+        boost::erase_all(str, " ");
+        m_pos.x = utils::stoi<decltype(m_pos.x)>(str);
+        m_pos.y = utils::stoi<decltype(m_pos.y)>(&str[separator_pos + 1]);
+    }
+    else
+        throw std::invalid_argument(std::format("Invalid mouse position input: {}", str));
+}
+
+std::string MousePositionAction::GenerateText(TextFormat fmt) const
+{
+    return fmt == TextFormat::Ini
+        ? std::format(" {}[{},{}]", ini_prefix_, m_pos.x, m_pos.y)
+        : std::format("{},{}", m_pos.x, m_pos.y);
+}
+
+// --- StringCommand base ---
+
+std::string StringCommand::GenerateText(TextFormat fmt) const
+{
+    return fmt == TextFormat::Ini ? std::format(" {}[{}]", ini_prefix_, cmd) : cmd;
+}
+
+// --- KeyText ---
+
 void KeyText::Execute()
 {
 #ifdef _WIN32
-    for(size_t i = 0; i < seq.length(); i++)
-    {
-        TypeCharacter(seq[i] & 0xFF);
-    }
+    for(char c : seq)
+        TypeCharacter(static_cast<uint8_t>(c));
 #else
     system(fmt::format("xte 'str {}'", seq).c_str());
 #endif
 }
 
-std::string KeyText::GenerateText(bool is_ini_format)
+std::string KeyText::GenerateText(TextFormat fmt) const
 {
-    std::string ret = is_ini_format ? std::format(" KEY_TYPE[{}]", seq) : seq;
-    return ret;
+    return fmt == TextFormat::Ini ? std::format(" KEY_TYPE[{}]", seq) : seq;
 }
 
 #ifdef _WIN32
 void KeyText::TypeCharacter(uint16_t character)
 {
-    int count = MultiByteToWideChar(CP_ACP, 0, (char*)&character, 1, NULL, 0);
+    int count = MultiByteToWideChar(CP_ACP, 0, reinterpret_cast<const char*>(&character), 1, nullptr, 0);
     wchar_t wide_char;
-    MultiByteToWideChar(CP_ACP, 0, (char*)&character, 1, &wide_char, count);
+    MultiByteToWideChar(CP_ACP, 0, reinterpret_cast<const char*>(&character), 1, &wide_char, count);
     INPUT input = { 0 };
     input.type = INPUT_KEYBOARD;
     input.ki.wScan = wide_char;
@@ -36,42 +106,40 @@ void KeyText::TypeCharacter(uint16_t character)
 }
 #endif
 
+// --- KeyCombination ---
+
 KeyCombination::KeyCombination(std::string&& str)
 {
     boost::erase_all(str, " ");
     boost::char_separator<char> sep("+");
     boost::tokenizer<boost::char_separator<char>> tok(str, sep);
-    for(boost::tokenizer<boost::char_separator<char>>::iterator beg = tok.begin(); beg != tok.end(); ++beg)
+    for(const auto& token : tok) /* do not throw on invalid key! */
     {
-        std::string key_code = *beg;
+        std::string key_code = token;
         uint16_t key = CustomMacro::Get()->GetKeyScanCode(key_code);
-        if(key == 0xFFFF) /* do not throw here! */
-        {
+        if(key == 0xFFFF)
             LOG(LogLevel::Error, "Invalid key found in settings.ini: {}", key_code);
-        }
         seq.push_back(key);
     }
 }
 
 void KeyCombination::Execute()
 {
-    for(size_t i = 0; i < seq.size(); i++)
-        PressReleaseKey(seq[i]);
-    for(size_t i = 0; i < seq.size(); i++)
-        PressReleaseKey(seq[i], false);
+    for(uint16_t key : seq)
+        PressReleaseKey(key);
+    for(uint16_t key : seq)
+        PressReleaseKey(key, false);
 }
 
-std::string KeyCombination::GenerateText(bool is_ini_format)
+std::string KeyCombination::GenerateText(TextFormat fmt) const
 {
     std::string text;
-    for(auto& i : seq)
+    for(uint16_t key : seq)
     {
-        text += CustomMacro::Get()->GetKeyStringFromScanCode(i) + "+";
+        if(!text.empty()) text += '+';
+        text += CustomMacro::Get()->GetKeyStringFromScanCode(key);
     }
-    if(!text.empty() && text.back() == '+')
-        text.pop_back();
-    std::string ret = is_ini_format ? std::format(" KEY_SEQ[{}]", text) : text;
-    return ret;
+    return fmt == TextFormat::Ini ? std::format(" KEY_SEQ[{}]", text) : text;
 }
 
 void KeyCombination::PressReleaseKey(uint16_t scancode, bool press)
@@ -89,9 +157,11 @@ void KeyCombination::PressReleaseKey(uint16_t scancode, bool press)
 #endif
 }
 
+// --- KeyDelay ---
+
 KeyDelay::KeyDelay(std::string&& str)
 {
-    size_t separator_pos = str.find("-");
+    size_t separator_pos = str.find('-');
     if(separator_pos != std::string::npos)
     {
         boost::erase_all(str, " ");
@@ -124,40 +194,26 @@ void KeyDelay::Execute()
         }, delay);
 }
 
-std::string KeyDelay::GenerateText(bool is_ini_format)
+std::string KeyDelay::GenerateText(TextFormat fmt) const
 {
-    std::string ret;
     if(std::holds_alternative<uint32_t>(delay))
     {
-        ret = is_ini_format ? std::format(" DELAY[{}]", std::get<uint32_t>(delay)) : boost::lexical_cast<std::string>(std::get<uint32_t>(delay));
+        uint32_t d = std::get<uint32_t>(delay);
+        return fmt == TextFormat::Ini ? std::format(" DELAY[{}]", d) : boost::lexical_cast<std::string>(d);
     }
-    else
-    {
-        std::array<uint32_t, 2> delays = std::get<std::array<uint32_t, 2>>(delay);
-        ret = is_ini_format ? std::format(" DELAY[{}-{}]", delays[0], delays[1]) : boost::lexical_cast<std::string>(delays[0]) + "-" + boost::lexical_cast<std::string>(delays[1]);
-    }
-    return ret;
+    const auto& delays = std::get<std::array<uint32_t, 2>>(delay);
+    return fmt == TextFormat::Ini
+        ? std::format(" DELAY[{}-{}]", delays[0], delays[1])
+        : boost::lexical_cast<std::string>(delays[0]) + "-" + boost::lexical_cast<std::string>(delays[1]);
 }
 
-MouseMovement::MouseMovement(std::string&& str)
-{
-    size_t separator_pos = str.find(",");
-    if(separator_pos != std::string::npos)
-    {
-        boost::erase_all(str, " ");
-        m_pos.x = utils::stoi<decltype(m_pos.x)>(str);
-        m_pos.y = utils::stoi<decltype(m_pos.y)>(&str[separator_pos + 1]);
-    }
-    else
-        throw std::invalid_argument(std::format("Invalid mouse movement input: {}", str));
-}
+// --- MouseMovement ---
 
 void MouseMovement::Execute()
 {
 #ifdef _WIN32
-    POINT to_screen;
+    POINT to_screen = m_pos;
     HWND hwnd = GetForegroundWindow();
-    memcpy(&to_screen, &m_pos, sizeof(to_screen));
     ClientToScreen(hwnd, &to_screen);
     ShowCursor(FALSE);
     SetCursorPos(to_screen.x, to_screen.y);
@@ -167,102 +223,39 @@ void MouseMovement::Execute()
 #endif
 }
 
-std::string MouseMovement::GenerateText(bool is_ini_format)
-{
-    std::string ret = is_ini_format ? std::format(" MOUSE_MOVE[{},{}]", m_pos.x, m_pos.y) : std::format("{},{}", m_pos.x, m_pos.y);
-    return ret;
-}
-
-MouseInterpolate::MouseInterpolate(std::string&& str)
-{
-    size_t separator_pos = str.find(",");
-    if(separator_pos != std::string::npos)
-    {
-        boost::erase_all(str, " ");
-        m_pos.x = utils::stoi<decltype(m_pos.x)>(str);
-        m_pos.y = utils::stoi<decltype(m_pos.y)>(&str[separator_pos + 1]);
-    }
-    else
-        throw std::invalid_argument(std::format("Invalid mouse interpolate input: {}", str));
-}
+// --- MouseInterpolate ---
 
 void MouseInterpolate::Execute()
 {
 #ifdef _WIN32
-    POINT to_screen;
+    POINT to_screen = m_pos;
     HWND hwnd = GetForegroundWindow();
-    memcpy(&to_screen, &m_pos, sizeof(to_screen));
     ClientToScreen(hwnd, &to_screen);
 
     POINT curr_pos;
     GetCursorPos(&curr_pos);
 
-    int steps = utils::random_mt(1000, 3000);
+    const int steps = utils::random_mt(1000, 3000);
+    ShowCursor(FALSE);
     for(int i = 0; i <= steps; i++)
     {
-        int pos_x = std::round(std::lerp(static_cast<float>(curr_pos.x), static_cast<float>(to_screen.x), static_cast<float>(i) / static_cast<float>(steps)));
-        int pos_y = std::round(std::lerp(static_cast<float>(curr_pos.y), static_cast<float>(to_screen.y), static_cast<float>(i) / static_cast<float>(steps)));
-        ShowCursor(FALSE);
+        const float t = static_cast<float>(i) / static_cast<float>(steps);
+        const int pos_x = static_cast<int>(std::round(std::lerp(static_cast<float>(curr_pos.x), static_cast<float>(to_screen.x), t)));
+        const int pos_y = static_cast<int>(std::round(std::lerp(static_cast<float>(curr_pos.y), static_cast<float>(to_screen.y), t)));
         SetCursorPos(pos_x, pos_y);
-        ShowCursor(TRUE);
         std::this_thread::sleep_for(std::chrono::nanoseconds(100));
     }
+    ShowCursor(TRUE);
 #else
     system(fmt::format("xte 'mousemove {} {}'", 0, 0).c_str());
 #endif
 }
 
-std::string MouseInterpolate::GenerateText(bool is_ini_format)
-{
-    std::string ret = is_ini_format ? std::format(" MOUSE_INTERPOLATE[{},{}]", m_pos.x, m_pos.y) : std::format("{},{}", m_pos.x, m_pos.y);
-    return ret;
-}
-
-MousePress::MousePress(const std::string&& str)
-{
-    uint16_t mouse_button = 0xFFFF;
-#ifdef _WIN32
-    if(str == "L" || str == "LEFT")
-        mouse_button = MOUSEEVENTF_LEFTDOWN;
-    if(str == "R" || str == "RIGHT")
-        mouse_button = MOUSEEVENTF_RIGHTDOWN;
-    if(str == "M" || str == "MIDDLE")
-        mouse_button = MOUSEEVENTF_MIDDLEDOWN;
-#else
-    mouse_button = 0;
-#endif
-    if(mouse_button != 0xFFFF)
-        key = mouse_button;
-    else
-        throw std::invalid_argument(std::format("Invalid mouse button input: {}", str));
-}
+// --- MousePress ---
 
 void MousePress::Execute()
 {
     PressMouse(key);
-}
-
-std::string MousePress::GenerateText(bool is_ini_format)
-{
-    std::string text;
-#ifdef _WIN32
-    switch(key)
-    {
-    case MOUSEEVENTF_LEFTDOWN:
-        text = "LEFT";
-        break;
-    case MOUSEEVENTF_RIGHTDOWN:
-        text = "RIGHT";
-        break;
-    case MOUSEEVENTF_MIDDLEDOWN:
-        text = "MIDDLE";
-        break;
-    default:
-        assert(0);
-    }
-#endif
-    std::string ret = is_ini_format ? std::format(" MOUSE_PRESS[{}]", text) : text;
-    return ret;
 }
 
 void MousePress::PressMouse(uint16_t mouse_button)
@@ -277,51 +270,11 @@ void MousePress::PressMouse(uint16_t mouse_button)
 #endif
 }
 
-MouseRelease::MouseRelease(const std::string&& str)
-{
-    uint16_t mouse_button = 0xFFFF;
-#ifdef _WIN32
-    if(str == "L" || str == "LEFT")
-        mouse_button = MOUSEEVENTF_LEFTDOWN;
-    if(str == "R" || str == "RIGHT")
-        mouse_button = MOUSEEVENTF_RIGHTDOWN;
-    if(str == "M" || str == "MIDDLE")
-        mouse_button = MOUSEEVENTF_MIDDLEDOWN;
-#else
-    mouse_button = 0;
-#endif
-    if(mouse_button != 0xFFFF)
-        key = mouse_button;
-    else
-        throw std::invalid_argument(std::format("Invalid mouse button input: {}", str));
-}
+// --- MouseRelease ---
 
 void MouseRelease::Execute()
 {
     ReleaseMouse(key);
-}
-
-std::string MouseRelease::GenerateText(bool is_ini_format)
-{
-    std::string text;
-#ifdef _WIN32
-    switch(key)
-    {
-    case MOUSEEVENTF_LEFTDOWN:
-        text = "LEFT";
-        break;
-    case MOUSEEVENTF_RIGHTDOWN:
-        text = "RIGHT";
-        break;
-    case MOUSEEVENTF_MIDDLEDOWN:
-        text = "MIDDLE";
-        break;
-    default:
-        assert(0);
-    }
-#endif
-    std::string ret = is_ini_format ? std::format(" MOUSE_RELEASE[{}]", text) : text;
-    return ret;
 }
 
 void MouseRelease::ReleaseMouse(uint16_t mouse_button)
@@ -329,58 +282,18 @@ void MouseRelease::ReleaseMouse(uint16_t mouse_button)
 #ifdef _WIN32
     INPUT input = { 0 };
     input.type = INPUT_MOUSE;
-    input.mi.dwFlags = mouse_button << (uint16_t)1;
+    input.mi.dwFlags = static_cast<DWORD>(mouse_button) << 1;
     SendInput(1, &input, sizeof(input));
 #else
 
 #endif
 }
 
-MouseClick::MouseClick(const std::string&& str)
-{
-    uint16_t mouse_button = 0xFFFF;
-#ifdef _WIN32
-    if(str == "L" || str == "LEFT")
-        mouse_button = MOUSEEVENTF_LEFTDOWN;
-    if(str == "R" || str == "RIGHT")
-        mouse_button = MOUSEEVENTF_RIGHTDOWN;
-    if(str == "M" || str == "MIDDLE")
-        mouse_button = MOUSEEVENTF_MIDDLEDOWN;
-#else
-    mouse_button = 0;
-#endif
-    if(mouse_button != 0xFFFF)
-        key = mouse_button;
-    else
-        throw std::invalid_argument(std::format("Invalid mouse button input: {}", str));
-}
+// --- MouseClick ---
 
 void MouseClick::Execute()
 {
     PressReleaseMouse(key);
-}
-
-std::string MouseClick::GenerateText(bool is_ini_format)
-{
-    std::string text;
-#ifdef _WIN32
-    switch(key)
-    {
-    case MOUSEEVENTF_LEFTDOWN:
-        text = "LEFT";
-        break;
-    case MOUSEEVENTF_RIGHTDOWN:
-        text = "RIGHT";
-        break;
-    case MOUSEEVENTF_MIDDLEDOWN:
-        text = "MIDDLE";
-        break;
-    default:
-        assert(0);
-    }
-#endif
-    std::string ret = is_ini_format ? std::format(" MOUSE_CLICK[{}]", text) : text;
-    return ret;
 }
 
 void MouseClick::PressReleaseMouse(uint16_t mouse_button)
@@ -397,6 +310,8 @@ void MouseClick::PressReleaseMouse(uint16_t mouse_button)
 #endif
 }
 
+// --- BashCommand ---
+
 void BashCommand::Execute()
 {
 #ifdef _WIN32
@@ -408,11 +323,7 @@ void BashCommand::Execute()
 #endif
 }
 
-std::string BashCommand::GenerateText(bool is_ini_format)
-{
-    std::string ret = is_ini_format ? std::format(" BASH[{}]", cmd) : cmd;
-    return ret;
-}
+// --- CommandExecute ---
 
 void CommandExecute::Execute()
 {
@@ -425,11 +336,7 @@ void CommandExecute::Execute()
 #endif
 }
 
-std::string CommandExecute::GenerateText(bool is_ini_format)
-{
-    std::string ret = is_ini_format ? std::format(" CMD[{}]", cmd) : cmd;
-    return ret;
-}
+// --- CommandXml ---
 
 void CommandXml::Execute()
 {
@@ -440,18 +347,12 @@ void CommandXml::Execute()
     if(params.size() == 2)
         cmd_executor->ExecuteByName(params[0], params[1]);
     else
-    {
         LOG(LogLevel::Warning, "Invalid input: {}", cmd);
-    }
 }
 
-std::string CommandXml::GenerateText(bool is_ini_format)
-{
-    std::string ret = is_ini_format ? std::format(" CMD_XML[{}]", cmd) : cmd;
-    return ret;
-}
+// --- KeyBringAppToForeground ---
 
-KeyBringAppToForeground::KeyBringAppToForeground(const std::string&& str)
+KeyBringAppToForeground::KeyBringAppToForeground(std::string&& str)
 {
     std::vector<std::string> params;
     boost::split(params, str, boost::is_any_of(","));
@@ -461,9 +362,7 @@ KeyBringAppToForeground::KeyBringAppToForeground(const std::string&& str)
         title = std::move(params[1]);
     }
     else
-    {
         LOG(LogLevel::Warning, "Invalid input: {}", str);
-    }
 }
 
 void KeyBringAppToForeground::Execute()
@@ -471,13 +370,14 @@ void KeyBringAppToForeground::Execute()
     ImageRecognition::BringWindowToForegroundByName(app, title);
 }
 
-std::string KeyBringAppToForeground::GenerateText(bool is_ini_format)
+std::string KeyBringAppToForeground::GenerateText(TextFormat fmt) const
 {
-    std::string ret = is_ini_format ? std::format(" CMD_FG[{},{}]", app, title) : std::format("{},{}", app, title);
-    return ret;
+    return fmt == TextFormat::Ini ? std::format(" CMD_FG[{},{}]", app, title) : std::format("{},{}", app, title);
 }
 
-KeyFindImageOnScreen::KeyFindImageOnScreen(const std::string&& str)
+// --- KeyFindImageOnScreen ---
+
+KeyFindImageOnScreen::KeyFindImageOnScreen(std::string&& str)
 {
     std::vector<std::string> params;
     boost::split(params, str, boost::is_any_of(","));
@@ -495,9 +395,7 @@ KeyFindImageOnScreen::KeyFindImageOnScreen(const std::string&& str)
         }
     }
     else
-    {
         LOG(LogLevel::Warning, "Invalid input: {}", str);
-    }
 }
 
 void KeyFindImageOnScreen::Execute()
@@ -512,63 +410,69 @@ void KeyFindImageOnScreen::Execute()
         ImageRecognition::MoveCursorAndClick(pos);
     }
     else
-    {
         LOG(LogLevel::Verbose, "Image isn't found on screen");
-    }
 }
 
-std::string KeyFindImageOnScreen::GenerateText(bool is_ini_format)
+std::string KeyFindImageOnScreen::GenerateText(TextFormat fmt) const
 {
-    std::string ret = is_ini_format ? std::format(" CMD_IMG[{},{},{}]", image_path.generic_string(), offset.x, offset.y) : 
-        std::format("{},{},{}", image_path.generic_string(), offset.x, offset.y);
-    return ret;
+    return fmt == TextFormat::Ini
+        ? std::format(" CMD_IMG[{},{},{}]", image_path.generic_string(), offset.x, offset.y)
+        : std::format("{},{},{}", image_path.generic_string(), offset.x, offset.y);
+}
+
+// --- CustomMacro ---
+
+bool CustomMacro::IsKeyReserved(const std::string& key_code) const
+{
+    auto check = [&](const std::string& key, std::string_view owner) -> bool
+    {
+        if(key != key_code) return false;
+        LOG(LogLevel::Warning, "Key \"{}\" is already assigned to {}!", key_code, owner);
+        return true;
+    };
+    std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
+    return check(PrintScreenSaver::Get()->screenshot_key, "PrintScreenSaver") ||
+           check(PathSeparator::Get()->replace_key, "PathSeparator") ||
+           check(bring_to_foreground_key, "BringToForeground") ||
+           check(time_tracker->GetToggleKey(), "TimeTracker") ||
+           check(ScriptLauncher::Get()->launcher_key, "ScriptLauncher");
 }
 
 void CustomMacro::ParseMacroKeys(size_t id, const std::string& key_code, std::string& str, std::unique_ptr<MacroAppProfile>& c, MacroFlags flags)
 {
     constexpr std::underlying_type_t<MacroTypes> MAX_ITEMS = MacroTypes::MAX;
-    constexpr const char* start_str_arr[MAX_ITEMS] = { "BIND_NAME[", "KEY_SEQ[", "KEY_TYPE[", "DELAY[", "MOUSE_MOVE[", "MOUSE_INTERPOLATE[",
-        "MOUSE_PRESS[", "MOUSE_RELEASE", "MOUSE_CLICK[", "BASH[", "CMD[", "CMD_XML[", "CMD_FG[", "CMD_IMG["};
-    constexpr const size_t start_str_arr_lens[MAX_ITEMS] = { std::char_traits<char>::length(start_str_arr[0]),
-        std::char_traits<char>::length(start_str_arr[1]), std::char_traits<char>::length(start_str_arr[2]), std::char_traits<char>::length(start_str_arr[3]),
-        std::char_traits<char>::length(start_str_arr[4]), std::char_traits<char>::length(start_str_arr[5]), std::char_traits<char>::length(start_str_arr[6]),
-        std::char_traits<char>::length(start_str_arr[7]), std::char_traits<char>::length(start_str_arr[8]), std::char_traits<char>::length(start_str_arr[9]),
-        std::char_traits<char>::length(start_str_arr[10]), std::char_traits<char>::length(start_str_arr[11]), std::char_traits<char>::length(start_str_arr[12]),
-        std::char_traits<char>::length(start_str_arr[13]) };
+    using namespace std::string_view_literals;
+    constexpr std::string_view start_str_arr[MAX_ITEMS] = { "BIND_NAME["sv, "KEY_SEQ["sv, "KEY_TYPE["sv, "DELAY["sv, "MOUSE_MOVE["sv, "MOUSE_INTERPOLATE["sv,
+        "MOUSE_PRESS["sv, "MOUSE_RELEASE["sv, "MOUSE_CLICK["sv, "BASH["sv, "CMD["sv, "CMD_XML["sv, "CMD_FG["sv, "CMD_IMG["sv };
 
-    constexpr const char* seq_separator = "+";
+    if(IsKeyReserved(key_code))
+        return;
 
-    std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
-    if(PrintScreenSaver::Get()->screenshot_key == key_code)
-    {
-        LOG(LogLevel::Warning, "Key \"{}\" is already assigned to PrintScreenSaver!");
-        return;
-    }
-    if(PathSeparator::Get()->replace_key == key_code)
-    {
-        LOG(LogLevel::Warning, "Key \"{}\" is already assigned to PathSeparator!");
-        return;
-    }
-    if(bring_to_foreground_key == key_code)
-    {
-        LOG(LogLevel::Warning, "Key \"{}\" is already assigned to BringToForeground!");
-        return;
-    }
-	if (time_tracker->GetToggleKey() == key_code)
-	{
-		LOG(LogLevel::Warning, "Key \"{}\" is already assigned to TimeTracker!", key_code);
-		return;
-	}
+    using KeyFactory = std::unique_ptr<IKey>(*)(std::string&&);
+    static const KeyFactory factories[MAX_ITEMS] = {
+        nullptr,  /* BIND_NAME handled separately */
+        [](std::string&& s) -> std::unique_ptr<IKey> { return std::make_unique<KeyCombination>(std::move(s)); },
+        [](std::string&& s) -> std::unique_ptr<IKey> { return std::make_unique<KeyText>(std::move(s)); },
+        [](std::string&& s) -> std::unique_ptr<IKey> { return std::make_unique<KeyDelay>(std::move(s)); },
+        [](std::string&& s) -> std::unique_ptr<IKey> { return std::make_unique<MouseMovement>(std::move(s)); },
+        [](std::string&& s) -> std::unique_ptr<IKey> { return std::make_unique<MouseInterpolate>(std::move(s)); },
+        [](std::string&& s) -> std::unique_ptr<IKey> { return std::make_unique<MousePress>(std::move(s)); },
+        [](std::string&& s) -> std::unique_ptr<IKey> { return std::make_unique<MouseRelease>(std::move(s)); },
+        [](std::string&& s) -> std::unique_ptr<IKey> { return std::make_unique<MouseClick>(std::move(s)); },
+        [](std::string&& s) -> std::unique_ptr<IKey> { return std::make_unique<BashCommand>(std::move(s)); },
+        [](std::string&& s) -> std::unique_ptr<IKey> { return std::make_unique<CommandExecute>(std::move(s)); },
+        [](std::string&& s) -> std::unique_ptr<IKey> { return std::make_unique<CommandXml>(std::move(s)); },
+        [](std::string&& s) -> std::unique_ptr<IKey> { return std::make_unique<KeyBringAppToForeground>(std::move(s)); },
+        [](std::string&& s) -> std::unique_ptr<IKey> { return std::make_unique<KeyFindImageOnScreen>(std::move(s)); },
+    };
 
     size_t pos = 1;
     while(pos < str.length() - 1)
     {
         size_t first_end = str.find("]", pos + 1);
-        size_t first_pos[MAX_ITEMS];
+        std::array<size_t, MAX_ITEMS> first_pos;
         for(std::underlying_type_t<MacroTypes> i = 0; i != MAX_ITEMS; ++i)
-        {
             first_pos[i] = str.substr(0, first_end).find(start_str_arr[i], pos - 1);
-        }
 
         uint8_t input_type = 0xFF;
         uint8_t not_empty_cnt = 0;
@@ -587,159 +491,34 @@ void CustomMacro::ParseMacroKeys(size_t id, const std::string& key_code, std::st
             return;
         }
 
-        switch(input_type)
+        pos = first_end;
+        std::string sequence = utils::extract_string(str, first_pos[input_type], first_end, start_str_arr[input_type].size());
+
+        if(input_type == MacroTypes::BIND_NAME)
         {
-            case MacroTypes::BIND_NAME:
+            c->bind_name[key_code] = std::move(sequence);
+        }
+        else if(factories[input_type])
+        {
+            try
             {
-                pos = first_end;
-                c->bind_name[key_code] = utils::extract_string(str, first_pos[MacroTypes::BIND_NAME], first_end, start_str_arr_lens[MacroTypes::BIND_NAME]);
-                break;
+                c->key_vec[key_code].push_back(factories[input_type](std::move(sequence)));
             }
-            case MacroTypes::KEY_SEQ:
+            catch(const std::exception& e)
             {
-                pos = first_end;
-                std::string&& sequence = utils::extract_string(str, first_pos[MacroTypes::KEY_SEQ], first_end, start_str_arr_lens[MacroTypes::KEY_SEQ]);
-                c->key_vec[key_code].push_back(std::make_unique<KeyCombination>(std::move(sequence)));
-                break;
+                LOG(LogLevel::Error, "Invalid argument for {}: {}", start_str_arr[input_type], e.what());
             }
-            case MacroTypes::KEY_TYPE:
-            {
-                pos = first_end;
-                std::string sequence = utils::extract_string(str, first_pos[MacroTypes::KEY_TYPE], first_end, start_str_arr_lens[MacroTypes::KEY_TYPE]);
-                c->key_vec[key_code].push_back(std::make_unique<KeyText>(std::move(sequence)));
-                break;
-            }
-            case MacroTypes::DELAY:
-            {
-                pos = first_end;
-                std::string sequence = utils::extract_string(str, first_pos[MacroTypes::DELAY], first_end, start_str_arr_lens[MacroTypes::DELAY]);
-                try
-                {
-                    c->key_vec[key_code].push_back(std::make_unique<KeyDelay>(std::move(sequence)));
-                }
-                catch(const std::exception& e)
-                {
-                    LOG(LogLevel::Error, "Invalid argument for DELAY: {} ({})", sequence, e.what());
-                }
-                break;
-            }
-            case MacroTypes::MOUSE_MOVE:
-            {
-                pos = first_end;
-                std::string sequence = utils::extract_string(str, first_pos[MacroTypes::MOUSE_MOVE], first_end, start_str_arr_lens[MacroTypes::MOUSE_MOVE]);
-                try
-                {
-                    c->key_vec[key_code].push_back(std::make_unique<MouseMovement>(std::move(sequence)));
-                }
-                catch(const std::exception& e)
-                {
-                    LOG(LogLevel::Error, "Invalid argument for MOUSE_MOVE: {} ({})", sequence, e.what());
-                }
-                break;
-            }
-            case MacroTypes::MOUSE_INTERPOLATE:
-            {
-                pos = first_end;
-                std::string sequence = utils::extract_string(str, first_pos[MacroTypes::MOUSE_INTERPOLATE], first_end, start_str_arr_lens[MacroTypes::MOUSE_INTERPOLATE]);
-                try
-                {
-                    c->key_vec[key_code].push_back(std::make_unique<MouseInterpolate>(std::move(sequence)));
-                }
-                catch(const std::exception& e)
-                {
-                    LOG(LogLevel::Error, "Invalid argument for MOUSE_INTERPOLATE: {} ({})", sequence, e.what());
-                }
-                break;
-            }
-            case MacroTypes::MOUSE_PRESS:
-            {
-                pos = first_end;
-                std::string sequence = utils::extract_string(str, first_pos[MacroTypes::MOUSE_PRESS], first_end, start_str_arr_lens[MacroTypes::MOUSE_PRESS]);
-                try
-                {
-                    c->key_vec[key_code].push_back(std::make_unique<MousePress>(std::move(sequence)));
-                }
-                catch(const std::exception& e)
-                {
-                    LOG(LogLevel::Error, "Invalid argument for MOUSE_PRESS: {} ({})", sequence, e.what());
-                }
-                break;
-            }
-            case MacroTypes::MOUSE_RELEASE:
-            {
-                pos = first_end;
-                std::string sequence = utils::extract_string(str, first_pos[MacroTypes::MOUSE_RELEASE], first_end, start_str_arr_lens[MacroTypes::MOUSE_RELEASE]);
-                try
-                {
-                    c->key_vec[key_code].push_back(std::make_unique<MouseRelease>(std::move(sequence)));
-                }
-                catch(const std::exception& e)
-                {
-                    LOG(LogLevel::Error, "Invalid argument for MOUSE_RELEASE: {} ({})", sequence, e.what());
-                }
-                break;
-            }
-            case MacroTypes::MOUSE_CLICK:
-            {
-                pos = first_end;
-                std::string sequence = utils::extract_string(str, first_pos[MacroTypes::MOUSE_CLICK], first_end, start_str_arr_lens[MacroTypes::MOUSE_CLICK]);
-                try
-                {
-                    c->key_vec[key_code].push_back(std::make_unique<MouseClick>(std::move(sequence)));
-                }
-                catch(const std::exception& e)
-                {
-                    LOG(LogLevel::Error, "Invalid argument for MOUSE_CLICK: {} ({})", sequence, e.what());
-                }
-                break;
-            }
-            case MacroTypes::BASH:
-            {
-                pos = first_end;
-                std::string sequence = utils::extract_string(str, first_pos[MacroTypes::BASH], first_end, start_str_arr_lens[MacroTypes::BASH]);
-                c->key_vec[key_code].push_back(std::make_unique<BashCommand>(std::move(sequence)));
-                break;
-            }
-            case MacroTypes::CMD:
-            {
-                pos = first_end;
-                std::string sequence = utils::extract_string(str, first_pos[MacroTypes::CMD], first_end, start_str_arr_lens[MacroTypes::CMD]);
-                c->key_vec[key_code].push_back(std::make_unique<CommandExecute>(std::move(sequence)));
-                break;
-            }
-            case MacroTypes::CMD_XML:
-            {
-                pos = first_end;
-                std::string sequence = utils::extract_string(str, first_pos[MacroTypes::CMD_XML], first_end, start_str_arr_lens[MacroTypes::CMD_XML]);
-                c->key_vec[key_code].push_back(std::make_unique<CommandXml>(std::move(sequence)));
-                break;
-            }
-            case MacroTypes::CMD_FG:
-            {
-                pos = first_end;
-                std::string sequence = utils::extract_string(str, first_pos[MacroTypes::CMD_FG], first_end, start_str_arr_lens[MacroTypes::CMD_FG]);
-                c->key_vec[key_code].push_back(std::make_unique<KeyBringAppToForeground>(std::move(sequence)));
-                break;
-            }
-            case MacroTypes::CMD_IMG:
-            {
-                pos = first_end;
-                std::string sequence = utils::extract_string(str, first_pos[MacroTypes::CMD_IMG], first_end, start_str_arr_lens[MacroTypes::CMD_IMG]);
-                c->key_vec[key_code].push_back(std::make_unique<KeyFindImageOnScreen>(std::move(sequence)));
-                break;
-            }
-            default:
-            {
-                LOG(LogLevel::Error, "Invalid sequence/text format in line: {}", str.c_str());
-                break;
-            }
+        }
+        else
+        {
+            LOG(LogLevel::Error, "Invalid sequence/text format in line: {}", str);
         }
     }
     c->flags[key_code] = flags;
 
     if(c->bind_name[key_code].empty())
     {
-        c->bind_name[key_code] = "Unknown macro"; /* this needed because wxTreeList won't show empty string as row */
+        c->bind_name[key_code] = "Unknown macro"; /* wxTreeList won't show empty string as row */
         LOG(LogLevel::Warning, "Macro name for key {} missing. Giving it 'Unknown macro', feel free to change it.", key_code);
     }
 }
@@ -755,7 +534,7 @@ void CustomMacro::ProcessReceivedData(const char* data, unsigned int len)
 {
     if(!strncmp(data, "MEAS_DATA", 9))
     {
-        Sensors::Get()->HandleAndForwardIncommingMeasurements(data, len, "SERIAL");
+        Sensors::Get()->HandleAndForwardIncomingMeasurements(data, len, "SERIAL");
         return;
     }
 
@@ -768,9 +547,9 @@ void CustomMacro::ProcessReceivedData(const char* data, unsigned int len)
         return;
     }
 
-    KeyData_t* k = (KeyData_t*)data;
-    uint16_t crc = utils::crc16_modbus((void*)data, len - sizeof(KeyData_t::crc));
-    if(!strncmp(data, "reset", 5) && crc == 0x6bd8) /* in case of suddenly reset of STM32 */
+    const KeyData_t* k = reinterpret_cast<const KeyData_t*>(data);
+    uint16_t crc = utils::crc16_modbus(const_cast<char*>(data), len - sizeof(KeyData_t::crc));
+    if(!strncmp(data, "reset", 5) && crc == 0x6bd8) /* in case of sudden STM32 reset */
     {
         LOG(LogLevel::Verbose, "Reset received");
         pressed_keys.clear();
@@ -778,8 +557,8 @@ void CustomMacro::ProcessReceivedData(const char* data, unsigned int len)
 
     if(k->crc == crc)
     {
-        static const char all_released[14] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-        if(!memcmp(&data[1], all_released, sizeof(all_released)))
+        static constexpr std::array<char, 14> all_released{};
+        if(!memcmp(&data[1], all_released.data(), all_released.size()))
         {
             pressed_keys.clear();
         }
@@ -790,11 +569,9 @@ void CustomMacro::ProcessReceivedData(const char* data, unsigned int len)
 
             if(advanced_key_binding)
             {
-                static const char no_keys[6] = { 0, 0, 0, 0, 0, 0 };
-                if(!memcmp(k->keys, no_keys, sizeof(k->keys)))  /* stop the execution when only control keys was pressed */
-                {
+                static constexpr std::array<char, 6> no_keys{};
+                if(!memcmp(k->keys, no_keys.data(), no_keys.size()))  /* stop when only modifier keys are pressed */
                     return;
-                }
             }
 
             if(k->lshift)
@@ -815,13 +592,12 @@ void CustomMacro::ProcessReceivedData(const char* data, unsigned int len)
                 pressed_keys += "RCTRL";
 
             for(int i = 0; i != 1; i++) // TODO: sizeof(k->keys) / sizeof(k->keys[0])
-            {   /* only supporting 1 addon key (for now?), it should be more than enough - possible to bind more than 700 macros - PER APPLICATION! */
+            {   /* only 1 addon key supported for now — still allows 700+ macros per application */
                 auto key_str = hid_scan_codes.find(k->keys[i]);
                 if(key_str != hid_scan_codes.end())
                 {
                     if(!pressed_keys.empty() && pressed_keys[pressed_keys.length() - 1] != '+')
                         pressed_keys += '+';
-
                     pressed_keys += key_str->second;
                 }
             }
@@ -839,25 +615,14 @@ void CustomMacro::ProcessReceivedData(const char* data, unsigned int len)
 
 uint16_t CustomMacro::GetKeyScanCode(const std::string& str)
 {
-    uint16_t ret = 0xFFFF;
     auto it = scan_codes.find(str);
-    if(it != scan_codes.end())
-        ret = it->second;
-    return ret;
+    return it != scan_codes.end() ? it->second : 0xFFFF;
 }
 
 std::string CustomMacro::GetKeyStringFromScanCode(int scancode)
 {
-    std::string ret = "INVALID";
-    for(auto& i : scan_codes)
-    {
-        if(i.second == scancode)
-        {
-            ret = i.first;
-            break;
-        }
-    }
-    return ret;
+    auto it = std::ranges::find_if(scan_codes, [scancode](const auto& pair) { return pair.second == scancode; });
+    return it != scan_codes.end() ? it->first : "INVALID";
 }
 
 void CustomMacro::ExecuteKeypresses(bool directly_execute_alarm)
@@ -873,19 +638,23 @@ void CustomMacro::ExecuteKeypresses(bool directly_execute_alarm)
         PathSeparator::Get()->ReplaceClipboard(PathSeparator::ReplaceType::PATH_SEPARATOR);
         return;
     }
-
     if(bring_to_foreground_key == pressed_keys)
     {
         ExecuteForegroundKeypress();
         return;
     }
+    if(ScriptLauncher::Get()->launcher_key == pressed_keys)
+    {
+        ScriptLauncher::Get()->Execute();
+        return;
+    }
 
     std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
-    if (time_tracker->GetToggleKey() == pressed_keys)
+    if(time_tracker->GetToggleKey() == pressed_keys)
     {
         MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
         if(frame)
-		    frame->timesheet_panel->ToggleWorktime();
+            frame->timesheet_panel->ToggleWorktime();
         return;
     }
 
@@ -897,17 +666,14 @@ void CustomMacro::ExecuteKeypresses(bool directly_execute_alarm)
         const auto it = macros[0]->key_vec.find(pressed_keys);
         if(it != macros[0]->key_vec.end())
         {
-            if (macros[0]->flags[pressed_keys] == MacroFlags::Alarm && !directly_execute_alarm)
+            if(macros[0]->flags[pressed_keys] == MacroFlags::Alarm && !directly_execute_alarm)
             {
                 std::unique_ptr<AlarmEntryHandler>& alarm_entry = wxGetApp().alarm_entry;
                 alarm_entry->HandleKeypress(pressed_keys);
                 return;
             }
-
             for(const auto& i : it->second)
-            {
                 i->Execute();
-            }
         }
     };
 
@@ -917,20 +683,19 @@ void CustomMacro::ExecuteKeypresses(bool directly_execute_alarm)
         HWND foreground = GetForegroundWindow();
         if(foreground)
         {
-            char window_title[256];
-            GetWindowTextA(foreground, window_title, sizeof(window_title));
+            std::array<char, 256> window_title{};
+            GetWindowTextA(foreground, window_title.data(), static_cast<int>(window_title.size()));
+            std::string_view title{window_title.data()};
             bool app_found = false;
             for(auto& m : macros)
             {
-                if(boost::algorithm::contains(window_title, m->app_name) && m->app_name.length() > 2)
+                if(m->app_name.length() > 2 && title.find(m->app_name) != std::string_view::npos)
                 {
                     const auto it = m->key_vec.find(pressed_keys);
                     if(it != m->key_vec.end())
                     {
                         for(const auto& i : it->second)
-                        {
                             i->Execute();
-                        }
                     }
                     app_found = true;
                     break;
@@ -960,7 +725,7 @@ void CustomMacro::ExecuteForegroundKeypress()
         frame->ToggleForegroundVisibility();
 }
 
-const std::unordered_map<std::string, int> CustomMacro::scan_codes = 
+const std::unordered_map<std::string, int> CustomMacro::scan_codes =
 {
             {"LCTRL",       0x1D},
             {"RCTRL",       0xE01D},
@@ -1043,7 +808,7 @@ const std::unordered_map<std::string, int> CustomMacro::scan_codes =
 };
 
 const std::unordered_map<int, std::string> CustomMacro::hid_scan_codes =
-{       
+{
         {0x04, "A"},
         {0x05, "B"},
         {0x06, "C"},
