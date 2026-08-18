@@ -1,4 +1,17 @@
 #include "pch.hpp"
+
+namespace
+{
+wxSize ToWxSize(LogicalSize size)
+{
+    return size.IsDefault() ? wxDefaultSize : wxSize(size.width, size.height);
+}
+
+LogicalSize ToLogicalSize(const wxSize& size)
+{
+    return {size.x, size.y};
+}
+}
 #include <wx/bmpcbox.h>
 
 wxBEGIN_EVENT_TABLE(CmdExecutorPanelBase, wxPanel)
@@ -130,19 +143,23 @@ wxBEGIN_EVENT_TABLE(CmdExecutorEditDialog, wxDialog)
 EVT_BUTTON(wxID_APPLY, CmdExecutorEditDialog::OnApply)
 wxEND_EVENT_TABLE()
 
-CmdExecutorPanelBase::CmdExecutorPanelBase(wxFrame* parent)
-    : wxPanel(parent, wxID_ANY)
+CmdExecutorPanelBase::CmdExecutorPanelBase(wxFrame* parent, CmdExecutor& executor)
+    : wxPanel(parent, wxID_ANY), m_executor(executor)
 {
     m_notebook = new wxAuiNotebook(this, wxID_ANY, wxPoint(0, 0), wxSize(Settings::Get()->window_size.x - 50, Settings::Get()->window_size.y - 50), wxAUI_NB_TOP | wxAUI_NB_TAB_SPLIT | wxAUI_NB_TAB_MOVE | wxAUI_NB_SCROLL_BUTTONS | wxAUI_NB_MIDDLE_CLICK_CLOSE | wxAUI_NB_TAB_EXTERNAL_MOVE | wxNO_BORDER);
     m_notebook->Connect(wxEVT_COMMAND_AUINOTEBOOK_TAB_RIGHT_DOWN, wxAuiNotebookEventHandler(CmdExecutorPanelBase::OnAuiRightClick), NULL, this);
 
-    std::unique_ptr<CmdExecutor>& cmd = wxGetApp().cmd_executor;
-    cmd->SetMediator(this);
+    m_executor.SetMediator(this);
     ReloadCommands();
     m_notebook->Layout();
     Show();
 
     Bind(wxEVT_RIGHT_DOWN, &CmdExecutorPanelBase::OnPanelRightClick, this);
+}
+
+CmdExecutorPanelBase::~CmdExecutorPanelBase()
+{
+    m_executor.SetMediator(nullptr);
 }
 
 
@@ -154,8 +171,7 @@ void CmdExecutorPanelBase::OnPanelRightClick(wxMouseEvent& event)
 
 void CmdExecutorPanelBase::ReloadCommands()
 {
-    std::unique_ptr<CmdExecutor>& cmd = wxGetApp().cmd_executor;
-    cmd->ReloadCommandsFromFile();
+    m_executor.ReloadCommandsFromFile();
 }
 
 void CmdExecutorPanelBase::OnSize(wxSizeEvent& evt)
@@ -183,8 +199,7 @@ void CmdExecutorPanelBase::OnAuiRightClick(wxAuiNotebookEvent& evt)
     {
         case ID_CmdExecutorEditPageName:
         {
-            std::unique_ptr<CmdExecutor>& cmd = wxGetApp().cmd_executor;
-            CommandPageNames& page_names = cmd->GetPageNames();
+            CommandPageNames& page_names = m_executor.GetPageNames();
 
             wxTextEntryDialog d(this, "Type new page name here", "Rename");
             d.SetValue(page_names[page_id]);
@@ -201,8 +216,7 @@ void CmdExecutorPanelBase::OnAuiRightClick(wxAuiNotebookEvent& evt)
         }
         case ID_CmdExecutorChangeIcon:
         {
-            std::unique_ptr<CmdExecutor>& cmd = wxGetApp().cmd_executor;
-            CommandPageIcons& page_icons = cmd->GetPageIcons();
+            CommandPageIcons& page_icons = m_executor.GetPageIcons();
 
             IconSelectionDialog d(this);
             d.SelectIconByName(page_icons[page_id]);
@@ -219,10 +233,9 @@ void CmdExecutorPanelBase::OnAuiRightClick(wxAuiNotebookEvent& evt)
         }
         case ID_CmdExecutorAddPage:
         {
-            std::unique_ptr<CmdExecutor>& cmd = wxGetApp().cmd_executor;
-            cmd->AddPage(page_id, page_id + 1);
+            m_executor.AddPage(page_id, page_id + 1);
 
-            cmd->SaveToTempAndReload();
+            m_executor.SaveToTempAndReload();
             break;
         }        
         case ID_CmdExecutorDeletePage:
@@ -231,26 +244,23 @@ void CmdExecutorPanelBase::OnAuiRightClick(wxAuiNotebookEvent& evt)
             int ret_code = d.ShowModal();
             if(ret_code == wxID_OK)  /* OK */
             {
-                std::unique_ptr<CmdExecutor>& cmd = wxGetApp().cmd_executor;
-                cmd->DeletePage(page_id);
-                cmd->SaveToTempAndReload();
+                m_executor.DeletePage(page_id);
+                m_executor.SaveToTempAndReload();
             }
             break;
         }
         case ID_CmdExecutorDuplicatePageBefore:
         {
-            std::unique_ptr<CmdExecutor>& cmd = wxGetApp().cmd_executor;
-            cmd->CopyPage(page_id, page_id);
+            m_executor.CopyPage(page_id, page_id);
 
-            cmd->SaveToTempAndReload();
+            m_executor.SaveToTempAndReload();
             break;
         }
         case ID_CmdExecutorDuplicatePageAfter:
         {
-            std::unique_ptr<CmdExecutor>& cmd = wxGetApp().cmd_executor;
-            cmd->CopyPage(page_id, page_id + 1);
+            m_executor.CopyPage(page_id, page_id + 1);
 
-            cmd->SaveToTempAndReload();
+            m_executor.SaveToTempAndReload();
             break;
         }
     }
@@ -267,7 +277,7 @@ void CmdExecutorPanelBase::OnPreReload(uint8_t page)
     m_notebook->Freeze();
     for(uint8_t i = 0; i != page; i++)
     {
-        CmdExecutorPanelPage* p = new CmdExecutorPanelPage(m_notebook, i + 1, 0);
+        CmdExecutorPanelPage* p = new CmdExecutorPanelPage(m_notebook, i + 1, 0, m_executor);
         m_notebook->AddPage(p, std::format("Page {}", i + 1), false, wxArtProvider::GetBitmap(wxART_HARDDISK, wxART_OTHER, FromDIP(wxSize(16, 16))));
         m_Pages.push_back(p);
     }
@@ -296,8 +306,8 @@ void CmdExecutorPanelBase::OnPostReload(uint8_t page, uint8_t cols, CommandPageN
     m_notebook->Thaw();
 }
 
-CmdExecutorPanelPage::CmdExecutorPanelPage(wxWindow* parent, uint8_t id, uint8_t cols)
-    : wxPanel(parent, wxID_ANY), m_Id(id)
+CmdExecutorPanelPage::CmdExecutorPanelPage(wxWindow* parent, uint8_t id, uint8_t cols, CmdExecutor& executor)
+    : wxPanel(parent, wxID_ANY), m_Id(id), m_executor(executor)
 {
     edit_dlg = new CmdExecutorEditDialog(this);
     param_dlg = new CmdExecutorParamDialog(this);
@@ -373,8 +383,7 @@ void CmdExecutorPanelPage::OnPanelRightClick(wxMouseEvent& event)
     {
         case ID_CmdExecutorAdd:
         {           
-            std::unique_ptr<CmdExecutor>& cmd = wxGetApp().cmd_executor;
-            cmd->AddCommand(m_Id, col, 
+            m_executor.AddCommand(m_Id, col,
                 Command(std::format("New cmd {}", utils::random_mt(1, 1000)), "& ping 127.0.0.1 -n 3 > nul", "", false, utils::random_mt(0x0, 0xFFFFFF), 0xFFFFFF, false, "", 1.0f));
 
             OnPostReloadUpdate();
@@ -382,8 +391,6 @@ void CmdExecutorPanelPage::OnPanelRightClick(wxMouseEvent& event)
         }
         case ID_CmdExecutorAddSeparator:
         {           
-            std::unique_ptr<CmdExecutor>& cmd = wxGetApp().cmd_executor;
-
             wxTextEntryDialog d(this, "Specify separator width", "Add separator");
             //d.SetValidator(wxIntegerValidator<uint8_t>());
             d.SetValue("10");
@@ -394,7 +401,7 @@ void CmdExecutorPanelPage::OnPanelRightClick(wxMouseEvent& event)
                 {
                     uint8_t separator_width = static_cast<uint8_t>(std::stoi(d.GetValue().ToStdString()));
 
-                    cmd->AddSeparator(m_Id, col, Separator(separator_width));
+                    m_executor.AddSeparator(m_Id, col, Separator(separator_width));
                 }
                 catch(const std::exception& e)
                 {
@@ -407,36 +414,31 @@ void CmdExecutorPanelPage::OnPanelRightClick(wxMouseEvent& event)
         }
         case ID_CmdExecutorAddCol:
         {           
-            std::unique_ptr<CmdExecutor>& cmd = wxGetApp().cmd_executor;
-            cmd->AddCol(CmdExecutorPanelBase::m_CurrentPage, col);
+            m_executor.AddCol(CmdExecutorPanelBase::m_CurrentPage, col);
 
-            cmd->SaveToTempAndReload();
+            m_executor.SaveToTempAndReload();
             break;
         }
         case ID_CmdExecutorDeleteCol:
         {           
-            std::unique_ptr<CmdExecutor>& cmd = wxGetApp().cmd_executor;
-
             wxMessageDialog d(this, "Are you sure want to delete this page?", wxString::Format("Deleting col %d", col), wxOK | wxCANCEL);
             int ret_code = d.ShowModal();
             if(ret_code == wxID_OK)  /* OK */
             {
-                cmd->DeleteCol(CmdExecutorPanelBase::m_CurrentPage, col - 1);
-                cmd->SaveToTempAndReload();
+                m_executor.DeleteCol(CmdExecutorPanelBase::m_CurrentPage, col - 1);
+                m_executor.SaveToTempAndReload();
             }
             break;
         }
         case ID_CmdExecutorSave:
         {           
-            std::unique_ptr<CmdExecutor>& cmd = wxGetApp().cmd_executor;
-            cmd->Save();
+            m_executor.Save();
             LOG(LogLevel::Notification, "Commands has been saved");
             break;
         }        
         case ID_CmdExecutorReload:
         {           
-            std::unique_ptr<CmdExecutor>& cmd = wxGetApp().cmd_executor;
-            cmd->ReloadCommandsFromFile();
+            m_executor.ReloadCommandsFromFile();
             LOG(LogLevel::Notification, "Commands has been reloaded");
             break;
         }
@@ -500,7 +502,7 @@ void CmdExecutorPanelPage::OnRightClick(wxMouseEvent& event)
         case ID_CmdExecutorEdit:
         {
             edit_dlg->ShowDialog(c->GetName(), c->GetCmd(), c->IsConsoleHidden(), c->GetColor(), c->GetBackgroundColor(), c->IsBold(), c->GetFontFace(), c->GetScale(), 
-                c->GetMinSize(), c->IsUsingSizer(), c->IsAddToPrevSizer());
+                ToWxSize(c->GetMinSize()), c->IsUsingSizer(), c->IsAddToPrevSizer());
             if(!edit_dlg->IsApplyClicked()) return;
 
             const std::string cmd_name = edit_dlg->GetCmdName().ToStdString();
@@ -516,15 +518,13 @@ void CmdExecutorPanelPage::OnRightClick(wxMouseEvent& event)
             bool is_add_to_prev_sizer = edit_dlg->IsAddToPrevSizer();
 
             c->SetName(cmd_name).SetCmd(cmd).SetConsoleHidden(is_hidden).SetColor(WXCOLOR_TO_RGB(color.GetRGB())).SetBackgroundColor(WXCOLOR_TO_RGB(bg_color.GetRGB())).
-                SetBold(is_bold).SetFontFace(font_face).SetScale(scale).SetMinSize(min_size).SetUseSizer(is_base_sizer).SetAddToPrevSizer(is_add_to_prev_sizer);
+                SetBold(is_bold).SetFontFace(font_face).SetScale(scale).SetMinSize(ToLogicalSize(min_size)).SetUseSizer(is_base_sizer).SetAddToPrevSizer(is_add_to_prev_sizer);
 
             UpdateCommandButon(c, btn, true);
             break;
         }
         case ID_CmdExecutorChangeCommandIcon:
         {
-            std::unique_ptr<CmdExecutor>& cmd = wxGetApp().cmd_executor;
-
             IconSelectionDialog d(this);
             d.SelectIconByName(c->GetIcon());
             if(d.ShowModal() == wxID_OK)
@@ -540,8 +540,6 @@ void CmdExecutorPanelPage::OnRightClick(wxMouseEvent& event)
         }
         case ID_CmdExecutorDuplicate:
         {
-            std::unique_ptr<CmdExecutor>& cmd = wxGetApp().cmd_executor;
-
             uint8_t col = 0xFF;
             auto it = m_ButtonMap.begin();
             while(it != m_ButtonMap.end())
@@ -568,14 +566,12 @@ void CmdExecutorPanelPage::OnRightClick(wxMouseEvent& event)
                     ++it;
             }
 
-            cmd->AddCommand(m_Id, col + 1, Command(*c));
+            m_executor.AddCommand(m_Id, col + 1, Command(*c));
             m_BaseGrid->Layout();
             break;
         }
         case ID_CmdExecutorMoveUp:
         {
-            std::unique_ptr<CmdExecutor>& cmd = wxGetApp().cmd_executor;
-
             uint8_t col = 0xFF;
             auto it = m_ButtonMap.begin();
             while(it != m_ButtonMap.end())
@@ -602,7 +598,7 @@ void CmdExecutorPanelPage::OnRightClick(wxMouseEvent& event)
                     ++it;
             }
 
-            cmd->RotateCommand(m_Id, col + 1, *c, 1);
+            m_executor.RotateCommand(m_Id, col + 1, *c, 1);
             break;
         }
         case ID_CmdExecutorDelete:
@@ -713,8 +709,8 @@ void CmdExecutorPanelPage::AddCommandElement(uint8_t col, Command* c)
         wxBitmap icon = wxArtProvider::GetBitmap(c->GetIcon(), wxART_OTHER, FromDIP(wxSize(50, 50)));
         btn = new wxBitmapButton(this, wxID_ANY, icon);
         
-        if(c->GetMinSize() != wxDefaultSize)
-            btn->SetMinSize(c->GetMinSize());
+        if(!c->GetMinSize().IsDefault())
+            btn->SetMinSize(ToWxSize(c->GetMinSize()));
     }
     UpdateCommandButon(c, btn);
 
@@ -785,7 +781,7 @@ void CmdExecutorPanelPage::UpdateCommandButon(Command* c, wxButton* btn, bool fo
             btn->SetLabelText("");
         }
     }
-    btn->SetMinSize(c->GetMinSize());
+    btn->SetMinSize(ToWxSize(c->GetMinSize()));
     m_BaseGrid->Layout();
 }
 
@@ -827,7 +823,7 @@ void CmdExecutorPanelPage::DeleteCommandButton(Command* c, wxButton* btn)
 void CmdExecutorPanelPage::Execute(Command* c)
 {
     ToggleAllButtonClickability(false);
-    c->Execute();
+    m_executor.Execute(*c);
     ToggleAllButtonClickability(true);
 }
 

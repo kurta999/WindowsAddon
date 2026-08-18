@@ -64,12 +64,13 @@ const std::string& CorsairHid::GetDeviceName() const
 
 bool CorsairHid::IsOk() const
 {
-    return m_IsOk;
+    return m_IsOk.load();
 }
 
 bool CorsairHid::ExecuteInitSequence()
 {
 #ifdef USE_HIDAPI
+    m_IsOk = false;
     LOG(LogLevel::Notification, "CorsairHid::ExecuteInitSequence");
     int ret = hid_init();  /* Initialize the hidapi library */
     if(ret)
@@ -112,7 +113,7 @@ bool CorsairHid::ExecuteInitSequence()
         hid_handle = hid_open_path(hid_path);  /* Never call this function from main thread, it can block occasionally! */
         if(!hid_handle)
         {
-            LOG(LogLevel::Critical, "hid_open failed");
+            LOG(LogLevel::Critical, L"hid_open failed: {}", hid_error(nullptr));
             m_DeviceName = "Corsair device isn't found";
             return false;
         }
@@ -123,6 +124,8 @@ bool CorsairHid::ExecuteInitSequence()
         m_DeviceName = "Corsair device isn't found";
         return false;
     }
+
+    m_IsOk = true;
 #endif
     return true;
 }
@@ -130,22 +133,36 @@ bool CorsairHid::ExecuteInitSequence()
 void CorsairHid::DestroyWorkingThread()
 {
 #ifdef USE_HIDAPI
+    if(m_worker)
+    {
+        m_worker->request_stop();
+        m_cv.notify_all();
+        m_worker.reset();
+    }
+
     if(hid_handle)
         hid_close(hid_handle);
     hid_handle = nullptr;
-    hid_inited = false;
 
-    hid_exit();
-    m_worker.reset();
+    if(hid_inited)
+    {
+        hid_exit();
+        hid_inited = false;
+    }
 #endif
 }
 
 void CorsairHid::ThreadFunc(std::stop_token token)
 {
 #ifdef USE_HIDAPI
-    ExecuteInitSequence();
+    if(!ExecuteInitSequence())
+    {
+        m_IsOk = false;
+        return;
+    }
 
     LOG(LogLevel::Notification, "ThreadFunc");
+    bool read_error_reported = false;
     while(!token.stop_requested())
     {
         if(hid_handle)
@@ -155,20 +172,35 @@ void CorsairHid::ThreadFunc(std::stop_token token)
             if(read_bytes < 0)
             {
                 m_IsOk = false;
-                LOG(LogLevel::Error, L"HID read error: {}", hid_error(hid_handle));
+                if(!read_error_reported)
+                {
+#if defined(HID_API_VERSION) && defined(HID_API_MAKE_VERSION) && HID_API_VERSION >= HID_API_MAKE_VERSION(0, 15, 0)
+                    LOG(LogLevel::Error, L"HID read error: {}", hid_read_error(hid_handle));
+#else
+                    LOG(LogLevel::Error, L"HID read error: {}", hid_error(hid_handle));
+#endif
+                    read_error_reported = true;
+                }
 
                 std::unique_lock lock{ m_Mutex };
                 m_cv.wait_for(lock, token, 1000ms, []() { return false; }); /* Back-off after error */
             }
-            else if(read_bytes > MIN_READ_DATA_SIZE)
+            else
             {
+                if(read_error_reported)
+                    LOG(LogLevel::Notification, "Corsair HID communication recovered");
+
+                read_error_reported = false;
                 m_IsOk = true;
 
-                uint32_t gkey_code = 0;
-                std::memcpy(&gkey_code, recv_data + 16, sizeof(gkey_code));
-                auto it = corsair_GKeys.find(gkey_code);
-                if(it != corsair_GKeys.end())
-                    HandleKeypress(it->second);
+                if(read_bytes > MIN_READ_DATA_SIZE)
+                {
+                    uint32_t gkey_code = 0;
+                    std::memcpy(&gkey_code, recv_data + 16, sizeof(gkey_code));
+                    auto it = corsair_GKeys.find(gkey_code);
+                    if(it != corsair_GKeys.end())
+                        HandleKeypress(it->second);
+                }
             }
                 
         }

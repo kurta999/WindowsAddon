@@ -1,10 +1,17 @@
 #include "pch.hpp"
+#include "TimeTracker.hpp"
+
+#include <algorithm>
+#include <set>
+#include <utility>
+
+#include <boost/date_time/gregorian/gregorian.hpp>
+#include <boost/date_time/posix_time/posix_time.hpp>
 
 namespace {
-    constexpr const char*  db_name       = "time_db.db";
     constexpr int64_t      SecondsPerDay = 86400;
 
-    uint64_t secondsSinceEpoch(const boost::posix_time::ptime& time)
+    int64_t secondsSinceEpoch(const boost::posix_time::ptime& time)
     {
         namespace bpt = boost::posix_time;
         const bpt::ptime epoch = bpt::from_time_t(0);
@@ -12,19 +19,19 @@ namespace {
     }
 }
 
-TimeTracker::TimeTracker()
-{
-
-}
-
-TimeTracker::~TimeTracker()
-{
-    m_destructing = true;
-}
+TimeTracker::TimeTracker(std::unique_ptr<ITimeTrackerStorage> storage, ErrorHandler error_handler) :
+    m_storage(std::move(storage)),
+    m_error_handler(std::move(error_handler))
+{}
 
 void TimeTracker::Init()
 {
-    m_db = std::make_unique<Sqlite3Database>();
+    if(!m_storage || !m_storage->IsOpen())
+    {
+        const std::string error = m_storage ? m_storage->LastError() : "storage dependency is missing";
+        ReportError("Failed to open the time tracker database: " + error);
+        return;
+    }
 
     today = boost::posix_time::second_clock::local_time().date();
     int current_year = today.year();
@@ -46,24 +53,30 @@ void TimeTracker::LoadEntries(int year, int month)
 
 void TimeTracker::LoadEntriesForOneMonth(int year, int month)
 {
-    boost::gregorian::date first_day(year, month, 1);
+    if(year < 1400 || year > 9999 || month < 1 || month > 12)
+    {
+        ReportError("Failed to load time entries: invalid year or month");
+        return;
+    }
+    boost::gregorian::date first_day(
+        static_cast<unsigned short>(year), static_cast<unsigned short>(month), 1);
     boost::gregorian::date last_day = first_day.end_of_month();
 
     boost::posix_time::ptime epoch(boost::gregorian::date(1970, 1, 1));
     int64_t first_timestamp = (first_day - epoch.date()).days() * SecondsPerDay;
     int64_t last_timestamp  = (last_day  - epoch.date()).days() * SecondsPerDay + (SecondsPerDay - 1);
 
-    std::string sql = std::format("SELECT id, start, end, comment FROM time_table WHERE start >= {} AND start <= {} ORDER BY start ASC;", first_timestamp, last_timestamp);
-
-    DBStream db_stream(db_name, *m_db);
-    if (!db_stream)
+    if(!m_storage || !m_storage->IsOpen())
     {
-        LOG(LogLevel::Critical, "Failed to open the database for time tracker!");
+        ReportError("Failed to load time entries: storage is not open");
         return;
     }
-
-    db_stream.SendQueryAndFetch(sql,
-        [this, year, month](std::unique_ptr<Result>& result) { Query_OneMonth(result, year, month); });
+    for(const auto& row : m_storage->LoadRange(first_timestamp, last_timestamp))
+    {
+        AddEntry(epoch + boost::posix_time::seconds(row.start),
+                 epoch + boost::posix_time::seconds(row.end), row.comment, row.id);
+    }
+    SerializeEntriesForOneMonth(year, month);
 }
 
 void TimeTracker::LoadGroups()
@@ -78,7 +91,13 @@ void TimeTracker::UpdateEntries()
 
 void TimeTracker::SerializeEntriesForOneMonth(int year, int month)
 {
-    boost::gregorian::date date(year, month, 1);
+    if(year < 1400 || year > 9999 || month < 1 || month > 12)
+    {
+        ReportError("Failed to serialize time entries: invalid year or month");
+        return;
+    }
+    boost::gregorian::date date(
+        static_cast<unsigned short>(year), static_cast<unsigned short>(month), 1);
     boost::posix_time::ptime month_start(date);
     int offset = CalculateMapDateOffset(month_start);
     auto it = m_Entries.find(offset);
@@ -90,42 +109,17 @@ void TimeTracker::SerializeEntriesForOneMonth(int year, int month)
 
     // First pass: group entries by day and compute overlap flags
     std::map<int, boost::posix_time::time_duration> day_totals;
-    std::map<int, std::vector<TimeEntry*>> day_entries;
+    std::vector<time_tracker_logic::Interval> intervals;
+    intervals.reserve(it->second->entries.size());
     for (auto& entry : it->second->entries)
     {
-        int day_number = entry->start.date().day().as_number();
-        day_entries[day_number].emplace_back(entry.get());
+        intervals.push_back({secondsSinceEpoch(entry->start), secondsSinceEpoch(entry->end)});
     }
 
-    for (auto& [day, entries] : day_entries)
+    const auto overlaps = time_tracker_logic::DetectOverlaps(intervals);
+    for(size_t index = 0; index < it->second->entries.size(); ++index)
     {
-        std::sort(entries.begin(), entries.end(),
-            [](const TimeEntry* a, const TimeEntry* b) { return a->start < b->start; });
-
-        for (auto entry : entries)
-            entry->is_overlap = false;
-
-        // Check all pairs — sorted order means we can break early when no overlap is possible
-        for (size_t i = 0; i < entries.size(); ++i)
-        {
-            for (size_t j = i + 1; j < entries.size(); ++j)
-            {
-                if (entries[i]->end <= entries[j]->start)
-                    break;
-
-                DBG("OVERLAP DETECTED on day %d between:\n", day);
-                DBG("  Entry 1: %s - %s\n",
-                    boost::posix_time::to_simple_string(entries[i]->start).c_str(),
-                    boost::posix_time::to_simple_string(entries[i]->end).c_str());
-                DBG("  Entry 2: %s - %s\n",
-                    boost::posix_time::to_simple_string(entries[j]->start).c_str(),
-                    boost::posix_time::to_simple_string(entries[j]->end).c_str());
-                DBG("----\n");
-
-                entries[i]->is_overlap = true;
-                entries[j]->is_overlap = true;
-            }
-        }
+        it->second->entries[index]->is_overlap = overlaps[index];
     }
 
     // Second pass: accumulate non-overlapping durations per day
@@ -180,30 +174,27 @@ void TimeTracker::SerializeEntriesForOneMonth(int year, int month)
 
 TimeEntry* TimeTracker::AddEntry(boost::posix_time::ptime start, boost::posix_time::ptime end, const std::string& comment, int sqlid)
 {
-    DBStream db_stream(db_name, *m_db);
-    if (!db_stream)
+    if(!m_storage || !m_storage->IsOpen())
     {
-        LOG(LogLevel::Critical, "Failed to open the database for time tracker!");
+        ReportError("Failed to add time entry: storage is not open");
         return nullptr;
     }
 
     if (sqlid == 0)
     {
-        char table_query[] = "CREATE TABLE IF NOT EXISTS time_table(\
-id integer primary key,\
-start   INT NOT NULL,\
-end     INT     NOT NULL,\
-comment VARCHAR(256)  NOT NULL);";
-        db_stream.ExecuteQuery(table_query);
-        const std::string query = std::format("INSERT INTO time_table(start, end, comment) VALUES({}, 0, '{}')", secondsSinceEpoch(start), comment);
-        m_LastId = db_stream.ExecuteQueryAndGetLastId(query);
+        const auto inserted_id = m_storage->Insert(secondsSinceEpoch(start), secondsSinceEpoch(end), comment);
+        if(!inserted_id)
+        {
+            ReportError("Failed to insert time entry: " + m_storage->LastError());
+            return nullptr;
+        }
+        m_LastId = *inserted_id;
         sqlid = m_LastId;
     }
 
     std::unique_ptr<TimeEntry> entry = std::make_unique<TimeEntry>(start, end, comment, sqlid);
 
     int map_key = CalculateMapDateOffset(start);
-    DBG("Adding entry with map key: %d\n", map_key);
     auto [it, inserted] = m_Entries.try_emplace(map_key, std::make_unique<MonthlyTimeEntry>());
 
     it->second->entries.push_back(std::move(entry));
@@ -211,80 +202,155 @@ comment VARCHAR(256)  NOT NULL);";
     return ret;
 }
 
-void TimeTracker::EditEntry(TimeEntry* entry, boost::posix_time::ptime start, boost::posix_time::ptime end, const std::string& comment)
+TimeEntry* TimeTracker::FindEntry(int sql_id)
 {
-	if (entry == nullptr)
-		return;
-	DBStream db_stream(db_name, *m_db);
-	if (!db_stream)
-	{
-		LOG(LogLevel::Critical, "Failed to open the database for time tracker!");
-		return;
-	}
-	std::string query = std::format("UPDATE time_table SET start = {}, end = {}, comment = '{}' WHERE id = {}",
-		secondsSinceEpoch(start), secondsSinceEpoch(end), comment, entry->sql_id);
-	db_stream.ExecuteQuery(query);
-	entry->start = start;
-	entry->end = end;
-	entry->desc = comment;
+    for(auto& [map_key, month] : m_Entries)
+    {
+        (void)map_key;
+        for(auto& entry : month->entries)
+        {
+            if(entry->sql_id == sql_id)
+                return entry.get();
+        }
+    }
+    return nullptr;
 }
 
-void TimeTracker::SaveEntry(TimeEntry* entry)
+const TimeEntry* TimeTracker::FindEntry(int sql_id) const
 {
-	if (entry == nullptr)
-		return;
-	DBStream db_stream(db_name, *m_db);
-	if (!db_stream)
-	{
-		LOG(LogLevel::Critical, "Failed to open the database for time tracker!");
-		return;
-	}
-    std::string query = std::format("UPDATE time_table SET start = {}, end = {}, comment = '{}' WHERE id = {}",
-        secondsSinceEpoch(entry->start), secondsSinceEpoch(entry->end), entry->desc, entry->sql_id);
-    db_stream.ExecuteQuery(query);
+    for(const auto& [map_key, month] : m_Entries)
+    {
+        (void)map_key;
+        for(const auto& entry : month->entries)
+        {
+            if(entry->sql_id == sql_id)
+                return entry.get();
+        }
+    }
+    return nullptr;
 }
 
-void TimeTracker::RemoveEntry(TimeEntry* entry)
+bool TimeTracker::EditEntry(int sql_id, boost::posix_time::ptime start, boost::posix_time::ptime end, const std::string& comment)
 {
-	if (entry == nullptr)
-		return;
-	DBStream db_stream(db_name, *m_db);
-	if (!db_stream)
-	{
-		LOG(LogLevel::Critical, "Failed to open the database for time tracker!");
-		return;
-	}
-	std::string query = std::format("DELETE FROM time_table WHERE id = {}", entry->sql_id);
-	db_stream.ExecuteQuery(query);
-	int map_key = CalculateMapDateOffset(entry->start);
-	auto it = m_Entries.find(map_key);
-	if (it != m_Entries.end())
-	{
-		auto& entries = it->second->entries;
-		entries.erase(std::remove_if(entries.begin(), entries.end(),
-			[entry](const std::unique_ptr<TimeEntry>& e) { return e.get() == entry; }), entries.end());
-	}
+    TimeEntry* entry = FindEntry(sql_id);
+    if(!entry)
+    {
+        ReportError("Failed to edit time entry: entry is no longer available");
+        return false;
+    }
+    if(!m_storage || !m_storage->IsOpen())
+    {
+        ReportError("Failed to edit time entry: storage is not open");
+        return false;
+    }
+    if(!m_storage->Update(sql_id, secondsSinceEpoch(start), secondsSinceEpoch(end), comment))
+    {
+        ReportError("Failed to edit time entry: " + m_storage->LastError());
+        return false;
+    }
+
+    entry->start = start;
+    entry->end = end;
+    entry->desc = comment;
+    if(!MoveEntryToMonth(sql_id, CalculateMapDateOffset(start)))
+    {
+        ReportError("Failed to edit time entry: entry ownership was lost");
+        return false;
+    }
+    return true;
+}
+
+bool TimeTracker::SaveEntry(int sql_id)
+{
+    const TimeEntry* entry = FindEntry(sql_id);
+    if(!entry)
+    {
+        ReportError("Failed to save time entry: entry is no longer available");
+        return false;
+    }
+    if(!m_storage || !m_storage->IsOpen())
+    {
+        ReportError("Failed to save time entry: storage is not open");
+        return false;
+    }
+    if(!m_storage->Update(sql_id, secondsSinceEpoch(entry->start), secondsSinceEpoch(entry->end), entry->desc))
+    {
+        ReportError("Failed to save time entry: " + m_storage->LastError());
+        return false;
+    }
+    return true;
+}
+
+bool TimeTracker::RemoveEntry(int sql_id)
+{
+    if(!FindEntry(sql_id))
+    {
+        ReportError("Failed to remove time entry: entry is no longer available");
+        return false;
+    }
+    if(!m_storage || !m_storage->IsOpen())
+    {
+        ReportError("Failed to remove time entry: storage is not open");
+        return false;
+    }
+    if(!m_storage->Remove(sql_id))
+    {
+        ReportError("Failed to remove time entry: " + m_storage->LastError());
+        return false;
+    }
+
+    for(auto month = m_Entries.begin(); month != m_Entries.end(); ++month)
+    {
+        auto& entries = month->second->entries;
+        const auto entry = std::ranges::find(entries, sql_id, &TimeEntry::sql_id);
+        if(entry == entries.end())
+            continue;
+
+        entries.erase(entry);
+        if(entries.empty())
+            m_Entries.erase(month);
+        return true;
+    }
+
+    ReportError("Failed to remove time entry: entry ownership was lost");
+    return false;
+}
+
+bool TimeTracker::MoveEntryToMonth(int sql_id, int new_map_key)
+{
+    for(auto month = m_Entries.begin(); month != m_Entries.end(); ++month)
+    {
+        auto& entries = month->second->entries;
+        const auto entry = std::ranges::find(entries, sql_id, &TimeEntry::sql_id);
+        if(entry == entries.end())
+            continue;
+        if(month->first == new_map_key)
+            return true;
+
+        auto moved_entry = std::move(*entry);
+        entries.erase(entry);
+        const bool remove_old_month = entries.empty();
+
+        auto [destination, inserted] = m_Entries.try_emplace(
+            new_map_key, std::make_unique<MonthlyTimeEntry>());
+        (void)inserted;
+        destination->second->entries.push_back(std::move(moved_entry));
+        if(remove_old_month)
+            m_Entries.erase(month);
+        return true;
+    }
+    return false;
+}
+
+void TimeTracker::ReportError(std::string message)
+{
+    m_last_error = std::move(message);
+    if(m_error_handler)
+        m_error_handler(m_last_error);
 }
 
 int TimeTracker::CalculateMapDateOffset(const boost::posix_time::ptime& start)
 {
     const boost::gregorian::date date = start.date();
     return date.year() * 100 + date.month();
-}
-
-void TimeTracker::Query_OneMonth(std::unique_ptr<Result>& result, int year, int month)
-{
-    while (!m_destructing)
-    {
-        if (!result->StepNext())
-            break;
-
-        int            id    = result->GetColumnInt(0);
-        int64_t        start = result->GetColumnInt(1);
-        int64_t        end   = result->GetColumnInt(2);
-        std::string desc_str{result->GetColumnText(3)};
-        AddEntry(boost::posix_time::from_time_t(start), boost::posix_time::from_time_t(end), desc_str, id);
-    }
-
-    SerializeEntriesForOneMonth(year, month);
 }

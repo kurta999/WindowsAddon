@@ -10,6 +10,7 @@ Logger::Logger()
 
 void Logger::SetLogHelper(ILogHelper* helper)
 {
+    std::scoped_lock lock(m_helperMutex);
     m_helper = helper;
 }
 
@@ -70,6 +71,7 @@ bool Logger::SearchInLogFile(std::string_view filter, std::string_view log_level
 		LOG(LogLevel::Error, "Failed to open log file ({}) for search", LOG_FILENAME);
 		return false;
 	}
+	std::scoped_lock helper_lock(m_helperMutex);
 	if(!m_helper)
 	{
 		LOG(LogLevel::Error, "m_helper is nullptr");
@@ -104,6 +106,7 @@ bool Logger::SearchInLogFile(std::string_view filter, std::string_view log_level
 void Logger::AppendPreinitedEntries()
 {
 	MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
+	std::scoped_lock helper_lock(m_helperMutex);
 	if(frame && frame->log_panel && m_helper)
 	{
 		std::unique_lock lock(m_mutex);

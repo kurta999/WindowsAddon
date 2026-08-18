@@ -107,7 +107,7 @@ public:
 class CanLogEntry : public CanEntryBase
 {
 public:
-    CanLogEntry(uint8_t dir, uint32_t frame_id_, uint8_t* data_, uint8_t data_len, std::chrono::steady_clock::time_point& timepoint) :
+    CanLogEntry(uint8_t dir, uint32_t frame_id_, uint8_t* data_, uint8_t data_len, const std::chrono::steady_clock::time_point& timepoint) :
         CanEntryBase(data_, data_len)
     {
         frame_id  = frame_id_ & 0x1FFFFFFF;

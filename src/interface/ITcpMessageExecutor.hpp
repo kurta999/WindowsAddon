@@ -1,9 +1,9 @@
 #pragma once
 
 #include <memory>
+#include <span>
 #include <tuple>
 #include <string>
-#include <any>
 
 class Session;
 using SharedSession = std::shared_ptr<Session>;
@@ -14,6 +14,5 @@ class ITcpMessageExecutor
 public:
     virtual ~ITcpMessageExecutor() = default;
 
-    virtual void SetCurrentSession(SharedSession session, size_t len) = 0;
-    virtual TcpMessageReturn Process(std::any param) = 0;
+    virtual TcpMessageReturn Process(const SharedSession& session, std::span<char> message) = 0;
 };

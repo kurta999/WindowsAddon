@@ -1,7 +1,14 @@
 #pragma once
 
-class CallbackAsyncSerial;
-class CanData;
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <mutex>
+
+#include "CanTransportModels.hpp"
+
+using CanFrameReceiver = std::function<void(std::uint32_t, std::uint8_t, std::uint8_t*)>;
 
 class ICanDevice
 {
@@ -9,7 +16,7 @@ public:
     virtual ~ICanDevice() = default;
 
     // !\brief Process received CAN frames
-    virtual void ProcessReceivedFrames(std::mutex& rx_mutex) = 0;
+    virtual void ProcessReceivedFrames(std::mutex& rx_mutex, const CanFrameReceiver& receiver) = 0;
 
     // !\brief Send pending CAN frames from message queue
     // !\param serial_port [in] Reference to async serial port

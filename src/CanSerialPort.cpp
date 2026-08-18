@@ -1,5 +1,7 @@
 #include "pch.hpp"
 
+#include "CanDeviceFactory.hpp"
+
 constexpr size_t TX_QUEUE_MAX_SIZE = 100;
 constexpr size_t RX_CIRCBUFF_SIZE = 1024;  /* Bytes */
 constexpr size_t CAN_SERIAL_TX_BUFFER_SIZE = 64;
@@ -7,7 +9,8 @@ constexpr auto CAN_SERIAL_PORT_TIMEOUT = 5000ms;
 constexpr auto CAN_SERIAL_PORT_EXCEPTION_TIMEOUT = 1000ms;
 constexpr auto SEND_DELAY_BETWEEN_FRAMES = 100us;
 
-CanSerialPort::CanSerialPort() : m_CircBuff(RX_CIRCBUFF_SIZE)
+CanSerialPort::CanSerialPort() : m_CircBuff(RX_CIRCBUFF_SIZE),
+    m_DeviceFactory(std::make_unique<CanDeviceFactory>(m_CircBuff))
 {
 
 }
@@ -24,10 +27,7 @@ void CanSerialPort::Init()
         auto recv_f = std::bind(&CanSerialPort::OnDataReceived, this, std::placeholders::_1, std::placeholders::_2);
         auto send_f = std::bind(&CanSerialPort::OnDataSent, this, std::placeholders::_1);
         InitInternal("CanSerialPort", CAN_SERIAL_PORT_TIMEOUT, CAN_SERIAL_PORT_EXCEPTION_TIMEOUT, recv_f, send_f);
-        if(m_DeviceType == CanDeviceType::STM32)
-            m_Device = std::make_unique<CanDeviceStm32>(m_CircBuff);
-        else
-            m_Device = std::make_unique<CanDeviceLawicel>(m_CircBuff);
+        m_Device = m_DeviceFactory->Create(m_DeviceType);
     }
     else
     {
@@ -38,6 +38,24 @@ void CanSerialPort::Init()
 void CanSerialPort::SetDevice(std::unique_ptr<ICanDevice>&& device)
 {
     m_Device = std::move(device);
+}
+
+void CanSerialPort::SetDeviceFactory(std::unique_ptr<ICanDeviceFactory> factory)
+{
+    if(factory == nullptr)
+        throw std::invalid_argument("CAN device factory must not be null");
+    m_DeviceFactory = std::move(factory);
+}
+
+void CanSerialPort::SetListener(ICanTransportListener* listener) noexcept
+{
+    m_Listener.store(listener, std::memory_order_release);
+}
+
+void CanSerialPort::Send(uint32_t frame_id, std::span<const uint8_t> data)
+{
+    const auto length = static_cast<uint8_t>(std::min(data.size(), MAX_CAN_FRAME_DATA_LEN));
+    AddToTxQueue(frame_id, length, data.data());
 }
 
 void CanSerialPort::AddToTxQueue(uint32_t frame_id, uint8_t data_len, const uint8_t* data)
@@ -55,14 +73,6 @@ void CanSerialPort::AddToTxQueue(uint32_t frame_id, uint8_t data_len, const uint
     NotifiyMainThread();
 }
 
-void CanSerialPort::AddToRxQueue(uint32_t frame_id, uint8_t data_len, uint8_t* data)
-{
-    //std::unique_lock lock(m_mutex);
-    std::unique_ptr<CanEntryHandler>& can_handler = wxGetApp().can_entry;
-    if(can_handler)
-        can_handler->OnFrameReceived(frame_id, data_len, data);
-}
-
 void CanSerialPort::OnDataReceived(const char* data, unsigned int len)
 {
     std::scoped_lock guard(m_RxMutex);
@@ -72,7 +82,11 @@ void CanSerialPort::OnDataReceived(const char* data, unsigned int len)
 
 void CanSerialPort::OnDataSent(CallbackAsyncSerial& serial_port)
 {
-    m_Device->ProcessReceivedFrames(m_RxMutex);
+    m_Device->ProcessReceivedFrames(m_RxMutex, [this](uint32_t frame_id, uint8_t data_len, uint8_t* data)
+    {
+        if(auto* listener = m_Listener.load(std::memory_order_acquire))
+            listener->OnFrameReceived(frame_id, data_len, data);
+    });
     SendPendingCanFrames(serial_port);
 }
 
@@ -93,8 +107,8 @@ void CanSerialPort::SendPendingCanFrames(CallbackAsyncSerial& serial_port)
                 serial_port.write((const char*)&data, size);
         }
 
-        std::unique_ptr<CanEntryHandler>& can_handler = wxGetApp().can_entry;
-        can_handler->OnFrameSent(data_ptr->frame_id, data_ptr->data_len, data_ptr->data);
+        if(auto* listener = m_Listener.load(std::memory_order_acquire))
+            listener->OnFrameSent(data_ptr->frame_id, data_ptr->data_len, data_ptr->data);
 
         if(is_remove)
             m_TxQueue.pop();

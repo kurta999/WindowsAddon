@@ -15,7 +15,7 @@ MainPanel::MainPanel(wxFrame* parent)
 	horizontal_sizer->Add(m_RefreshButton);
 	m_RefreshButton->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event)
 		{
-			for(auto ip : Server::Get()->used_ip_addresses)
+			for(auto ip : Server::Get()->GetConnectedSensorAddresses())
 			{
 				std::string sensor_ip = boost::asio::ip::address_v4(ip).to_string();
 				utils::SendTcpBlocking(sensor_ip, 80, "SEND_SENSOR_DATA", 16);
@@ -27,7 +27,7 @@ MainPanel::MainPanel(wxFrame* parent)
 	horizontal_sizer->Add(m_ResetButton);
 	m_ResetButton->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event)
 		{
-			for(auto ip : Server::Get()->used_ip_addresses)
+			for(auto ip : Server::Get()->GetConnectedSensorAddresses())
 			{
 				std::string sensor_ip = boost::asio::ip::address_v4(ip).to_string();
 				utils::SendTcpBlocking(sensor_ip, 80, "RESET", 5);
@@ -43,7 +43,7 @@ MainPanel::MainPanel(wxFrame* parent)
 		{
 			DatabaseLogic::Get()->SetGraphHours(0, (uint32_t)m_GraphStartHours1->GetValue());
 			DatabaseLogic::Get()->SetGraphHours(1, (uint32_t)m_GraphStartHours2->GetValue());
-			DatabaseLogic::Get()->GenerateGraphs();
+			DatabaseLogic::Get()->GenerateGraphs(Sensors::Get()->GetGraphResolution());
 		});
 	m_ClearMeasurements = new wxButton(this, wxID_ANY, wxT("Clear"), wxDefaultPosition, wxDefaultSize, 0);
 	m_ClearMeasurements->SetToolTip("Clear measurements");
@@ -327,7 +327,7 @@ void MainPanel::UpdateKeybindings()
 	{
 		MarkFunctionalKey(it->second, "WORK_START");
 	}
-	it = key_map.find(ScriptLauncher::Get()->launcher_key);
+	it = key_map.find(wxGetApp().script_launcher->launcher_key);
 	if (it != key_map.end())
 	{
 		MarkFunctionalKey(it->second, "SCRIPT");
@@ -379,9 +379,9 @@ void MainPanel::UpdateKeybindings()
 
 void MainPanel::UpdateStatuses()
 {
-	if(Server::Get()->is_enabled)
+	if(Server::Get()->IsEnabled())
 	{
-		if(Server::Get()->is_ok)
+		if(Server::Get()->IsOk())
 		{
 			m_TcpBackendStatus->SetLabelText("TCP: OK");
 			m_TcpBackendStatus->SetForegroundColour(*wxGREEN);
@@ -435,10 +435,36 @@ void MainPanel::UpdateStatuses()
 		m_CanStatus->SetLabelText("CAN: OFF");
 		m_CanStatus->SetForegroundColour(*wxBLUE);
 	}
+
+	std::unique_ptr<ModbusEntryHandler>& modbus_handler = wxGetApp().modbus_handler;
+	if(modbus_handler->GetSerial().IsEnabled())
+	{
+		if(CanSerialPort::Get()->IsOk())
+		{
+			m_ModbusStatus->SetLabelText("Modbus: OK");
+			m_ModbusStatus->SetForegroundColour(*wxGREEN);
+		}
+		else
+		{
+			m_ModbusStatus->SetLabelText("Modbus: ERR");
+			m_ModbusStatus->SetForegroundColour(*wxRED);
+		}
+	}
+	else
+	{
+		m_ModbusStatus->SetLabelText("Modbus: OFF");
+		m_ModbusStatus->SetForegroundColour(*wxBLUE);
+	}
 }
 
 void MainPanel::OnMeasurementUpdated(const Measurement& m, size_t recv_count)
 {
+	if(!wxIsMainThread())
+	{
+		CallAfter(&MainPanel::OnMeasurementUpdated, m, recv_count);
+		return;
+	}
+
 	m_textTemp->SetLabelText(wxString::Format(wxT("Temperature: %.1f"), m.temp));
 	m_textHum->SetLabelText(wxString::Format(wxT("Humidity: %.1f"), m.hum));
 	m_textCO2->SetLabelText(wxString::Format(wxT("CO2: %i"), m.co2));

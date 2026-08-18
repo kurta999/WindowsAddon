@@ -34,11 +34,8 @@ void Sensors::HandleAndForwardIncomingMeasurements(const char* data, size_t len,
     const bool ok = ProcessIncomingData(data, len, from_ip);
     if(!ok) return;
 
-    auto* srv = Server::Get();
-    if(srv->forward_port != 0)
-        utils::SendTcpBlocking(srv->forward_ip_address,  srv->forward_port,  data, len, 300, true);
-    if(srv->forward_port2 != 0)
-        utils::SendTcpBlocking(srv->forward_ip_address2, srv->forward_port2, data, len, 300, true);
+    for(const auto& target : Server::Get()->GetForwardTargets())
+        utils::SendTcpBlocking(target.address, target.port, data, len, 300, true);
 }
 
 bool Sensors::ProcessIncomingData(const char* data, size_t len, const char* from_ip)
@@ -112,7 +109,7 @@ void Sensors::HandleMeasurements(const std::vector<std::string>& f)
     if(elapsed > m_integrationTime)
     {
         m_currMeas->Finalize();
-        DatabaseLogic::Get()->InsertMeasurement(m_currMeas);
+        DatabaseLogic::Get()->InsertMeasurement(*m_currMeas);
         AddMeasurement(std::move(m_currMeas));
         m_currMeas = nullptr;
         UpdateDatabaseIfNeeded();
@@ -129,26 +126,45 @@ void Sensors::AddMeasurement(std::unique_ptr<Measurement>&& meas)
 
 void Sensors::UpdateDatabaseIfNeeded()
 {
+    if(auto generated = DatabaseLogic::Get()->TakeGeneratedGraphs())
+    {
+        {
+            std::scoped_lock lock(m_mtx);
+            m_last_meas.clear();
+            for(auto& measurement : generated->latest)
+                m_last_meas.push_back(std::move(measurement));
+            for(size_t index = 0; index < 3; ++index)
+            {
+                m_lastDay[index] = std::move(generated->day[index]);
+                m_lastWeek[index] = std::move(generated->week[index]);
+            }
+        }
+        WriteGraphs();
+    }
+
     // Trigger graph regeneration once per interval.
     const auto elapsed_min = std::chrono::duration_cast<std::chrono::minutes>(
         std::chrono::steady_clock::now() - DatabaseLogic::Get()->GetLastUpdateTime()).count();
     if(elapsed_min >= m_graphGenerationInterval)
-        DatabaseLogic::Get()->GenerateGraphs();
+        DatabaseLogic::Get()->GenerateGraphs(m_graphResolution);
 }
 
 void Sensors::AddObserver(ISensorObserver* observer)
 {
+    std::scoped_lock lock(m_observerMutex);
     if(observer && std::find(m_observers.begin(), m_observers.end(), observer) == m_observers.end())
         m_observers.push_back(observer);
 }
 
 void Sensors::RemoveObserver(ISensorObserver* observer)
 {
+    std::scoped_lock lock(m_observerMutex);
     m_observers.erase(std::remove(m_observers.begin(), m_observers.end(), observer), m_observers.end());
 }
 
 void Sensors::UpdateGui(const Measurement& meas)
 {
+    std::scoped_lock lock(m_observerMutex);
     for(auto* obs : m_observers)
         obs->OnMeasurementUpdated(meas, m_recvCount);
 }
@@ -195,8 +211,8 @@ void Sensors::WriteGraph(const char* filename, uint16_t min_val, uint16_t max_va
         CollectSeries<T>(m_last_meas, offset, labels_latest, data_latest);
         for(int i = 0; i < 3; ++i)
         {
-            CollectSeries<T>(last_day[i],  offset, labels_day[i],  data_day[i]);
-            CollectSeries<T>(last_week[i], offset, labels_week[i], data_week[i]);
+            CollectSeries<T>(m_lastDay[i],  offset, labels_day[i],  data_day[i]);
+            CollectSeries<T>(m_lastWeek[i], offset, labels_week[i], data_week[i]);
         }
     }
     catch(...)

@@ -5,10 +5,12 @@
 #include "LogPanel.hpp"
 #include "FilePanel.hpp"
 #include "CanPanel/CanPanel.hpp"
+#include "ModbusMasterPanel.hpp"
 #include "CmdExecutorPanel.hpp"
 #include "DidPanel.hpp"
 #include "AlarmPanel.hpp"
 #include "TimeTrackerPanel.hpp"
+#include "AppNotification.hpp"
 
 #include <wx/wx.h>
 #include <wx/spinctrl.h>
@@ -21,47 +23,14 @@
 
 #include <mutex>
 #include <deque>
-#include <any>
 
 class TrayIcon;
-
-enum PopupMsgIds : uint8_t
-{
-	ScreenshotSaved = 0,
-	ScreenshotSaveFailed,
-	SettingsSaved,
-	BackupCompleted,
-	BackupFailed,
-	StringEscaped,
-	PathSeparatorsReplaced,
-	TxListLoaded,
-	TxListSaved,
-	RxListLoaded,
-	RxListSaved,
-	FrameMappingLoaded,
-	FrameMappingSaved,
-	TxListLoadError,
-	RxListLoadError,
-	FrameMappingLoadError,
-	CanLogSaved,
-	CommandsSaved,
-	DidCacheSaved,
-	DidUpdated,
-	EverythingSaved,
-	AlarmSetup,
-	AlarmTriggered,
-	SelectedLogsCopied,
-	WorktimeToggled,
-};
 
 class MyFrame : public wxFrame
 {
 public:
 	MyFrame(const wxString& title);
-	~MyFrame()
-	{
-		m_mgr.UnInit();  /* deinitialize the frame manager */
-	}
+	~MyFrame();
 
 	void SetIconTooltip(const wxString& str);
 
@@ -74,19 +43,21 @@ public:
 	// !\brief Set currently opened page
 	void SetCurrentPage(uint8_t page_id);
 
+	// Thread-safe entry point for application notifications.
+	void PostNotification(AppNotification notification);
+
 	MainPanel* main_panel = nullptr;
 	EscaperPanel* escape_panel = nullptr;
 	DebugPanel* debug_panel = nullptr;
 	FilePanel* file_panel = nullptr;
 	CmdExecutorPanelBase* cmd_panel = nullptr;
 	CanPanel* can_panel = nullptr;
+	ModbusMasterPanel* modbus_master_panel = nullptr;
 	AlarmPanel* alarm_panel = nullptr;
 	TimeTrackerPanel* timesheet_panel = nullptr;
 	DidPanel* did_panel = nullptr;
 	LogPanel* log_panel = nullptr;
 	wxAuiNotebook* ctrl = nullptr;
-	std::mutex mtx;
-	std::deque<std::vector<std::any>> pending_msgs;
 	wxProgressDialog* backup_prog = NULL;
 	std::atomic<bool> show_backup_dlg = false;
 	bool is_initialized = false;
@@ -106,6 +77,8 @@ private:
 	void OnSaveCmdExecutor(wxCommandEvent& event);
 	void OnSaveBsecCache(wxCommandEvent& event);
 	void OnSaveEverything(wxCommandEvent& event);
+	void OnEditSettings(wxCommandEvent& event);
+	void OnReloadSettings(wxCommandEvent& event);
 	void OnClose(wxCloseEvent& event);
 	void OnSize(wxSizeEvent& event);
 	void OnKeyDown(wxKeyEvent& event);
@@ -135,6 +108,14 @@ private:
 private:
 	// !\brief Handles notifications
 	void HandleNotifications();
+	void HandleNotification(const SimpleNotification& notification);
+	void HandleNotification(const FileSavedNotification& notification);
+	void HandleNotification(const PathSeparatorsReplacedNotification& notification);
+	void HandleNotification(const BackupCompletedNotification& notification);
+	void HandleNotification(const BackupFailedNotification& notification);
+	void HandleNotification(const AlarmSetupNotification& notification);
+	void HandleNotification(const AlarmTriggeredNotification& notification);
+	void HandleNotification(const WorktimeToggledNotification& notification);
 
 	// !\brief Show notification
 	template<typename T> void ShowNotificaiton(const wxString& title, const wxString& message, int timeout, int flags, T&& fptr);
@@ -153,4 +134,7 @@ private:
 	
 	// !\brief Main frame timer
 	wxTimer* m_100msTimer = nullptr;
+
+	std::mutex m_notificationMutex;
+	std::deque<AppNotification> m_pendingNotifications;
 };

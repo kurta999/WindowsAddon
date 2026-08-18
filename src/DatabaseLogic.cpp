@@ -11,15 +11,20 @@ DatabaseLogic::DatabaseLogic()
 
 DatabaseLogic::~DatabaseLogic() = default;
 
-void DatabaseLogic::GenerateGraphs()
+void DatabaseLogic::GenerateGraphs(uint16_t resolution)
 {
-    m_generator->Generate();
+    m_generator->Generate(resolution);
 }
 
-void DatabaseLogic::InsertMeasurement(std::unique_ptr<Measurement>& m)
+std::optional<GraphData> DatabaseLogic::TakeGeneratedGraphs()
+{
+    return m_generator->TakeCompleted();
+}
+
+void DatabaseLogic::InsertMeasurement(const Measurement& measurement)
 {
     m_generator->WaitIfRunning();  // serialise: no DB reads while inserting
-    m_repository->Insert(*m);
+    m_repository->Insert(measurement);
 }
 
 void DatabaseLogic::SetGraphHours(uint8_t slot, uint32_t hours)
@@ -34,5 +39,5 @@ uint32_t DatabaseLogic::GetGraphHours(uint8_t slot) const
 
 std::chrono::steady_clock::time_point DatabaseLogic::GetLastUpdateTime() const
 {
-    return m_generator->last_update;
+    return m_generator->GetLastUpdateTime();
 }

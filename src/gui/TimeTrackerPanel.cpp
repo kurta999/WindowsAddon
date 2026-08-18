@@ -76,6 +76,9 @@ TimeTrackerGrid::TimeTrackerGrid(wxWindow* parent)
 
 void TimeTrackerGrid::AddRow(TimeEntry* entry)
 {
+    if(!entry)
+        return;
+
     static boost::gregorian::date lastSetDate; // Tracks the last set date
     static boost::posix_time::time_duration totalDurationForDay(0, 0, 0); // Tracks total duration for the current day
     static boost::posix_time::time_duration totalDuration(0, 0, 0); // Tracks total duration
@@ -151,12 +154,15 @@ void TimeTrackerGrid::AddRow(TimeEntry* entry)
         wxString::Format("%lld [h] / %lld�", totalDuration.hours(), totalDuration.hours() * time_tracker->GetHourlyRate()));
 
     // Map the entry to the grid row
-    grid_to_entry[cnt] = entry;
+    grid_to_entry_id[static_cast<int>(cnt)] = entry->sql_id;
     cnt++;
 }
 
 void TimeTrackerGrid::AddRowSerialized(TimeEntrySerialized* entry)
 {
+    if(!entry || !entry->entry)
+        return;
+
     int num_rows = m_grid->GetNumberRows();
     if (num_rows <= cnt)
         m_grid->AppendRows(1);
@@ -219,59 +225,91 @@ void TimeTrackerGrid::AddRowSerialized(TimeEntrySerialized* entry)
 		}
     }
 
-	grid_to_entry[cnt] = entry->entry;
+	grid_to_entry_id[static_cast<int>(cnt)] = entry->entry->sql_id;
 	cnt++;
 }
 
 void TimeTrackerGrid::ClearRows()
 {
-	m_grid->ClearGrid();
-    if(m_grid->GetNumberRows())
-	    m_grid->DeleteRows(0, m_grid->GetNumberRows());
-	grid_to_entry.clear();
+	const int row_count = m_grid->GetNumberRows();
+    if(row_count > 0)
+    {
+	    m_grid->ClearGrid();
+	    m_grid->DeleteRows(0, row_count);
+    }
+	grid_to_entry_id.clear();
 	cnt = 0;
 }
 
 void TimeTrackerPanel::ToggleWorktime()
 {
-	boost::posix_time::time_duration duration = boost::posix_time::time_duration(0, 0, 0);
+    FinishActiveEdit();
+	boost::posix_time::time_duration duration(0, 0, 0);
     std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
     if (!is_working)
     {
         auto time = boost::posix_time::second_clock::local_time();
         TimeEntry* time_entry = time_tracker->AddEntry(time, time, "");
-        lastTimeEntry = time_entry;
+        if(!time_entry)
+        {
+            wxMessageBox(time_tracker->LastError(), "Unable to start time tracking", wxOK | wxICON_ERROR, this);
+            return;
+        }
+
+        lastTimeEntryId = time_entry->sql_id;
 		lastTimeEntryStart = time_entry->start;
+        lastPersistedMinute = 0;
 
         tracker_grid->AddRow(time_entry);
         time_tracker->UpdateEntries();
         RefreshPanel();
 
-        m_StartButton->SetBackgroundColour(*wxRED);
-        m_StartButton->SetLabelText("Stop");
-        //m_TimeCounter->Show();
-        m_TimeCounter->SetForegroundColour(wxColor(242, 141, 68));
+        is_working = true;
+        SetWorktimeUi(true);
     }
     else
     {
-        time_tracker->EditEntry(lastTimeEntry, lastTimeEntry->start, boost::posix_time::second_clock::local_time(), lastTimeEntry->desc);
+        if(!lastTimeEntryId)
+        {
+            is_working = false;
+            SetWorktimeUi(false);
+            return;
+        }
+
+        const TimeEntry* entry = time_tracker->FindEntry(*lastTimeEntryId);
+        if(!entry)
+        {
+            is_working = false;
+            lastTimeEntryId.reset();
+            SetWorktimeUi(false);
+            wxMessageBox("The running entry is no longer available. The timer was stopped safely.",
+                "Time tracker state changed", wxOK | wxICON_WARNING, this);
+            return;
+        }
+
+        const auto start = entry->start;
+        const auto end = boost::posix_time::second_clock::local_time();
+        const auto comment = entry->desc;
+        if(!time_tracker->EditEntry(*lastTimeEntryId, start, end, comment))
+        {
+            wxMessageBox(time_tracker->LastError(), "Unable to stop time tracking", wxOK | wxICON_ERROR, this);
+            return;
+        }
         time_tracker->UpdateEntries();
         RefreshPanel();
 
-        m_StartButton->SetBackgroundColour(wxNullColour);
-        m_StartButton->SetLabelText("Start");
-        //m_TimeCounter->Hide();
-        m_TimeCounter->SetForegroundColour(*wxBLACK);
-
-		duration = lastTimeEntry->end - lastTimeEntry->start;
-        lastTimeEntry = nullptr;
+        duration = end - start;
+        lastTimeEntryId.reset();
+        is_working = false;
+        SetWorktimeUi(false);
     }
 
-    is_working = !is_working;
-
     MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-    std::lock_guard lock(frame->mtx);
-    frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::WorktimeToggled), is_working, duration });
+    if(frame)
+    {
+        frame->PostNotification(WorktimeToggledNotification{is_working,
+            std::chrono::seconds{duration.total_seconds()}});
+    }
 }
 
 TimeTrackerPanel::TimeTrackerPanel(wxFrame* parent) :
@@ -319,19 +357,27 @@ TimeTrackerPanel::TimeTrackerPanel(wxFrame* parent) :
 
     m_RefreshButton = new wxButton(this, wxID_ANY, "Refresh");
     v_sizer_0->Add(m_RefreshButton);
-    m_RefreshButton->Bind(wxEVT_BUTTON, [=](wxCommandEvent&)
+    m_RefreshButton->Bind(wxEVT_BUTTON, [this](wxCommandEvent&)
         {
-            wxString month_str = m_WorktimeMonth->GetStringSelection();
+            FinishActiveEdit();
+            if(is_working)
+            {
+                wxMessageBox("Stop the worktime counter before loading another month.",
+                    "Time tracking is active", wxOK | wxICON_INFORMATION, this);
+                return;
+            }
+
             wxString year_str = m_WorktimeYear->GetStringSelection();
 
-            long month_int = m_WorktimeMonth->GetSelection() + 1;
+            const int month_selection = m_WorktimeMonth->GetSelection();
+            long month_int = month_selection + 1;
             long year_int = -1;
 
-            bool validMonth = 1;
+            bool validMonth = month_selection != wxNOT_FOUND;
             bool validYear = year_str.ToLong(&year_int);
 
             // Additional optional range checks
-            if (!validMonth || month_int < 0 || month_int > 12) {
+            if (!validMonth || month_int <= 0 || month_int > 12) {
                 wxMessageBox("Invalid month selected. Please choose a valid numeric month (1-12).", "Error", wxICON_ERROR);
                 return;
             }
@@ -343,7 +389,6 @@ TimeTrackerPanel::TimeTrackerPanel(wxFrame* parent) :
 
             std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
             time_tracker->SetActualYearMonth(year_int, month_int);
-            RefreshPanel();
             time_tracker->LoadEntries(year_int, month_int);
             RefreshPanel();
         });
@@ -420,144 +465,116 @@ TimeTrackerPanel::TimeTrackerPanel(wxFrame* parent) :
 
 void TimeTrackerPanel::OnCellValueChanged(wxGridEvent& ev)
 {
-	if (tracker_grid->grid_to_entry.empty())
-		return;
-	auto it = tracker_grid->grid_to_entry.find(ev.GetRow());
-	if (it == tracker_grid->grid_to_entry.end())
-		return;
-	auto entry = it->second;
-	if (entry == nullptr)
+	auto row = tracker_grid->grid_to_entry_id.find(ev.GetRow());
+	if(row == tracker_grid->grid_to_entry_id.end())
 		return;
 
     std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
-	switch (ev.GetCol())
+    TimeEntry* entry = time_tracker->FindEntry(row->second);
+	if(!entry)
+    {
+        ScheduleRefresh();
+		return;
+    }
+
+    const int entry_id = entry->sql_id;
+    if(lastTimeEntryId == entry_id && ev.GetCol() != TimeTrackerCol::TimeTracker_Comment)
+    {
+        wxMessageBox("Only the comment can be edited while this entry is running.",
+            "Time tracking is active", wxOK | wxICON_INFORMATION, this);
+        ScheduleRefresh();
+        return;
+    }
+
+    bool valid_edit = false;
+    bool saved = false;
+	switch(ev.GetCol())
 	{
         case TimeTrackerCol::TimeTracker_Date:
         {
-			std::string date_str = tracker_grid->m_grid->GetCellValue(wxGridCellCoords(ev.GetRow(), TimeTrackerCol::TimeTracker_Date)).ToStdString();
+			const std::string date_str = tracker_grid->m_grid->GetCellValue(
+                wxGridCellCoords(ev.GetRow(), TimeTrackerCol::TimeTracker_Date)).ToStdString();
 			static const boost::regex date_regex("^([0-9]{4})-([0-1][0-9])-([0-3][0-9])$");
-            if (boost::regex_match(date_str, date_regex))
+            if(boost::regex_match(date_str, date_regex))
             {
                 try
-
                 {
-                    // Extract year, month, and day
-                    size_t dash_pos1 = date_str.find('-');
-                    size_t dash_pos2 = date_str.find('-', dash_pos1 + 1);
-                    int year = std::stoi(date_str.substr(0, dash_pos1));
-                    int month = std::stoi(date_str.substr(dash_pos1 + 1, dash_pos2 - dash_pos1 - 1));
-                    int day = std::stoi(date_str.substr(dash_pos2 + 1));
-                    // Create a new date object
-                    boost::gregorian::date new_date(year, month, day);
-                    // Update entry->start and entry->end with the new date
-                    boost::posix_time::time_duration start_time = entry->start.time_of_day();
-                    boost::posix_time::time_duration end_time = entry->end.time_of_day();
-                    entry->start = boost::posix_time::ptime(new_date, start_time);
-                    entry->end = boost::posix_time::ptime(new_date, end_time);
-                    DBG("Final date and time: %s\n", boost::posix_time::to_simple_string(entry->start).c_str());
-
-                    time_tracker->SaveEntry(it->second);
-                    time_tracker->UpdateEntries();
-                    RefreshPanel();
+                    const size_t dash_pos1 = date_str.find('-');
+                    const size_t dash_pos2 = date_str.find('-', dash_pos1 + 1);
+                    const int year = std::stoi(date_str.substr(0, dash_pos1));
+                    const int month = std::stoi(date_str.substr(dash_pos1 + 1, dash_pos2 - dash_pos1 - 1));
+                    const int day = std::stoi(date_str.substr(dash_pos2 + 1));
+                    const boost::gregorian::date new_date(year, month, day);
+                    const auto date_shift = new_date - entry->start.date();
+                    valid_edit = true;
+                    saved = time_tracker->EditEntry(entry_id,
+                        entry->start + date_shift, entry->end + date_shift, entry->desc);
                 }
-                catch (...)
+                catch(const std::exception&)
                 {
-
-                    // Silently ignore invalid entries (e.g., stoi fails)
-                    // or invalid date (e.g., 2023-02-30)
+                    // The deferred refresh restores the previous valid value.
                 }
             }
             break;
         }
         case TimeTrackerCol::TimeTracker_Start:
+        case TimeTrackerCol::TimeTracker_End:
         {
-            std::string start_str = tracker_grid->m_grid->GetCellValue(wxGridCellCoords(ev.GetRow(), TimeTrackerCol::TimeTracker_Start)).ToStdString();
+            const int column = ev.GetCol();
+            const std::string time_str = tracker_grid->m_grid->GetCellValue(
+                wxGridCellCoords(ev.GetRow(), column)).ToStdString();
             static const boost::regex hhmm_regex("^([0-1]?[0-9]|2[0-3]):([0-5][0-9])$");
-            if (boost::regex_match(start_str, hhmm_regex))
+            if(boost::regex_match(time_str, hhmm_regex))
             {
                 try
                 {
-                    // Extract hours and minutes
-                    size_t colon_pos = start_str.find(':');
-                    int hours = std::stoi(start_str.substr(0, colon_pos));
-                    int minutes = std::stoi(start_str.substr(colon_pos + 1));
-
-                    // Get the original date from entry->end
-                    const boost::gregorian::date original_date = entry->start.date();
-
-                    // Create a new time_duration (hh:mm:00)
-                    boost::posix_time::time_duration new_time(hours, minutes, 0);
-
-                    // Update entry->end with the original date + new time
-                    entry->start = boost::posix_time::ptime(original_date, new_time);
-
-                    DBG("Final date and time: %s\n", boost::posix_time::to_simple_string(entry->start).c_str());
+                    const size_t colon_pos = time_str.find(':');
+                    const int hours = std::stoi(time_str.substr(0, colon_pos));
+                    const int minutes = std::stoi(time_str.substr(colon_pos + 1));
+                    const boost::posix_time::time_duration new_time(hours, minutes, 0);
+                    auto new_start = entry->start;
+                    auto new_end = entry->end;
+                    if(column == TimeTrackerCol::TimeTracker_Start)
+                        new_start = boost::posix_time::ptime(entry->start.date(), new_time);
+                    else
+                        new_end = boost::posix_time::ptime(entry->start.date(), new_time);
+                    valid_edit = true;
+                    saved = time_tracker->EditEntry(entry_id, new_start, new_end, entry->desc);
                 }
-                catch (...)
+                catch(const std::exception&)
                 {
-                    // Silently ignore invalid entries (e.g., stoi fails)
+                    // The deferred refresh restores the previous valid value.
                 }
             }
-
-            time_tracker->SaveEntry(it->second);
-            time_tracker->UpdateEntries();
-            RefreshPanel();
-            break;
-        }
-        case TimeTrackerCol::TimeTracker_End:
-        {
-            std::string end_str = tracker_grid->m_grid->GetCellValue(wxGridCellCoords(ev.GetRow(), TimeTrackerCol::TimeTracker_End)).ToStdString();
-            static const boost::regex hhmm_regex("^([0-1]?[0-9]|2[0-3]):([0-5][0-9])$");
-            if (boost::regex_match(end_str, hhmm_regex)) 
-            {
-                try 
-                {
-                    // Extract hours and minutes
-                    size_t colon_pos = end_str.find(':');
-                    int hours = std::stoi(end_str.substr(0, colon_pos));
-                    int minutes = std::stoi(end_str.substr(colon_pos + 1));
-
-                    // Get the original date from entry->start
-                    const boost::gregorian::date original_date = entry->start.date();
-
-                    // Create a new time_duration (hh:mm:00)
-                    boost::posix_time::time_duration new_time(hours, minutes, 0);
-
-                    // Update entry->end with the original date + new time
-                    entry->end = boost::posix_time::ptime(original_date, new_time);
-
-                    DBG("Final date and time: %s\n", boost::posix_time::to_simple_string(entry->end).c_str());
-                }
-                catch (...) 
-                {
-                    // Silently ignore invalid entries (e.g., stoi fails)
-                }
-            }
-
-            time_tracker->SaveEntry(it->second);
-            time_tracker->UpdateEntries();
-            RefreshPanel();
             break;
         }
         case TimeTrackerCol::TimeTracker_Comment:
         {
-            std::string str_comment = tracker_grid->m_grid->GetCellValue(wxGridCellCoords(ev.GetRow(), TimeTrackerCol::TimeTracker_Comment)).ToStdString();
-            it->second->desc = str_comment;
-
-			time_tracker->SaveEntry(it->second);
-            time_tracker->UpdateEntries();
-            RefreshPanel();
+            valid_edit = true;
+            const std::string comment = tracker_grid->m_grid->GetCellValue(
+                wxGridCellCoords(ev.GetRow(), TimeTrackerCol::TimeTracker_Comment)).ToStdString();
+            saved = time_tracker->EditEntry(entry_id, entry->start, entry->end, comment);
             break;
         }
 	    default:
-		    break;
+		    return;
 	}
+
+    if(saved)
+        time_tracker->UpdateEntries();
+    else if(valid_edit)
+        wxMessageBox(time_tracker->LastError(), "Unable to save time entry", wxOK | wxICON_ERROR, this);
+
+    // Deleting rows while EVT_GRID_CELL_CHANGED is still unwinding can leave
+    // wxGrid's edit control referencing a destroyed row. Rebuild afterwards.
+    ScheduleRefresh();
 }
 
 void TimeTrackerPanel::OnCellRightClick(wxGridEvent& ev)
 {
     if (ev.GetEventObject() == dynamic_cast<wxObject*>(tracker_grid->m_grid))
     {
+        FinishActiveEdit();
         wxMenu menu;
         menu.Append(ID_TimesheetAdd, "&Add")->SetBitmap(wxArtProvider::GetBitmap(wxART_ADD_BOOKMARK, wxART_OTHER, FromDIP(wxSize(14, 14))));
         menu.Append(ID_TimesheetDelete, "&Delete")->SetBitmap(wxArtProvider::GetBitmap(wxART_DELETE, wxART_OTHER, FromDIP(wxSize(14, 14))));
@@ -566,27 +583,35 @@ void TimeTrackerPanel::OnCellRightClick(wxGridEvent& ev)
         {
             case ID_TimesheetAdd:
             {
-                int row = ev.GetRow();
                 std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
 
-				time_tracker->AddEntry(boost::posix_time::second_clock::local_time(), boost::posix_time::second_clock::local_time(), "");
+                const auto now = boost::posix_time::second_clock::local_time();
+				if(!time_tracker->AddEntry(now, now, ""))
+                {
+                    wxMessageBox(time_tracker->LastError(), "Unable to add time entry", wxOK | wxICON_ERROR, this);
+                    break;
+                }
                 time_tracker->UpdateEntries();
                 RefreshPanel();
                 break;
             }
             case ID_TimesheetDelete:
             {
-                int row = ev.GetRow();
                 std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
+                const auto row = tracker_grid->grid_to_entry_id.find(ev.GetRow());
+                if(row == tracker_grid->grid_to_entry_id.end())
+                    break;
 
-                if (lastTimeEntry == tracker_grid->grid_to_entry[row])
+                if(lastTimeEntryId == row->second)
                 {
                     wxMessageDialog(this, "Given entry can't be removed\nStop the worktime counter, then try again!", "Error", wxOK).ShowModal();
                     return;
                 }
 
-				time_tracker->RemoveEntry(tracker_grid->grid_to_entry[row]);
-                time_tracker->UpdateEntries();
+				if(time_tracker->RemoveEntry(row->second))
+                    time_tracker->UpdateEntries();
+                else
+                    wxMessageBox(time_tracker->LastError(), "Unable to delete time entry", wxOK | wxICON_ERROR, this);
 				RefreshPanel();
                 break;
             }
@@ -626,7 +651,7 @@ void TimeTrackerPanel::OnKeyDown(wxKeyEvent& evt)
                         wxTheClipboard->SetData(new wxTextDataObject(str_to_copy));
                         wxTheClipboard->Close();
                         MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-                        frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::SelectedLogsCopied) });
+                        frame->PostNotification(SimpleNotification{SimpleNotificationKind::SelectedLogsCopied});
                     }
                 }
                 break;
@@ -638,8 +663,41 @@ void TimeTrackerPanel::OnKeyDown(wxKeyEvent& evt)
 
 void TimeTrackerPanel::RefreshPanel()
 {
+    FinishActiveEdit();
     tracker_grid->ClearRows();
     is_inited = false;
+}
+
+void TimeTrackerPanel::FinishActiveEdit()
+{
+    if(!tracker_grid || !tracker_grid->m_grid ||
+       !tracker_grid->m_grid->IsCellEditControlEnabled())
+        return;
+
+    tracker_grid->m_grid->SaveEditControlValue();
+    tracker_grid->m_grid->DisableCellEditControl();
+}
+
+void TimeTrackerPanel::ScheduleRefresh()
+{
+    if(refresh_pending)
+        return;
+
+    refresh_pending = true;
+    CallAfter([this]
+        {
+            RefreshPanel();
+            refresh_pending = false;
+        });
+}
+
+void TimeTrackerPanel::SetWorktimeUi(bool working)
+{
+    m_StartButton->SetBackgroundColour(working ? *wxRED : wxNullColour);
+    m_StartButton->SetLabelText(working ? "Stop" : "Start");
+    m_TimeCounter->SetForegroundColour(working ? wxColor(242, 141, 68) : *wxBLACK);
+    if(!working)
+        m_TimeCounter->SetLabel("00:00:00");
 }
 
 void TimeTrackerPanel::On10MsTimer()
@@ -650,18 +708,19 @@ void TimeTrackerPanel::On10MsTimer()
 
 void TimeTrackerPanel::HandleElapsedTime()
 {
-    if (tracker_grid->grid_to_entry.empty() || !is_working)
+    if(!is_working)
         return;
 
     // Calculate the time difference
     auto now = boost::posix_time::second_clock::local_time();
     auto duration = now - lastTimeEntryStart;
+    const std::int64_t elapsed_seconds = std::max<std::int64_t>(0, duration.total_seconds());
 
     // Format the duration into hh:mm:ss
-    int hours = duration.hours();
-    int minutes = duration.minutes();
-    int seconds = duration.seconds();
-    wxString formattedTime = wxString::Format("%02d:%02d:%02d", hours, minutes, seconds);
+    const auto hours = elapsed_seconds / 3600;
+    const auto minutes = (elapsed_seconds / 60) % 60;
+    const auto seconds = elapsed_seconds % 60;
+    wxString formattedTime = wxString::Format("%02lld:%02lld:%02lld", hours, minutes, seconds);
 
     // Update the static text
     if (m_TimeCounter)
@@ -670,23 +729,69 @@ void TimeTrackerPanel::HandleElapsedTime()
     }
 
 
-    if (duration.total_seconds() % 60 == 0 && !tracker_grid->m_grid->IsCellEditControlEnabled())
+    if(tracker_grid->m_grid->IsCellEditControlEnabled() ||
+       !time_tracker_logic::ShouldPersistElapsedMinute(elapsed_seconds, lastPersistedMinute))
+        return;
+
+    lastPersistedMinute = elapsed_seconds / 60;
+    std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
+    if(!lastTimeEntryId)
     {
-        std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
-        auto now_time = boost::posix_time::second_clock::local_time();
-        if (lastTimeEntry->start.date() == now_time.date())
-        {
-            time_tracker->EditEntry(lastTimeEntry, lastTimeEntry->start, boost::posix_time::second_clock::local_time(), lastTimeEntry->desc);
-        }
-        else  /* If it's overlapping to next day, save old one and start a new one */
-        {
-            TimeEntry* time_entry = time_tracker->AddEntry(now_time, now_time, std::format("%s #2", lastTimeEntry->desc));
-            lastTimeEntry = time_entry;
-            lastTimeEntryStart = time_entry->start;
+        is_working = false;
+        SetWorktimeUi(false);
+        return;
+    }
 
-            tracker_grid->AddRow(time_entry);
-        }
+    const TimeEntry* entry = time_tracker->FindEntry(*lastTimeEntryId);
+    if(!entry)
+    {
+        is_working = false;
+        lastTimeEntryId.reset();
+        SetWorktimeUi(false);
+        MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
+        if(frame)
+            frame->PostNotification(WorktimeToggledNotification{false, std::chrono::seconds{elapsed_seconds}});
+        return;
+    }
 
+    const auto entry_start = entry->start;
+    const auto comment = entry->desc;
+    bool saved = false;
+    if(entry_start.date() == now.date())
+    {
+        saved = time_tracker->EditEntry(*lastTimeEntryId, entry_start, now, comment);
+    }
+    else
+    {
+        // Close the previous day precisely at midnight before starting the new
+        // entry. Keeping only IDs prevents either grid refresh from invalidating
+        // the running-session state.
+        const boost::posix_time::ptime midnight(now.date());
+        saved = time_tracker->EditEntry(*lastTimeEntryId, entry_start, midnight, comment);
+        if(saved)
+        {
+            TimeEntry* next_entry = time_tracker->AddEntry(midnight, now, comment + " #2");
+            if(next_entry)
+            {
+                lastTimeEntryId = next_entry->sql_id;
+                lastTimeEntryStart = midnight;
+                lastPersistedMinute = (now - midnight).total_seconds() / 60;
+            }
+            else
+            {
+                is_working = false;
+                lastTimeEntryId.reset();
+                SetWorktimeUi(false);
+                MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
+                if(frame)
+                    frame->PostNotification(WorktimeToggledNotification{false, std::chrono::seconds{elapsed_seconds}});
+                return;
+            }
+        }
+    }
+
+    if(saved)
+    {
         time_tracker->UpdateEntries();
         RefreshPanel();
     }

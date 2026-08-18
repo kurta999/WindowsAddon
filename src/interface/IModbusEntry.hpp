@@ -2,6 +2,15 @@
 
 #include <filesystem>
 #include <bitset>
+#include <array>
+#include <chrono>
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "IBasicGuiCustomization.hpp"
 
@@ -9,6 +18,15 @@ enum class ModbusByteOrder
 {
     LittleEndian,
     BigEndian
+};
+
+enum class ModbusRegisterByteOrder : uint8_t
+{
+    Default,
+    BigEndian,
+    LittleEndian,
+    BigEndianByteSwap,
+    LittleEndianByteSwap
 };
 
 class NumModbusEntries
@@ -19,10 +37,10 @@ public:
     size_t inputRegisters = 0xFFFF;
     size_t holdingRegisters = 0xFFFF;
 
-    uint16_t coilsOffset;
-    uint16_t inputStatusOffset;
-    uint16_t inputOffset;
-    uint16_t holdingOffset;
+    uint16_t coilsOffset = 0;
+    uint16_t inputStatusOffset = 0;
+    uint16_t inputOffset = 0;
+    uint16_t holdingOffset = 0;
 };
 
 enum ModbusBitfieldType : uint8_t
@@ -35,13 +53,41 @@ enum ModbusValueFormat : uint8_t
     MVF_DEC, MVF_HEX, MVF_BIN
 };
 
-class ModbusMap : public BasicGuiTextCustomization
+enum class ModbusConditionalColorComparison : uint8_t
+{
+    NotUsed,
+    EqualTo,
+    GreaterThan,
+    LessThan,
+    GreaterThanOrEqualTo,
+    LessThanOrEqualTo
+};
+
+struct ModbusConditionalColorRule
+{
+    ModbusConditionalColorComparison comparison = ModbusConditionalColorComparison::NotUsed;
+    double value = 0.0;
+    std::optional<uint32_t> color;
+    std::optional<uint32_t> background_color;
+};
+
+struct ModbusValueScaling
+{
+    bool enabled = false;
+    double x1 = 0.0;
+    double y1 = 0.0;
+    double x2 = 65535.0;
+    double y2 = 6553.5;
+    uint8_t precision = 2;
+};
+
+class ModbusMap : public TextStyle
 {
 public:
     ModbusMap(const std::string& name, ModbusBitfieldType type, uint8_t size, size_t min_val, size_t max_val, const std::string& description,
         uint32_t color, uint32_t bg_color, bool is_bold, float scale) :
-        m_Name(name), m_Type(type), m_Size(size), m_MinVal(min_val), m_MaxVal(max_val), m_Description(description),
-        BasicGuiTextCustomization(color, bg_color, is_bold, scale)
+        TextStyle(color, bg_color, is_bold, scale), m_Type(type), m_Name(name), m_Size(size),
+        m_MinVal(min_val), m_MaxVal(max_val), m_Description(description)
     {
 
     }
@@ -69,14 +115,16 @@ public:
 
 using ModbusMapping = std::map<uint8_t, std::unique_ptr<ModbusMap>>;
 
-class ModbusItem 
+class ModbusItem
 {
 public:
     ModbusItem(const std::string& name, uint8_t fav_level, size_t offset, ModbusBitfieldType type, ModbusValueFormat value_format, const std::string& desc, 
         ModbusMapping& map, int64_t min_val, int64_t max_val, uint64_t value, std::optional<uint32_t> color_ = {}, std::optional<uint32_t> bg_color_ = {}, std::optional<bool> is_bold_ = false,
-        std::optional<float> scale = {}, std::optional<std::string> font_face = {}) :
-        m_Name(name), m_FavLevel(fav_level), m_Offset(offset), m_Type(type), m_Format(value_format), m_Desc(desc), m_Mapping(std::move(map)), m_Min(min_val), m_Max(max_val), m_Value(value),
-        m_color(color_), m_bg_color(bg_color_), m_is_bold(is_bold_)
+        std::optional<float> scale = {}, std::optional<std::string> font_face = {},
+        ModbusRegisterByteOrder byte_order = ModbusRegisterByteOrder::Default) :
+        m_Name(name), m_FavLevel(fav_level), m_Type(type), m_Format(value_format), m_Offset(offset),
+        m_Value(value), m_Mapping(std::move(map)), m_Desc(desc), m_Min(min_val), m_Max(max_val),
+        m_color(color_), m_bg_color(bg_color_), m_is_bold(is_bold_), m_NetworkByteOrder(byte_order)
     {
         if(scale.has_value())
             m_scale = *scale;
@@ -86,12 +134,34 @@ public:
             m_is_bold = *is_bold_;
     }
 
-    uint8_t GetSize()
+    ModbusItem(const std::string& name, uint8_t fav_level, size_t offset, ModbusBitfieldType type,
+        ModbusValueFormat value_format, const std::string& desc, int64_t min_val, int64_t max_val,
+        uint64_t value, std::optional<uint32_t> color_ = {}, std::optional<uint32_t> bg_color_ = {},
+        std::optional<bool> is_bold_ = false, std::optional<float> scale = {},
+        std::optional<std::string> font_face = {},
+        ModbusRegisterByteOrder byte_order = ModbusRegisterByteOrder::Default) :
+        m_Name(name), m_FavLevel(fav_level), m_Type(type), m_Format(value_format), m_Offset(offset),
+        m_Value(value), m_Desc(desc), m_Min(min_val), m_Max(max_val), m_color(color_),
+        m_bg_color(bg_color_), m_is_bold(is_bold_.value_or(false)), m_NetworkByteOrder(byte_order)
     {
-        uint8_t size = 1;
-        if (m_Type == ModbusBitfieldType::MBT_UI32 || m_Type == ModbusBitfieldType::MBT_FLOAT)
-            size = 2;
-        return size;
+        if(scale)
+            m_scale = *scale;
+        if(font_face)
+            m_font_face = *font_face;
+    }
+
+    static constexpr size_t GetTypeSize(ModbusBitfieldType type)
+    {
+        if(type == ModbusBitfieldType::MBT_UI32 || type == ModbusBitfieldType::MBT_I32 || type == ModbusBitfieldType::MBT_FLOAT)
+            return 2;
+        if(type == ModbusBitfieldType::MBT_UI64 || type == ModbusBitfieldType::MBT_I64 || type == ModbusBitfieldType::MBT_DOUBLE)
+            return 4;
+        return 1;
+    }
+
+    size_t GetSize() const
+    {
+        return m_RegisterSize.value_or(GetTypeSize(m_Type));
     }
 
     std::string m_Name;
@@ -102,8 +172,14 @@ public:
 
     size_t m_Offset;
 
+    // A configuration may deliberately declare a larger read-only block than
+    // the scalar type displayed for its first register.
+    std::optional<size_t> m_RegisterSize;
+
     uint64_t m_Value;
     float m_fValue = 0.0f;
+    double m_dValue = 0.0;
+    uint8_t m_FloatPrecision = 3;
 
     ModbusMapping m_Mapping;
 
@@ -129,12 +205,64 @@ public:
     // !\brief Font face
     std::string m_font_face;
 
+    int m_ManualAddress = -1;
+
+    ModbusRegisterByteOrder m_NetworkByteOrder = ModbusRegisterByteOrder::Default;
+
+    std::array<ModbusConditionalColorRule, 2> m_ConditionalColors;
+
+    ModbusValueScaling m_ValueScaling;
+
     uint32_t branches = 0;
 
 };
 
 
 using ModbusItemType = std::vector<std::unique_ptr<ModbusItem>>;
+
+inline bool IsModbusScalingSupported(ModbusBitfieldType type)
+{
+    return type == ModbusBitfieldType::MBT_UI16 || type == ModbusBitfieldType::MBT_I16 ||
+        type == ModbusBitfieldType::MBT_UI32 || type == ModbusBitfieldType::MBT_I32;
+}
+
+inline bool IsModbusScalingActive(const ModbusItem& item)
+{
+    return item.m_ValueScaling.enabled && IsModbusScalingSupported(item.m_Type) &&
+        item.m_Format == ModbusValueFormat::MVF_DEC && item.m_ValueScaling.x1 != item.m_ValueScaling.x2;
+}
+
+inline double GetModbusItemRawNumericValue(const ModbusItem& item)
+{
+    switch(item.m_Type)
+    {
+        case ModbusBitfieldType::MBT_FLOAT:
+            return item.m_fValue;
+        case ModbusBitfieldType::MBT_DOUBLE:
+            return item.m_dValue;
+        case ModbusBitfieldType::MBT_BOOL:
+            return item.m_Value != 0 ? 1.0 : 0.0;
+        case ModbusBitfieldType::MBT_I16:
+            return static_cast<double>(static_cast<int16_t>(item.m_Value & 0xFFFF));
+        case ModbusBitfieldType::MBT_I32:
+            return static_cast<double>(static_cast<int32_t>(item.m_Value & 0xFFFFFFFF));
+        case ModbusBitfieldType::MBT_I64:
+            return static_cast<double>(static_cast<int64_t>(item.m_Value));
+        default:
+            return static_cast<double>(item.m_Value);
+    }
+}
+
+inline double GetModbusItemDisplayNumericValue(const ModbusItem& item)
+{
+    const double raw_value = GetModbusItemRawNumericValue(item);
+    if(!IsModbusScalingActive(item))
+        return raw_value;
+
+    const ModbusValueScaling& scaling = item.m_ValueScaling;
+    const double slope = (scaling.y2 - scaling.y1) / (scaling.x2 - scaling.x1);
+    return slope * (raw_value - scaling.x1) + scaling.y1;
+}
 
 class IModbusEntryLoader
 {
@@ -145,6 +273,10 @@ public:
         ModbusItemType& holding, ModbusItemType& input, NumModbusEntries& num_entries, uint32_t branch) = 0;
     virtual bool Save(const std::filesystem::path& path, uint8_t& slave_id, ModbusItemType& coils, ModbusItemType& input_status,
         ModbusItemType& holding, ModbusItemType& input, NumModbusEntries& num_entries) const = 0;
+
+    virtual std::vector<std::string> GetAvailableDevices(const std::filesystem::path&) const { return {}; }
+    virtual bool SelectDevice(const std::string&) { return false; }
+    virtual std::string GetSelectedDevice() const { return {}; }
 };
 
 /* Single-switch type-dispatch for Modbus bitfield types, mirrors DispatchBitfieldType in CanModels.hpp.
@@ -172,9 +304,12 @@ void DispatchModbusBitfieldType(ModbusBitfieldType type, F&& fn)
 class IModbusHelper
 {
 public:
+    enum class Table : uint8_t { Coils, InputStatus, Holding, Input };
+
     virtual ~IModbusHelper() = default;
 
     virtual void AppendLog(std::chrono::steady_clock::time_point& t1, uint8_t direction, uint8_t fcode, uint8_t error, const std::vector<uint8_t>& data) = 0;
     virtual void OnMaxEntriesReached() = 0;
     virtual void RefreshItems() = 0;
+    virtual void QueueValueChanges(Table, const std::vector<uint8_t>&) { RefreshItems(); }
 };

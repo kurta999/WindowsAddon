@@ -2,6 +2,7 @@
 
 #include <wx/wx.h>
 #include <semaphore>
+#include <atomic>
 
 class AlarmPanel : public wxPanel
 {
@@ -20,7 +21,7 @@ private:
 	void OnRightClick(wxMouseEvent& event);
 
 	std::binary_semaphore m_alarmSemaphore{0};
-	bool m_showAlarmDialog = false;
+	std::atomic<bool> m_showAlarmDialog{false};
 	std::string m_DurationText;
 
 	std::vector<wxStaticText*> alarms;

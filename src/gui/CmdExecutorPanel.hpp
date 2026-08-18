@@ -10,6 +10,8 @@
 
 #include "ICmdHelper.hpp"
 
+class CmdExecutor;
+
 class CmdExecutorEditDialog : public wxDialog
 {
 public:
@@ -71,8 +73,8 @@ class CmdExecutorPanelPage;
 class CmdExecutorPanelBase : public wxPanel, public ICmdHelper
 {
 public:
-	CmdExecutorPanelBase(wxFrame* parent);
-	virtual ~CmdExecutorPanelBase() { }
+	CmdExecutorPanelBase(wxFrame* parent, CmdExecutor& executor);
+	~CmdExecutorPanelBase() override;
 
 	void ReloadCommands();
 
@@ -91,6 +93,7 @@ private:
     wxAuiNotebook* m_notebook = nullptr;
 
     std::vector<CmdExecutorPanelPage*> m_Pages;
+    CmdExecutor& m_executor;
 
 	wxDECLARE_EVENT_TABLE();
 };
@@ -100,7 +103,7 @@ class CmdExecutorParamDialog;
 class CmdExecutorPanelPage : public wxPanel
 {
 public:
-    CmdExecutorPanelPage(wxWindow* parent, uint8_t id, uint8_t cols);
+    CmdExecutorPanelPage(wxWindow* parent, uint8_t id, uint8_t cols, CmdExecutor& executor);
 
     void OnPreload(uint8_t cols);
     void OnPostReloadUpdate();
@@ -109,6 +112,7 @@ public:
     uint8_t m_Id = 0;
 
 private:
+	CmdExecutor& m_executor;
 
     void ToggleAllButtonClickability(bool toggle);
 

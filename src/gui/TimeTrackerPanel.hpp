@@ -1,7 +1,11 @@
 #pragma once
 
 #include <wx/wx.h>
-#include <semaphore>
+
+#include <cstdint>
+#include <map>
+#include <optional>
+#include <vector>
 
 #include "../TimeTracker.hpp"
 
@@ -27,8 +31,9 @@ public:
 
     wxGrid* m_grid = nullptr;
 
-    std::map<uint16_t, TimeEntry*> grid_to_entry;  /* Helper map for storing an additional ID to CanTxEntry */
-    std::map<uint16_t, uint16_t> did_to_row;  /* Helper map for storing an additional ID to CanTxEntry */
+    // Rows are ephemeral during refreshes; durable SQL IDs are safe to retain
+    // across model reloads, while TimeEntry pointers are not.
+    std::map<int, int> grid_to_entry_id;
 
     size_t cnt = 0;
 };
@@ -58,18 +63,23 @@ public:
     void ToggleWorktime();
 
 private:
-    TimeEntry* lastTimeEntry = nullptr;
+	std::optional<int> lastTimeEntryId;
 	boost::posix_time::ptime lastTimeEntryStart;
+    std::int64_t lastPersistedMinute{ 0 };
     const std::vector<int> m_defaultSizes = { 70, 50, 50, 400, 50, 135 };
 
     void HandleElapsedTime();
     void HandleInit();
+    void FinishActiveEdit();
+    void ScheduleRefresh();
+    void SetWorktimeUi(bool working);
 
     void UpdateCurrentWeekNumber();
     wxString FormatCurrentWeekNumber();
 
     bool is_working{ false };
     bool is_inited{ false };
+    bool refresh_pending{ false };
 
     void OnSize(wxSizeEvent& event);
     void OnCellValueChanged(wxGridEvent& ev);

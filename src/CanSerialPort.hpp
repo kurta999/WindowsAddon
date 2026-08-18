@@ -5,38 +5,12 @@
 #include <semaphore>
 #include <boost/circular_buffer.hpp>
 #include <ICanDevice.hpp>
-
-constexpr size_t MAX_CAN_FRAME_DATA_LEN = 8;
-
-enum class CanDeviceType
-{
-    STM32,
-    LAWICEL
-};
-
-#pragma pack(push, 1)
-class CanData
-{
-public:
-    CanData(uint32_t frame_id_, uint8_t data_len, const uint8_t* data_)
-        : frame_id(frame_id_), data_len(data_len)
-    {
-        memset(data, 0, sizeof(data));
-        if(data_len > sizeof(data))
-            data_len = sizeof(data);
-
-        if(data_)
-            memcpy(data, data_, data_len);
-    }
-    uint32_t frame_id;
-    uint8_t data_len;
-    uint8_t data[MAX_CAN_FRAME_DATA_LEN];
-};
-#pragma pack(pop)
+#include <ICanDeviceFactory.hpp>
+#include <ICanTransport.hpp>
 
 /* TODO: create asbtraction for this & SerialPort because it's the same - but no time currently */
 class CallbackAsyncSerial;
-class CanSerialPort : public SerialPortBase, public CSingleton < CanSerialPort >
+class CanSerialPort : public SerialPortBase, public ICanTransport, public CSingleton < CanSerialPort >
 {
     friend class CSingleton < CanSerialPort >;
 
@@ -56,11 +30,15 @@ public:
     // !\brief Set internal CAN device
     void SetDevice(std::unique_ptr<ICanDevice>&& device);
 
+    // !\brief Replace protocol strategy creation (primarily for composition/tests)
+    void SetDeviceFactory(std::unique_ptr<ICanDeviceFactory> factory);
+
     // !\brief Add CAN frame to TX queue
     void AddToTxQueue(uint32_t frame_id, uint8_t data_len, const uint8_t* data);
 
-    // !\brief Add CAN frame to RX queue
-    void AddToRxQueue(uint32_t frame_id, uint8_t data_len, uint8_t* data);
+    // ICanTransport
+    void SetListener(ICanTransportListener* listener) noexcept override;
+    void Send(uint32_t frame_id, std::span<const uint8_t> data) override;
 
     // !\brief Send pending CAN Frames from the internal buffer
     void SendPendingCanFrames(CallbackAsyncSerial& serial_port);
@@ -86,6 +64,11 @@ private:
     // !\brief CAN Device
     std::unique_ptr<ICanDevice> m_Device = nullptr;
 
+    // !\brief Creates the selected CAN wire-protocol strategy
+    std::unique_ptr<ICanDeviceFactory> m_DeviceFactory;
+
     // !\brief CAN Device type
     CanDeviceType m_DeviceType = CanDeviceType::STM32;
+
+    std::atomic<ICanTransportListener*> m_Listener = nullptr;
 };

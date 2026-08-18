@@ -1,9 +1,10 @@
 #include "pch.hpp"
+#include "DirectoryBackupCore.hpp"
 
 BackupEntry::BackupEntry(std::filesystem::path&& from_, std::vector<std::filesystem::path>&& to_, std::vector<std::wstring>&& ignore_list_, int max_backups_,
 	bool compress_, bool calculate_hash_, size_t hash_buf_size_) :
 	from(std::move(from_)), to(std::move(to_)), ignore_list(std::move(ignore_list_)), max_backups(max_backups_),
-	m_Compress(compress_), calculate_hash(calculate_hash_), hash_buf_size(hash_buf_size_)
+	calculate_hash(calculate_hash_), m_Compress(compress_), hash_buf_size(hash_buf_size_)
 {
 	if(!IsValid())
 		return;
@@ -25,18 +26,6 @@ bool BackupEntry::IsValid() const
 	return true;
 }
 
-bool BackupEntry::IsInIgnoreList(const std::wstring& p) const
-{
-	for(auto& i : ignore_list)
-	{
-		if(std::search(p.begin(), p.end(), i.begin(), i.end()) != p.end() && p.length() > 0 && i.length() > 0)
-		{
-			return true;
-		}
-	}
-	return false;
-}
-
 void DirectoryBackup::Init()
 {
 
@@ -54,17 +43,84 @@ void DirectoryBackup::LoadEntry(const std::string& from, const std::string& to, 
 	std::vector<std::wstring> ignore_list;
 	boost::split(ignore_list, ignore_w, [](wchar_t input) { return input == L'|'; }, boost::algorithm::token_compress_on);
 
-	backups.push_back(std::make_unique<BackupEntry>(std::move(from_path), std::move(to_path), std::move(ignore_list), max_backups, compress_, calculate_hash, buffer_size));
+	AddEntry(BackupEntry(std::move(from_path), std::move(to_path), std::move(ignore_list),
+		max_backups, compress_, calculate_hash, buffer_size));
 }
 
+std::size_t DirectoryBackup::AddEntry(BackupEntry entry)
+{
+	std::scoped_lock lock(m_StateMutex);
+	m_Backups.push_back(std::move(entry));
+	return m_Backups.size() - 1;
+}
+
+bool DirectoryBackup::RemoveEntry(std::size_t id)
+{
+	std::scoped_lock lock(m_StateMutex);
+	if(id >= m_Backups.size())
+		return false;
+	m_Backups.erase(m_Backups.begin() + static_cast<std::ptrdiff_t>(id));
+	return true;
+}
+
+bool DirectoryBackup::UpdateEntry(std::size_t id, BackupEntry entry)
+{
+	std::scoped_lock lock(m_StateMutex);
+	if(id >= m_Backups.size())
+		return false;
+	m_Backups[id] = std::move(entry);
+	return true;
+}
+
+std::optional<BackupEntry> DirectoryBackup::GetEntry(std::size_t id) const
+{
+	std::scoped_lock lock(m_StateMutex);
+	if(id >= m_Backups.size())
+		return std::nullopt;
+	return m_Backups[id];
+}
+
+std::vector<BackupEntry> DirectoryBackup::GetEntries() const
+{
+	std::scoped_lock lock(m_StateMutex);
+	return m_Backups;
+}
+
+void DirectoryBackup::SetBackupTimeFormat(std::string format)
+{
+	std::scoped_lock lock(m_StateMutex);
+	m_BackupTimeFormat = std::move(format);
+}
+
+std::string DirectoryBackup::GetBackupTimeFormat() const
+{
+	std::scoped_lock lock(m_StateMutex);
+	return m_BackupTimeFormat;
+}
+
+std::string DirectoryBackup::GetCurrentFile() const
+{
+	std::scoped_lock lock(m_StateMutex);
+	return m_CurrentFile;
+}
+
+void DirectoryBackup::SetCurrentFile(std::string current_file)
+{
+	std::scoped_lock lock(m_StateMutex);
+	m_CurrentFile = std::move(current_file);
+}
 
 void DirectoryBackup::BackupFile(int id)
 {
-	if(id >= 0 && static_cast<size_t>(id) < backups.size())
+	if(id >= 0)
 	{
+		auto backup = GetEntry(static_cast<std::size_t>(id));
+		if(!backup)
+			return;
 		if(backup_future.valid())
 			backup_future.get();
-		backup_future = std::async(std::launch::async, &DirectoryBackup::DoBackup, this, backups[id].get());
+		backup_future = std::async(std::launch::async,
+			[this, backup = std::move(*backup)] { DoBackup(backup); });
 	}
 }
 
@@ -78,24 +134,32 @@ bool DirectoryBackup::IsInProgress() const
 
 void DirectoryBackup::Clear()
 {
-	backups.clear();
+	std::scoped_lock lock(m_StateMutex);
+	m_Backups.clear();
 }
 
-void DirectoryBackup::DoBackup(BackupEntry* backup)
+void DirectoryBackup::DoBackup(const BackupEntry& backup)
 {
 	std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
-	auto folder_name = backup->from.filename();
+	auto folder_name = backup.from.filename();
 	std::wstring folder_name_with_date = folder_name.generic_wstring();
 
-	if(!backup->IsValid())
+	if(!backup.IsValid())
 		return;
-#ifndef UNIT_TESTS
-	MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-	frame->show_backup_dlg = true;
-#endif
-	is_cancelled = false;
+	if(auto* event_sink = m_EventSink.load(std::memory_order_acquire))
+		event_sink->OnBackupStarted();
+	m_IsCancelled = false;
 	BackupRotation(backup);
 
+	std::vector<std::string> ignore_rules;
+	ignore_rules.reserve(backup.ignore_list.size());
+	for(const auto& rule : backup.ignore_list)
+		ignore_rules.push_back(std::filesystem::path(rule).generic_string());
+	const auto source_metrics = backup_core::MeasureSource(backup.from, ignore_rules);
+	if(!source_metrics.success)
+		LOG(LogLevel::Warning, "Could not calculate complete backup metrics: {}", source_metrics.error);
+
+	const auto backup_time_format = GetBackupTimeFormat();
 	if(!backup_time_format.empty())
 	{
 		time_t current_time;
@@ -113,29 +177,32 @@ void DirectoryBackup::DoBackup(BackupEntry* backup)
 	}
 
 	std::unique_ptr<char[]> hash_buf = nullptr; 
-	if(backup->calculate_hash)
-		hash_buf = std::make_unique_for_overwrite<char[]>(backup->hash_buf_size * 1024 * 1024);
+	if(backup.calculate_hash)
+		hash_buf = std::make_unique_for_overwrite<char[]>(backup.hash_buf_size * 1024 * 1024);
 
 	bool first_run_hash = false;
-	size_t file_count = 0, files_size = 0, dest_count = 0;
+	size_t file_count = source_metrics.file_count;
+	size_t files_size = static_cast<size_t>(source_metrics.bytes);
+	size_t dest_count = 0;
 	SHA256_CTX ctx_from;
 	SHA256_CTX ctx_to;
 	uint8_t hash_from[SHA256_BLOCK_SIZE];
 	uint8_t hash_tmp[SHA256_BLOCK_SIZE];
-	if(backup->calculate_hash)
+	if(backup.calculate_hash)
 		sha256_init(&ctx_from);
 	bool fail = false;
 
 	std::chrono::steady_clock::time_point backup_start = std::chrono::steady_clock::now();
-	for(auto& t : backup->to)
+	for(auto& t : backup.to)
 	{
-		if(is_cancelled)
+		if(m_IsCancelled)
 		{
 			LOG(LogLevel::Normal, "Backup was cancelled by user");
-			return;
+			fail = true;
+			break;
 		}
 
-		if(backup->calculate_hash)
+		if(backup.calculate_hash)
 			sha256_init(&ctx_to);
 		std::filesystem::path destination_dir = t / folder_name_with_date;
 
@@ -147,26 +214,26 @@ void DirectoryBackup::DoBackup(BackupEntry* backup)
 			fail = true;
 			break;
 		}
-		for(auto& p : std::filesystem::recursive_directory_iterator(backup->from))
+		for(auto& p : std::filesystem::recursive_directory_iterator(backup.from))
 		{
-			if(is_cancelled)
+			if(m_IsCancelled)
 			{
 				LOG(LogLevel::Normal, "Backup was cancelled by user");
-				return;
+				fail = true;
+				break;
 			}
 
-			auto rel_path = p.path().lexically_proximate(backup->from);
+			auto rel_path = p.path().lexically_proximate(backup.from);
 			bool is_file = std::filesystem::is_regular_file(p.path());
 
-			if(backup->IsInIgnoreList(rel_path.generic_wstring())) continue;
+			if(backup_core::ShouldIgnore(rel_path, ignore_rules)) continue;
 
 			std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
 			int64_t dif = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - backup_start).count();
 
-			if(dif > 3500 || m_currentFile.empty())
+			if(dif > 3500 || GetCurrentFile().empty())
 			{
-				std::lock_guard lock(m_TitleMutex);
-				m_currentFile = p.path().generic_string();
+				SetCurrentFile(p.path().generic_string());
 				backup_start = std::chrono::steady_clock::now();
 			}
 
@@ -229,7 +296,7 @@ void DirectoryBackup::DoBackup(BackupEntry* backup)
 					fail = true;
 					break;
 				}
-				if(backup->calculate_hash && std::filesystem::is_regular_file(p.path()))
+				if(backup.calculate_hash && std::filesystem::is_regular_file(p.path()))
 				{
 					std::ifstream f(destination_path, std::ifstream::binary);
 					if(f)
@@ -237,7 +304,7 @@ void DirectoryBackup::DoBackup(BackupEntry* backup)
 						f.peek();
 						while(f.good())
 						{
-							std::streamsize chars_read = f.read(hash_buf.get(), backup->hash_buf_size * 1024 * 1024).gcount();
+							std::streamsize chars_read = f.read(hash_buf.get(), backup.hash_buf_size * 1024 * 1024).gcount();
 							sha256_update(&ctx_to, reinterpret_cast<uint8_t*>(hash_buf.get()), chars_read);
 						}
 						f.close();
@@ -251,10 +318,7 @@ void DirectoryBackup::DoBackup(BackupEntry* backup)
 			
 			if(!first_run_hash)  /* calculate source hash - only once */
 			{
-				file_count++;  /* File counter should be increased only once, at first entry */
-				if(is_file)
-					files_size += std::filesystem::file_size(p.path());
-				if(backup->calculate_hash && std::filesystem::is_regular_file(p.path()))
+				if(backup.calculate_hash && std::filesystem::is_regular_file(p.path()))
 				{
 					std::ifstream f(p.path(), std::ifstream::binary);
 					if(f)
@@ -262,7 +326,7 @@ void DirectoryBackup::DoBackup(BackupEntry* backup)
 						f.peek();
 						while(f.good())
 						{
-							std::streamsize chars_read = f.read(hash_buf.get(), backup->hash_buf_size * 1024 * 1024).gcount();
+							std::streamsize chars_read = f.read(hash_buf.get(), backup.hash_buf_size * 1024 * 1024).gcount();
 							sha256_update(&ctx_from, reinterpret_cast<uint8_t*>(hash_buf.get()), chars_read);
 						}
 						f.close();
@@ -275,7 +339,10 @@ void DirectoryBackup::DoBackup(BackupEntry* backup)
 			}
 		}
 
-		if(backup->calculate_hash)
+		if(m_IsCancelled)
+			break;
+
+		if(backup.calculate_hash)
 		{
 			if(!first_run_hash)
 			{
@@ -293,31 +360,36 @@ void DirectoryBackup::DoBackup(BackupEntry* backup)
 			}
 		}
 
-		if(backup->m_Compress && !fail)
+		if(backup.m_Compress && !fail)
 		{
-			m_currentFile = "Compressing";
-			CompressAndRemoveFinalBackup(destination_dir);
+			SetCurrentFile("Compressing");
+			if(!CompressBackup(destination_dir))
+				fail = true;
 		}
-		dest_count++;
+		if(!fail)
+			dest_count++;
 	}
 
 	std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
 	int64_t dif = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
-#ifndef UNIT_TESTS
+	if(auto* event_sink = m_EventSink.load(std::memory_order_acquire))
 	{
-		std::lock_guard lock(frame->mtx);
-		if(!fail)
-			frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::BackupCompleted), dif, file_count, files_size, dest_count, &backup->to[0] });
-		else
-			frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::BackupFailed), &backup->to[0] });
-		frame->show_backup_dlg = false;
+		BackupSummary summary;
+		summary.success = !fail && !m_IsCancelled;
+		summary.duration_ns = dif;
+		summary.file_count = file_count;
+		summary.bytes_copied = files_size;
+		summary.destination_count = dest_count;
+		if(!backup.to.empty())
+			summary.destination = backup.to.front();
+		event_sink->OnBackupFinished(summary);
 	}
-#endif
+	SetCurrentFile({});
 }
 
-void DirectoryBackup::BackupRotation(BackupEntry* backup)
+void DirectoryBackup::BackupRotation(const BackupEntry& backup)
 {
-	for(auto& t : backup->to)
+	for(auto& t : backup.to)
 	{
 		if(!std::filesystem::exists(t))  /* not needed to go file checking when even the directory doesns't exists */
 		{
@@ -330,44 +402,26 @@ void DirectoryBackup::BackupRotation(BackupEntry* backup)
 			continue;
 		}
 
-		std::vector<std::wstring> files;
-		for(auto& f : std::filesystem::directory_iterator(t))
-		{
-			std::filesystem::path folder_name = f.path().filename();
-			std::filesystem::path src_folder_name = backup->from.filename();
-
-			if(folder_name.generic_wstring().starts_with(src_folder_name.generic_wstring()))  /* Add only directories, which starts with backup source folder name */
-				files.push_back(f.path().generic_wstring());
-		}
-		if(files.size() >= static_cast<size_t>(backup->max_backups))
-		{
-			std::sort(files.begin(), files.end());
-			auto& to_remove = *files.begin();
-			std::error_code ec;
-			std::filesystem::remove_all(to_remove, ec);
-			if(ec)
-			{
-				LOG(LogLevel::Error, "Error with remove_all ({}): {}", std::filesystem::path(to_remove).generic_string(), ec.message());
-			}
-		}
+		if(!backup_core::RotateOwnedBackups(t, backup.from.filename().string(), backup.max_backups))
+			LOG(LogLevel::Error, "Failed to rotate one or more backups in {}", t.generic_string());
 	}
 }
 
 void DirectoryBackup::RestoreAttributes(const std::filesystem::path& src, const std::filesystem::path& dst)
 {
 #ifdef _WIN32
-	DWORD attributes = GetFileAttributesW(src.generic_wstring().c_str());
-	if(attributes & FILE_ATTRIBUTE_HIDDEN)
-	{
+	const DWORD attributes = GetFileAttributesW(src.generic_wstring().c_str());
+	if(attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_HIDDEN) != 0)
 		SetFileAttributesW(dst.generic_wstring().c_str(), attributes);
-	}
+#else
+	(void)src;
+	(void)dst;
 #endif
 }
 
-bool DirectoryBackup::CompressAndRemoveFinalBackup(const std::filesystem::path& dst)
+bool DirectoryBackup::CompressBackup(const std::filesystem::path& dst)
 {
 	bool ret = true;
-	std::filesystem::path dest_dir_name = dst.filename();
 
 	std::string cmdline = std::format("7z a \"{}\" \"{}\"", dst.generic_string(), dst.generic_string());
 

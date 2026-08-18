@@ -15,6 +15,7 @@ public:
     void OnFileSelected(wxFileDirPickerEvent& event);
 
     void AddToLog(std::string str) override;
+    void OnTxFrameUpdated(std::uint32_t frame_id, std::span<const std::uint8_t> data) override;
 
     void On10MsTimer();
 

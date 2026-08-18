@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="Source Files">
@@ -66,6 +66,9 @@
     <ClInclude Include="src\gui\MainFrame.hpp">
       <Filter>Header Files\gui</Filter>
     </ClInclude>
+    <ClInclude Include="src\gui\SettingsDialog.hpp">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
     <ClInclude Include="src\gui\MainPanel.hpp">
       <Filter>Header Files\gui</Filter>
     </ClInclude>
@@ -112,6 +115,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\Settings.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\SettingsIniDocument.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\targetver.hpp">
@@ -171,6 +177,20 @@
     <ClInclude Include="src\gui\DebugPanel.hpp">
       <Filter>Header Files\gui</Filter>
     </ClInclude>
+    <ClInclude Include="src\ModbusMasterSerialPort.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ModbusConditionalColors.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\ModbusCustomCommand.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\ModbusProtocol.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\ModbusRegisterEditor.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\ModbusRegisterGrouping.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\ModbusRegisterValueCodec.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\PendingModbusRowUpdates.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\SerialPortConnectionStatus.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\gui\ModbusMasterPanel.hpp">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
     <ClInclude Include="src\CorsairHid.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -184,6 +204,9 @@
       <Filter>Header Files\interface</Filter>
     </ClInclude>
     <ClInclude Include="src\TcpMessageExecutor.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TcpMessageParser.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\gui\CmdExecutorPanel.hpp">
@@ -228,7 +251,31 @@
     <ClInclude Include="src\CanDeviceLawicel.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\CanDeviceFactory.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\automation\CommandTextResolver.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\CanTransportModels.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Measurement.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\AppNotification.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\interface\ICanDevice.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\ICanDeviceFactory.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\ICommandTextResolver.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\IModbusEventSink.hpp">
       <Filter>Header Files\interface</Filter>
     </ClInclude>
     <ClInclude Include="src\ExceptionHandler.hpp">
@@ -291,6 +338,15 @@
     <ClInclude Include="src\SerialPortBase.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\ModbusHandler.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\IModbusEntry.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
+    <ClInclude Include="src\interface\IModbusRecorder.hpp">
+      <Filter>Header Files\interface</Filter>
+    </ClInclude>
     <ClInclude Include="src\ImageRecognition.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -315,6 +371,9 @@
     <ClInclude Include="src\gui\TimeTrackerPanel.hpp">
       <Filter>Header Files\gui</Filter>
     </ClInclude>
+    <ClInclude Include="src\ScriptLauncher.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="libs\enumser\enumser.cpp">
@@ -327,6 +386,9 @@
       <Filter>Source Files\gui</Filter>
     </ClCompile>
     <ClCompile Include="src\gui\MainFrame.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\SettingsDialog.cpp">
       <Filter>Source Files\gui</Filter>
     </ClCompile>
     <ClCompile Include="src\gui\MainPanel.cpp">
@@ -371,6 +433,9 @@
     <ClCompile Include="src\Settings.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\SettingsIniDocument.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\pch.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -413,10 +478,19 @@
     <ClCompile Include="src\gui\DebugPanel.cpp">
       <Filter>Source Files\gui</Filter>
     </ClCompile>
+    <ClCompile Include="src\ModbusMasterSerialPort.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\ModbusMasterPanel.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
     <ClCompile Include="src\CorsairHid.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\TcpMessageExecutor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TcpMessageParser.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\gui\CmdExecutorPanel.cpp">
@@ -450,6 +524,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\CanDeviceLawicel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CanDeviceFactory.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\automation\CommandTextResolver.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\ExceptionHandler.cpp">
@@ -488,6 +568,9 @@
     <ClCompile Include="src\SerialPortBase.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\ModbusHandler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\ImageRecognition.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -506,7 +589,7 @@
     <ClCompile Include="src\gui\TimeTrackerPanel.cpp">
       <Filter>Source Files\gui</Filter>
     </ClCompile>
-    <ClCompile Include="src\CanXmlLoaders.cpp">
+    <ClCompile Include="src\ScriptLauncher.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\GraphGenerator.cpp">
@@ -518,9 +601,53 @@
     <ClCompile Include="src\SensorDataParser.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\ScriptLauncher.cpp">
+    <ClCompile Include="src\CanXmlLoaders.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\automation\ScriptCommandResolver.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\automation\ScriptLaunchService.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\CanCodecs.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\CanModels.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\CanXmlLoaders.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\DirectoryBackupCore.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\GraphGenerator.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\interface\IBackupEventSink.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\ICanEventSink.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\ICanSubscriber.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\ICanTransport.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\IClock.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\ICommandRunner.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\IComPortConfig.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\IFileSystem.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\IScriptCommandResolver.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\ISensorObserver.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\ISerialTransport.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\ITcpEndpointConfig.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\ITimeTrackerStorage.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\MeasurementRepository.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\ModbusClient.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\platform\StandardFileSystem.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\platform\SystemClock.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\platform\SystemCommandRunner.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\SensorDataParser.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\TimeTrackerLogic.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\TimeTrackerStorage.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\XmlConfigurations.hpp"><Filter>Header Files</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\automation\ScriptCommandResolver.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\automation\ScriptLaunchService.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\CanCodecs.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\DirectoryBackupCore.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\ModbusClient.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\platform\StandardFileSystem.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\platform\SystemClock.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\platform\SystemCommandRunner.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\TimeTrackerLogic.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\TimeTrackerStorage.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\XmlConfigurations.cpp"><Filter>Source Files</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="WindowsAddon.rc">

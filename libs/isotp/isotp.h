@@ -14,12 +14,21 @@ extern "C" {
 #include "isotp_config.h"
 #include "isotp_user.h"
 
+typedef int (*IsoTpSendCanCallback)(void* context, uint32_t arbitration_id,
+                                    const uint8_t* data, uint8_t size);
+typedef uint32_t (*IsoTpGetMsCallback)(void* context);
+
 /**
  * @brief Struct containing the data for linking an application to a CAN instance.
  * The data stored in this struct is used internally and may be used by software programs
  * using this library.
  */
 typedef struct IsoTpLink {
+    /* Optional per-link platform callbacks. If unset, the legacy global
+     * isotp_user_* shims are used for backwards compatibility. */
+    void*                       user_context;
+    IsoTpSendCanCallback        send_can;
+    IsoTpGetMsCallback          get_ms;
     /* sender paramters */
     uint32_t                    send_arbitration_id; /* used to reply consecutive frame */
     /* message buffer */
@@ -69,6 +78,10 @@ typedef struct IsoTpLink {
 void isotp_init_link(IsoTpLink *link, uint32_t sendid, 
                      uint8_t *sendbuf, uint16_t sendbufsize,
                      uint8_t *recvbuf, uint16_t recvbufsize);
+
+void isotp_set_callbacks(IsoTpLink *link, void *context,
+                         IsoTpSendCanCallback send_can,
+                         IsoTpGetMsCallback get_ms);
 
 /**
  * @brief Polling function; call this function periodically to handle timeouts, send consecutive frames, etc.

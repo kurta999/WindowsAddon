@@ -9,15 +9,32 @@
 #include "CanEntryHandler.hpp"
 #include "CmdExecutor.hpp"
 #include "DidHandler.hpp"
+#include "ModbusHandler.hpp"
 #include "Alarms.hpp"
 #include "TimeTracker.hpp"
+#include "TimeTrackerStorage.hpp"
+#include "ScriptLauncher.hpp"
+#include "automation/ScriptCommandResolver.hpp"
+#include "automation/CommandTextResolver.hpp"
+#include "interface/IBackupEventSink.hpp"
+#include "interface/ICanEventSink.hpp"
+#include "interface/IModbusEventSink.hpp"
+#include "platform/StandardFileSystem.hpp"
+#include "platform/SystemClock.hpp"
+#include "platform/SystemCommandRunner.hpp"
 
-class MyApp : public wxApp
+class MyApp : public wxApp, public ICanEventSink, public IBackupEventSink, public IModbusEventSink
 {
 public:
     bool OnInit() override;
     int OnExit() override;
     void OnUnhandledException() override;
+
+    void OnCanFrameTransmitted(std::uint32_t frame_id, std::size_t count) override;
+    void OnCanRecordingSaved(const std::filesystem::path& path, std::int64_t duration_ns) override;
+    void OnBackupStarted() override;
+    void OnBackupFinished(const BackupSummary& summary) override;
+    void OnModbusRecordingSaved(const std::filesystem::path& path, std::int64_t duration_ns) override;
 
     // !\brief Helper variable for logger to avoid crash when inserting log messages befor logger frame is created
     bool is_init_finished = false;
@@ -27,10 +44,18 @@ public:
     XmlCanMappingLoader mapping_xml;
     XmlDidLoader did_xml_loader;
     XmlDidCacheLoader did_xml_chace_loader;
+    XmlModbusEntryLoader modbus_entry_loader;
     XmlAlarmEntryLoader alarm_entry_loader;
+    SystemClock clock;
+    StandardFileSystem file_system;
+    SystemCommandRunner command_runner;
+    CommandTextResolver command_text_resolver;
+    ScriptCommandResolver script_command_resolver;
     std::unique_ptr<CanEntryHandler> can_entry;
     std::unique_ptr<CmdExecutor> cmd_executor;
     std::unique_ptr<DidHandler> did_handler;
+    std::unique_ptr<ModbusEntryHandler> modbus_handler;
     std::unique_ptr<AlarmEntryHandler> alarm_entry;
     std::unique_ptr<TimeTracker> time_tracker;
+    std::unique_ptr<ScriptLauncher> script_launcher;
 };

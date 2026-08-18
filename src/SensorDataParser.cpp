@@ -1,19 +1,40 @@
-#include "pch.hpp"
+#include "SensorDataParser.hpp"
+
+#include <regex>
+#include <string_view>
+
+namespace
+{
+void EraseAll(std::string& value, std::string_view token)
+{
+    for(size_t pos = value.find(token); pos != std::string::npos; pos = value.find(token, pos))
+        value.erase(pos, token.size());
+}
+
+void ReplaceAll(std::string& value, std::string_view from, std::string_view to)
+{
+    for(size_t pos = value.find(from); pos != std::string::npos; pos = value.find(from, pos + to.size()))
+        value.replace(pos, from.size(), to);
+}
+}
 
 namespace SensorDataParser
 {
 
 std::optional<std::vector<std::string>> Parse(const char* data, size_t len)
 {
-    std::string s(data, data + len);
-    boost::algorithm::erase_all(s, "MEAS_DATA");
-    boost::algorithm::erase_all(s, "SCD30");
-    boost::algorithm::erase_all(s, "CO");
-    boost::algorithm::erase_all(s, "BME680");
-    boost::algorithm::erase_all(s, "HONEYWELL");
-    boost::algorithm::erase_all(s, "VEML6070");
-    boost::algorithm::erase_all(s, "TCS");
-    boost::algorithm::replace_all(s, "nan", "0.0");
+    if(data == nullptr || len == 0)
+        return std::nullopt;
+
+    std::string s(data, len);
+    EraseAll(s, "MEAS_DATA");
+    EraseAll(s, "SCD30");
+    EraseAll(s, "CO");
+    EraseAll(s, "BME680");
+    EraseAll(s, "HONEYWELL");
+    EraseAll(s, "VEML6070");
+    EraseAll(s, "TCS");
+    ReplaceAll(s, "nan", "0.0");
 
     const std::regex num_regex(R"([-+]?(\d+([.]\d*)?|[.]\d+)([eE][-+]?\d+)?)");
     auto begin = std::sregex_iterator(s.begin(), s.end(), num_regex);

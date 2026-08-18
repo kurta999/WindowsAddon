@@ -8,6 +8,8 @@
 
 #include "ICmdHelper.hpp"
 #include "ICmdExecutor.hpp"
+#include "ICommandRunner.hpp"
+#include "ICommandTextResolver.hpp"
 #include "IBasicGuiCustomization.hpp"
 
 static constexpr const char* COMMAND_FILE_PATH = "Cmds.xml";
@@ -17,24 +19,24 @@ class ICmdExecutorItem
 
 };
 
-class Command : public BasicGuiTextCustomization
+class Command : public TextStyle
 {
 public:
-    Command(const std::string& name, const std::string& cmd, const std::string& icon, bool hide_console, uint32_t color, uint32_t bg_color, bool is_bold, const std::string& font_face, float scale, wxSize min_size = wxDefaultSize, bool use_sizer = false, bool add_to_prev_sizer = false) :
-        m_name(name), m_cmd(cmd), m_icon(icon), m_hideConsole(hide_console), BasicGuiTextCustomization(color, bg_color, is_bold, scale, font_face),
+    Command(const std::string& name, const std::string& cmd, const std::string& icon, bool hide_console, uint32_t color, uint32_t bg_color, bool is_bold, const std::string& font_face, float scale, LogicalSize min_size = {}, bool use_sizer = false, bool add_to_prev_sizer = false) :
+        TextStyle(color, bg_color, is_bold, scale, font_face), m_name(name), m_cmd(cmd), m_icon(icon), m_hideConsole(hide_console),
         m_minSize(min_size), m_useSizer(use_sizer), m_addToPrevSizer(add_to_prev_sizer)
     {
         LoadParametersFromString();
     }
 
     Command(const Command& rhs) :
-        m_name(rhs.m_name), m_cmd(rhs.m_cmd), m_icon(rhs.m_icon), m_hideConsole(rhs.m_hideConsole), BasicGuiTextCustomization(rhs.m_color, rhs.m_bg_color, rhs.m_is_bold, rhs.m_scale, rhs.m_font_face),
-        m_useSizer(rhs.m_useSizer), m_addToPrevSizer(rhs.m_addToPrevSizer)
+        TextStyle(rhs), m_name(rhs.m_name), m_cmd(rhs.m_cmd), m_icon(rhs.m_icon), m_hideConsole(rhs.m_hideConsole),
+        m_minSize(rhs.m_minSize), m_useSizer(rhs.m_useSizer), m_addToPrevSizer(rhs.m_addToPrevSizer)
     {
         LoadParametersFromString();
     }
 
-    void Execute();
+    void Execute(ICommandRunner& command_runner, const ICommandTextResolver& text_resolver);
     void SaveParametersToString();
 
     const std::string& GetName() const { return m_name; }
@@ -64,8 +66,8 @@ public:
     float GetScale() const { return m_scale; }
     Command& SetScale(float scale) { m_scale = scale; return *this; }
 
-    wxSize GetMinSize() const { return m_minSize; }
-    Command& SetMinSize(wxSize size) { m_minSize = size; return *this; }
+    LogicalSize GetMinSize() const { return m_minSize; }
+    Command& SetMinSize(LogicalSize size) { m_minSize = size; return *this; }
 
     bool IsUsingSizer() const { return m_useSizer; }
     Command& SetUseSizer(bool is_usesizer) { m_useSizer = is_usesizer; return *this; }
@@ -77,9 +79,6 @@ public:
 
 private:
     
-    // !\ brief Handles hardcoded commands like set current time - ugly, but no time for better solution
-    void HandleHarcdodedCommand();
-
     // !\ brief Handles parameter replacing
     std::string HandleParameters();
 
@@ -89,7 +88,7 @@ private:
     std::string m_cmd;
     std::string m_icon;
     bool m_hideConsole{ false };
-    wxSize m_minSize{ wxDefaultSize };
+    LogicalSize m_minSize{};
     bool m_useSizer{ false };
     bool m_addToPrevSizer{ false };
 };
@@ -124,7 +123,8 @@ private:
 class CmdExecutor : public ICmdExecutor
 {
 public:
-    CmdExecutor() = default;
+    CmdExecutor(ICommandRunner& command_runner, const ICommandTextResolver& text_resolver)
+        : m_CommandRunner(command_runner), m_CommandTextResolver(text_resolver) {}
     virtual ~CmdExecutor() = default;
 
     void Init() override;
@@ -146,14 +146,17 @@ public:
     CommandPageIcons& GetPageIcons() override;
 
     void ExecuteByName(const std::string& page_name, const std::string& cmd_name);
+    void Execute(Command& command);
 
     static void WriteDefaultCommandsFile();
 private:
-    bool AddItem(uint8_t page, uint8_t col, std::shared_ptr<Command>&& cmd);
+    bool AddItem(uint8_t page, uint8_t col, CommandTypes item);
 
     uint8_t m_Cols = 2;
     CommandStorage m_Commands;
     CommandPageNames m_CommandPageNames;
     CommandPageIcons m_CommandPageIcons;
     ICmdHelper* m_CmdMediator = nullptr;
+    ICommandRunner& m_CommandRunner;
+    const ICommandTextResolver& m_CommandTextResolver;
 };

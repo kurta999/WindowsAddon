@@ -435,7 +435,7 @@ bool CustomMacro::IsKeyReserved(const std::string& key_code) const
            check(PathSeparator::Get()->replace_key, "PathSeparator") ||
            check(bring_to_foreground_key, "BringToForeground") ||
            check(time_tracker->GetToggleKey(), "TimeTracker") ||
-           check(ScriptLauncher::Get()->launcher_key, "ScriptLauncher");
+           check(wxGetApp().script_launcher->launcher_key, "ScriptLauncher");
 }
 
 void CustomMacro::ParseMacroKeys(size_t id, const std::string& key_code, std::string& str, std::unique_ptr<MacroAppProfile>& c, MacroFlags flags)
@@ -630,31 +630,46 @@ void CustomMacro::ExecuteKeypresses(bool directly_execute_alarm)
     std::scoped_lock lock(executor_mtx);
     if(PrintScreenSaver::Get()->screenshot_key == pressed_keys)
     {
-        PrintScreenSaver::Get()->SaveScreenshot();
+        wxGetApp().CallAfter([]
+        {
+            if(auto* saver = PrintScreenSaver::TryGet())
+                saver->SaveScreenshot();
+        });
         return;
     }
     if(PathSeparator::Get()->replace_key == pressed_keys)
     {
-        PathSeparator::Get()->ReplaceClipboard(PathSeparator::ReplaceType::PATH_SEPARATOR);
+        wxGetApp().CallAfter([]
+        {
+            if(auto* separator = PathSeparator::TryGet())
+                separator->ReplaceClipboard(PathSeparator::ReplaceType::PATH_SEPARATOR);
+        });
         return;
     }
     if(bring_to_foreground_key == pressed_keys)
     {
-        ExecuteForegroundKeypress();
+        wxGetApp().CallAfter([]
+        {
+            if(auto* macros = CustomMacro::TryGet())
+                macros->ExecuteForegroundKeypress();
+        });
         return;
     }
-    if(ScriptLauncher::Get()->launcher_key == pressed_keys)
+    if(wxGetApp().script_launcher->launcher_key == pressed_keys)
     {
-        ScriptLauncher::Get()->Execute();
+        wxGetApp().script_launcher->Execute();
         return;
     }
 
     std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
     if(time_tracker->GetToggleKey() == pressed_keys)
     {
-        MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-        if(frame)
-            frame->timesheet_panel->ToggleWorktime();
+        wxGetApp().CallAfter([]
+        {
+            auto* frame = dynamic_cast<MyFrame*>(wxGetApp().GetTopWindow());
+            if(frame && frame->timesheet_panel)
+                frame->timesheet_panel->ToggleWorktime();
+        });
         return;
     }
 

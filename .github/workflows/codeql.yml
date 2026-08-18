@@ -1,0 +1,77 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: C/C++ analysis
+    runs-on: windows-latest
+    env:
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}\vcpkg-binary-cache,readwrite
+      VCPKG_DISABLE_METRICS: 1
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check out pinned vcpkg
+        uses: actions/checkout@v6
+        with:
+          repository: microsoft/vcpkg
+          ref: 89dd0f4d241136b843fb55813b2f0fa6448c204d
+          path: vcpkg
+          fetch-depth: 0
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v5
+        with:
+          path: vcpkg-binary-cache
+          key: vcpkg-${{ runner.os }}-x64-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-x64-
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+      # Configure first so dependency builds are not traced into the CodeQL database.
+      - name: Configure application
+        shell: pwsh
+        run: >-
+          cmake -S . -B build/codeql
+          -G "Visual Studio 17 2022"
+          -A x64
+          -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+          -DWINDOWSADDON_BUILD_APP=ON
+          -DWINDOWSADDON_WARNINGS_AS_ERRORS=ON
+          -DBUILD_TESTING=OFF
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: c-cpp
+          build-mode: manual
+
+      - name: Build application
+        run: cmake --build build/codeql --config Release --parallel
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:c-cpp

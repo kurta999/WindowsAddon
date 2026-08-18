@@ -78,7 +78,7 @@ EscaperPanel::EscaperPanel(wxFrame* parent)
 				wxTheClipboard->SetData(new wxTextDataObject(str));
 				wxTheClipboard->Close();
 				MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-				frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::StringEscaped) });
+				frame->PostNotification(SimpleNotification{SimpleNotificationKind::StringEscaped});
 			}
 		});
 	h_sizer->Add(m_OkButton);
@@ -94,7 +94,7 @@ EscaperPanel::EscaperPanel(wxFrame* parent)
 				wxTheClipboard->SetData(new wxTextDataObject(str));
 				wxTheClipboard->Close();
 				MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-				frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::StringEscaped) });
+				frame->PostNotification(SimpleNotification{SimpleNotificationKind::StringEscaped});
 			}
 		});
 	h_sizer->Add(m_Base64EncodeButton);
@@ -110,7 +110,7 @@ EscaperPanel::EscaperPanel(wxFrame* parent)
 				wxTheClipboard->SetData(new wxTextDataObject(str));
 				wxTheClipboard->Close();
 				MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-				frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::StringEscaped) });
+				frame->PostNotification(SimpleNotification{SimpleNotificationKind::StringEscaped});
 			}
 		});
 	h_sizer->Add(m_Base64DecodeButton);

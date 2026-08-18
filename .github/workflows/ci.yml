@@ -1,0 +1,225 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core / ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows MSVC
+            os: windows-latest
+            compiler_args: ""
+          - name: Ubuntu GCC
+            os: ubuntu-latest
+            compiler_args: -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+          - name: Ubuntu Clang
+            os: ubuntu-latest
+            compiler_args: -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Configure dependency-free core
+        run: >-
+          cmake -S . -B build/core
+          ${{ matrix.compiler_args }}
+          -DWINDOWSADDON_BUILD_APP=OFF
+          -DWINDOWSADDON_BUILD_EXTERNAL_TESTS=OFF
+          -DWINDOWSADDON_WARNINGS_AS_ERRORS=ON
+          -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build/core --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build/core -C Release --output-on-failure
+
+  sanitizers:
+    name: Core / Clang ASan + UBSan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Configure sanitizers
+        run: >-
+          cmake -S . -B build/sanitizers
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+          -DWINDOWSADDON_BUILD_APP=OFF
+          -DWINDOWSADDON_BUILD_EXTERNAL_TESTS=OFF
+          -DWINDOWSADDON_WARNINGS_AS_ERRORS=ON
+          -DWINDOWSADDON_ENABLE_SANITIZERS=ON
+          -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build/sanitizers --parallel
+
+      - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build/sanitizers --output-on-failure
+
+  fuzz-smoke:
+    name: Core / Clang libFuzzer smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Configure fuzzers
+        run: >-
+          cmake -S . -B build/fuzz
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+          -DWINDOWSADDON_BUILD_APP=OFF
+          -DWINDOWSADDON_BUILD_EXTERNAL_TESTS=OFF
+          -DWINDOWSADDON_BUILD_FUZZERS=ON
+          -DWINDOWSADDON_ENABLE_SANITIZERS=ON
+          -DBUILD_TESTING=OFF
+
+      - name: Build fuzzers
+        run: >-
+          cmake --build build/fuzz --parallel
+          --target WindowsAddonNetworkMessageFuzzer WindowsAddonProtocolParsersFuzzer
+
+      - name: Exercise network message parser
+        run: ./build/fuzz/WindowsAddonNetworkMessageFuzzer -runs=2000 -max_len=2048
+
+      - name: Exercise protocol parsers
+        run: ./build/fuzz/WindowsAddonProtocolParsersFuzzer -runs=2000 -max_len=2048
+
+  coverage:
+    name: Core / Coverage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Configure coverage
+        run: >-
+          cmake -S . -B build/coverage
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=gcc
+          -DCMAKE_CXX_COMPILER=g++
+          -DWINDOWSADDON_BUILD_APP=OFF
+          -DWINDOWSADDON_BUILD_EXTERNAL_TESTS=OFF
+          -DWINDOWSADDON_WARNINGS_AS_ERRORS=ON
+          -DWINDOWSADDON_ENABLE_COVERAGE=ON
+          -DBUILD_TESTING=ON
+
+      - name: Build and test
+        run: |
+          cmake --build build/coverage --parallel
+          ctest --test-dir build/coverage --output-on-failure
+
+      - name: Install coverage reporter
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcovr
+
+      - name: Create coverage report
+        run: >-
+          gcovr
+          --root .
+          --filter 'src/'
+          --filter 'libs/'
+          --exclude 'tests/'
+          --xml-pretty
+          --output coverage.xml
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: core-coverage
+          path: coverage.xml
+          if-no-files-found: error
+
+      - name: Upload to Codecov when configured
+        continue-on-error: true
+        uses: codecov/codecov-action@v7
+        with:
+          files: coverage.xml
+          flags: core
+          use_oidc: true
+
+  windows-release:
+    name: Windows / Release + vcpkg
+    runs-on: windows-latest
+    env:
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}\vcpkg-binary-cache,readwrite
+      VCPKG_DISABLE_METRICS: 1
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check out pinned vcpkg
+        uses: actions/checkout@v6
+        with:
+          repository: microsoft/vcpkg
+          ref: 89dd0f4d241136b843fb55813b2f0fa6448c204d
+          path: vcpkg
+          fetch-depth: 0
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v5
+        with:
+          path: vcpkg-binary-cache
+          key: vcpkg-${{ runner.os }}-x64-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-x64-
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+      - name: Configure Release build
+        shell: pwsh
+        run: >-
+          cmake -S . -B build/full
+          -G "Visual Studio 17 2022"
+          -A x64
+          -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+          -DWINDOWSADDON_BUILD_APP=ON
+          -DWINDOWSADDON_BUILD_EXTERNAL_TESTS=ON
+          -DWINDOWSADDON_WARNINGS_AS_ERRORS=ON
+          -DBUILD_TESTING=ON
+
+      - name: Build Release
+        run: cmake --build build/full --config Release --parallel
+
+      - name: Test Release
+        run: ctest --test-dir build/full -C Release --output-on-failure
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v7
+        with:
+          name: WindowsAddon-Release
+          path: |
+            build/full/Release/WindowsAddon.exe
+            build/full/Release/*.dll
+          if-no-files-found: error

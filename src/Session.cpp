@@ -16,12 +16,18 @@ void Session::HandleRead(const boost::system::error_code& error, std::size_t byt
 	std::scoped_lock lock(m_IoMutex);
 	if(!error)
 	{
-		receivedData[bytesTransferred] = 0;
+		auto message = tcp_message::BoundedMessage(receivedData, bytesTransferred);
+		if(message.size() != bytesTransferred)
+		{
+			LOG(LogLevel::Error, "TCP receive length {} exceeds buffer capacity {}",
+				bytesTransferred, receivedData.size());
+			StopAsync();
+			return;
+		}
 
 		std::tuple<bool, bool, std::string> ret_val;
 		{
-			TcpMessageInjector msg_executor(*m_msgExecutor, shared_from_this(), bytesTransferred);
-			ret_val = msg_executor.GetResult();
+			ret_val = m_msgExecutor->Process(shared_from_this(), message);
 
 			if(!std::get<2>(ret_val).empty())
 			{
@@ -87,7 +93,7 @@ void Session::SendAsync(const std::string& buffer)
 	if(writeInProgress)
 	{
 		pendingMessages.push(buffer);
-		transferTimer.expires_from_now(boost::posix_time::milliseconds(100));
+		transferTimer.expires_after(std::chrono::milliseconds(100));
 		transferTimer.async_wait(std::bind(&Session::HandleTransferTimer, shared_from_this(), std::placeholders::_1));
 	}
 	else
@@ -111,7 +117,7 @@ void Session::StartAsync()
 	sessionAddress = remoteEndpoint.address().to_string(); 
 	sessionPort = remoteEndpoint.port();
 	
-	sessionSocket.async_read_some(boost::asio::buffer(receivedData, sizeof(receivedData)), 
+	sessionSocket.async_read_some(boost::asio::buffer(receivedData),
 		std::bind(&Session::HandleRead, shared_from_this(), std::placeholders::_1, std::placeholders::_2));
 
 	sessionIntAddr = remoteEndpoint.address().to_v4().to_uint();

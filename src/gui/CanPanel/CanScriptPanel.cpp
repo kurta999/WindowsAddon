@@ -213,3 +213,10 @@ void CanScriptPanel::HandleInputFileSelect(wxString& path)
         }
     }
 }
+
+void CanScriptPanel::OnTxFrameUpdated(std::uint32_t frame_id, std::span<const std::uint8_t> data)
+{
+    auto* can_panel = dynamic_cast<CanPanel*>(GetParent());
+    if(can_panel && can_panel->sender)
+        can_panel->sender->UpdateGridForTxFrame(frame_id, data);
+}

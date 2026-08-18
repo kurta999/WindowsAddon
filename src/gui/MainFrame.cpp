@@ -1,6 +1,18 @@
 #include "pch.hpp"
+
+#include "SettingsDialog.hpp"
+
+MyFrame::~MyFrame()
+{
+	if(auto* sensors = Sensors::TryGet(); sensors != nullptr && main_panel != nullptr)
+		sensors->RemoveObserver(main_panel);
+	m_mgr.UnInit();  /* deinitialize the frame manager */
+}
+#ifdef WINDOWSHELPER_CMAKE_BUILD
+#include "commitid.h"
+#else
 #include "../commitid.h"
-#include <hidapi/hidapi.h>
+#endif
 
 #define HOTKEY_ID_TERMINAL 0x3000		/* any value between 0 and 0xBFFF */
 //#define HOTKEY_ID_NUM_LOCK 0x3001		/* any value between 0 and 0xBFFF */
@@ -18,6 +30,8 @@ EVT_MENU(ID_CanSaveMapping, MyFrame::OnCanSaveMapping)
 EVT_MENU(ID_CmdExecutorSave, MyFrame::OnSaveCmdExecutor)
 EVT_MENU(ID_BsecSaveCache, MyFrame::OnSaveBsecCache)
 EVT_MENU(ID_SaveEverything, MyFrame::OnSaveEverything)
+EVT_MENU(ID_EditSettings, MyFrame::OnEditSettings)
+EVT_MENU(ID_ReloadSettings, MyFrame::OnReloadSettings)
 EVT_SIZE(MyFrame::OnSize)
 EVT_CLOSE(MyFrame::OnClose)
 //EVT_CHAR_HOOK(MyFrame::OnKeyDown)
@@ -147,6 +161,12 @@ void MyFrame::OnSize(wxSizeEvent& event)
 				can_panel->script->SetSize(a);
 			can_panel->m_notebook->Layout();
 		}
+		if (modbus_master_panel)
+		{
+			modbus_master_panel->SetSize(a);
+			if (modbus_master_panel->m_notebook)
+				modbus_master_panel->m_notebook->SetSize(a);
+		}
 		if(alarm_panel)
 			alarm_panel->SetSize(a);
 		if(timesheet_panel)
@@ -211,8 +231,8 @@ void MyFrame::OnSaveCmdExecutor(wxCommandEvent& event)
 		GetCurrentDirectoryA(sizeof(work_dir) - 1, work_dir);
 #endif
 		MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-		std::lock_guard lock(frame->mtx);
-		frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::CommandsSaved), dif, std::string(work_dir) + "\\Cmds.xml"});
+		frame->PostNotification(FileSavedNotification{SavedFileKind::Commands, dif,
+			std::string(work_dir) + "\\Cmds.xml"});
 	}
 }
 
@@ -243,8 +263,26 @@ void MyFrame::OnSaveEverything(wxCommandEvent& event)
 		cmd_executor->Save();
 
 	MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-	std::lock_guard lock(frame->mtx);
-	frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::EverythingSaved) });
+	frame->PostNotification(SimpleNotification{SimpleNotificationKind::EverythingSaved});
+}
+
+void MyFrame::OnEditSettings(wxCommandEvent& WXUNUSED(event))
+{
+	SettingsDialog dialog(this);
+	if(!dialog.IsReady() || dialog.ShowModal() != wxID_OK)
+		return;
+
+	Settings::Get()->LoadFile();
+	SetCurrentPage(Settings::Get()->default_page);
+	PostNotification(SimpleNotification{SimpleNotificationKind::SettingsSaved});
+}
+
+void MyFrame::OnReloadSettings(wxCommandEvent& WXUNUSED(event))
+{
+	Settings::Get()->LoadFile();
+	SetCurrentPage(Settings::Get()->default_page);
+	SetStatusText("Settings reloaded from settings.ini");
+	LOG(LogLevel::Normal, "Settings reloaded from settings.ini");
 }
 
 void MyFrame::On10msTimer(wxTimerEvent& event)
@@ -252,6 +290,8 @@ void MyFrame::On10msTimer(wxTimerEvent& event)
 	HandleAlwaysOnNumlock();
 	if(can_panel)
 		can_panel->On10MsTimer();
+	if(modbus_master_panel)
+		modbus_master_panel->On10MsTimer();
 	if(alarm_panel)
 		alarm_panel->On10MsTimer();	
 	if(timesheet_panel)
@@ -286,7 +326,7 @@ void MyFrame::HandleDebugPanelUpdate()
 
 void MyFrame::HandleBackupProgressDialog()
 {
-	if(show_backup_dlg && backup_prog == NULL && !DirectoryBackup::Get()->is_cancelled)
+	if(show_backup_dlg && backup_prog == NULL && !DirectoryBackup::Get()->IsCancelled())
 	{
 		backup_prog = new wxProgressDialog("Backing up files", 
 			"Please wait while files being backed up\nIt can take a few minutes...Be patient", 100, 0, wxPD_CAN_ABORT | wxPD_ELAPSED_TIME | wxPD_SMOOTH);
@@ -297,18 +337,17 @@ void MyFrame::HandleBackupProgressDialog()
 	{
 		try
 		{
-			std::lock_guard lock(DirectoryBackup::Get()->m_TitleMutex);
-			std::string current_file = DirectoryBackup::Get()->m_currentFile;
+			std::string current_file = DirectoryBackup::Get()->GetCurrentFile();
 			if(!current_file.empty())
 				backup_prog->Pulse(wxString::Format("Please wait while files being backed up\nIt can take a few minutes...Be patient\nCurrent file: %s", current_file));
 			if(backup_prog && backup_prog->WasCancelled())
 			{
 				backup_prog->Destroy();
 				backup_prog = NULL;
-				DirectoryBackup::Get()->is_cancelled = true;
+				DirectoryBackup::Get()->RequestCancel();
 			}
 		}
-		catch(std::exception& e) /* TODO: solve possible deadlock in the future, there are no time for tihs right now */
+		catch(const std::exception& e)
 		{
 			LOG(LogLevel::Error, "Exception: {}", e.what());
 		}
@@ -436,12 +475,16 @@ MyFrame::MyFrame(const wxString& title)
 	menuCan->Append(ID_CmdExecutorSave, "&Save CMDs", "Save commands from CMD Executor")->SetBitmap(wxArtProvider::GetBitmap(wxART_FILE_SAVE, wxART_OTHER, FromDIP(wxSize(16, 16))));
 	menuCan->Append(ID_BsecSaveCache, "&Save BSEC", "Save BSEC Cache")->SetBitmap(wxArtProvider::GetBitmap(wxART_FILE_SAVE, wxART_OTHER, FromDIP(wxSize(16, 16))));
 	menuCan->Append(ID_SaveEverything, "&Save everything", "Save everything (CAN, CmdExecutor, Settings, etc)")->SetBitmap(wxArtProvider::GetBitmap(wxART_FILE_SAVE, wxART_OTHER, FromDIP(wxSize(16, 16))));
+	wxMenu* menuSettings = new wxMenu;
+	menuSettings->Append(ID_EditSettings, "&Edit settings...\tCtrl-,", "Edit values from settings.ini")->SetBitmap(wxArtProvider::GetBitmap(wxART_HELP_SETTINGS, wxART_OTHER, FromDIP(wxSize(16, 16))));
+	menuSettings->Append(ID_ReloadSettings, "&Reload from settings.ini", "Discard runtime setting changes and reload settings.ini")->SetBitmap(wxArtProvider::GetBitmap(wxART_REDO, wxART_OTHER, FromDIP(wxSize(16, 16))));
 	wxMenu* menuHelp = new wxMenu;
 	menuHelp->Append(ID_About, "&About", "Read license")->SetBitmap(wxArtProvider::GetBitmap(wxART_HELP_PAGE, wxART_OTHER, FromDIP(wxSize(16, 16))));
 	menuHelp->Append(ID_Help, "&Read help\tCtrl-H", "Read description about this program")->SetBitmap(wxArtProvider::GetBitmap(wxART_HELP, wxART_OTHER, FromDIP(wxSize(16, 16))));
 	wxMenuBar* menuBar = new wxMenuBar;
 	menuBar->Append(menuFile, "&File");
 	menuBar->Append(menuCan, "&Edit");
+	menuBar->Append(menuSettings, "&Settings");
 	menuBar->Append(menuHelp, "&Help");
 	SetMenuBar(menuBar);
 
@@ -468,11 +511,13 @@ MyFrame::MyFrame(const wxString& title)
 	if(used_pages.file_browser)
 		file_panel = new FilePanel(this);
 	if(used_pages.cmd_executor)
-		cmd_panel = new CmdExecutorPanelBase(this);
+		cmd_panel = new CmdExecutorPanelBase(this, *wxGetApp().cmd_executor);
 	if(used_pages.can)
 		can_panel = new CanPanel(this);
 	if(used_pages.did)
 		did_panel = new DidPanel(this);
+	if(used_pages.modbus_master)
+		modbus_master_panel = new ModbusMasterPanel(this);
 	if (used_pages.alarm_panel)
 		alarm_panel = new AlarmPanel(this);
 	if (used_pages.time_tracker)
@@ -498,6 +543,8 @@ MyFrame::MyFrame(const wxString& title)
 		ctrl->AddPage(can_panel, "CAN Sender", false, wxArtProvider::GetBitmap(wxART_REMOVABLE, wxART_OTHER, FromDIP(wxSize(16, 16))));
 	if(used_pages.did)
 		ctrl->AddPage(did_panel, "DID", false, wxArtProvider::GetBitmap(wxART_FIND, wxART_OTHER, FromDIP(wxSize(16, 16))));
+	if(used_pages.modbus_master)
+		ctrl->AddPage(modbus_master_panel, "ModbusMaster", false, wxArtProvider::GetBitmap(wxART_PRINT, wxART_OTHER, FromDIP(wxSize(16, 16))));
 	if (used_pages.alarm_panel)
 		ctrl->AddPage(alarm_panel, "AlarmPanel", false, wxArtProvider::GetBitmap(wxART_TICK_MARK, wxART_OTHER, FromDIP(wxSize(16, 16))));	
 	if (used_pages.time_tracker)
@@ -522,242 +569,177 @@ MyFrame::MyFrame(const wxString& title)
 	is_initialized = true;
 }
 
+void MyFrame::PostNotification(AppNotification notification)
+{
+	std::scoped_lock lock(m_notificationMutex);
+	m_pendingNotifications.push_back(std::move(notification));
+}
+
 void MyFrame::HandleNotifications()
 {
-	std::scoped_lock lock(mtx);
-	if(pending_msgs.size() > 0)
+	std::optional<AppNotification> notification;
 	{
-		try
-		{
-			std::vector<std::any> ret = pending_msgs.front();
-			std::underlying_type_t<PopupMsgIds> type = std::any_cast<std::underlying_type_t<PopupMsgIds>>(ret[0]);
-			switch(type)
-			{
-				case ScreenshotSaved:
-				{
-					int64_t time_elapsed = std::any_cast<decltype(time_elapsed)>(ret[1]);
-					std::string filename = std::any_cast<decltype(filename)>(ret[2]);
-					ShowNotificaiton("Screenshot saved", wxString::Format("Screenshot saved in %.3fms\nPath: %s", 
-						(double)time_elapsed / 1000000.0, filename), 3, wxICON_INFORMATION, [this, filename](wxCommandEvent& event)
-						{
-#ifdef _WIN32
-							std::string cmdline = std::string("/select,\"" + filename);
-							ShellExecuteA(NULL, "open", "explorer.exe", cmdline.c_str(), NULL, SW_NORMAL);
-#endif
-						});
-					break;
-				}
-				case ScreenshotSaveFailed:
-				{
-					ShowNotificaiton("Failed to save the screenshot!", "Error happend while trying to save the screenshot.",
-						3, wxICON_ERROR, [this](wxCommandEvent& event)
-						{
-						});
-					break;
-				}
-				case SettingsSaved:
-				{
-					ShowNotificaiton("Settings saved", "Settings has been successfully saved", 3, wxICON_INFORMATION, [this](wxCommandEvent& event)
-						{
-#ifdef _WIN32
-							wchar_t work_dir[1024];
-							GetCurrentDirectory(WXSIZEOF(work_dir) - 1, work_dir);
-							StrCatW(work_dir, L"\\settings.ini");
-							ShellExecute(NULL, L"open", work_dir, NULL, NULL, SW_SHOW);
-#endif
-						});
-					break;
-				}
-				case StringEscaped:
-				{
-					ShowNotificaiton("String escaped", "String has been escaped and placed to clipboard", 
-						3, wxICON_INFORMATION, [this](wxCommandEvent& event)
-						{
-						});
-					break;
-				}
-				case PathSeparatorsReplaced:
-				{
-					std::string path = std::any_cast<decltype(path)>(ret[1]);
-					ShowNotificaiton("Path separator replaced", wxString::Format("New form is in the clipboard:\n%s", path.substr(0, 64)), 
-						3, wxICON_INFORMATION, [this](wxCommandEvent& event)
-						{
-						});
-					break;
-				}
-				case BackupCompleted:
-				{
-					int64_t time_elapsed = std::any_cast<decltype(time_elapsed)>(ret[1]);
-					size_t file_count = std::any_cast<decltype(file_count)>(ret[2]);
-					size_t files_size = std::any_cast<decltype(files_size)>(ret[3]);
-					size_t dest_count = std::any_cast<decltype(files_size)>(ret[4]);
-					std::filesystem::path* p = std::any_cast<decltype(p)>(ret[5]);
-					ShowNotificaiton("Backup complete", wxString::Format("Backed up %zu files (%s) to %zu places in %.3fms", file_count, utils::GetDataUnit(files_size), dest_count,
-						(double)time_elapsed / 1000000.0),
-						3, wxICON_INFORMATION, [this, p](wxCommandEvent& event)
-						{
-#ifdef _WIN32
-							ShellExecuteA(NULL, NULL, p->generic_string().c_str(), NULL, NULL, SW_SHOWNORMAL);
-#endif
-						});
-					break;
-				}
-				case BackupFailed:
-				{
-					std::filesystem::path* p = std::any_cast<decltype(p)>(ret[1]);
-					ShowNotificaiton("Backup failed!",
-						wxString::Format("Backup failed due to wrong checksum values\nMake sure that your drive is not damaged\nCheck log file for more info"), 
-						3, wxICON_ERROR, [this, p](wxCommandEvent& event)
-						{
-#ifdef _WIN32
-							ShellExecuteA(NULL, NULL, p->generic_string().c_str(), NULL, NULL, SW_SHOWNORMAL);
-#endif
-						});
-					break;
-				}
-				case TxListLoaded:
-				case TxListSaved:
-				case RxListLoaded:
-				case RxListSaved:
-				case FrameMappingLoaded:
-				case FrameMappingSaved:
-				{
-					const wxString msg[] = { "TX List Loaded", "TX List Saved", "RX List Loaded", "RX List Saved", "Frame Mapping Loaded", "Frame Mapping Saved"};
- 					ShowNotificaiton(msg[type - TxListLoaded], msg[type - TxListLoaded], 3, wxICON_INFORMATION, [this](wxCommandEvent& event)
-						{
-						});
-					break;
-				}
-				case TxListLoadError:
-				case RxListLoadError:
-				case FrameMappingLoadError:
-				{
-					const wxString msg[] = { "TX List Load failed", "RX List Load failed", "Frame Mapping Load failed"};
-					ShowNotificaiton(msg[type - TxListLoadError], msg[type - TxListLoadError], 3, wxICON_ERROR, [this](wxCommandEvent& event)
-						{
-						});
-					break;
-				}
-				case CanLogSaved:
-				{
-					int64_t time_elapsed = std::any_cast<decltype(time_elapsed)>(ret[1]);
-					std::string filename = std::any_cast<decltype(filename)>(ret[2]);
-					ShowNotificaiton("CAN Log saved", wxString::Format("Can log saved in %.3fms\nPath: %s",
-						(double)time_elapsed / 1000000.0, filename), 3, wxICON_INFORMATION, [this, filename](wxCommandEvent& event)
-						{
-#ifdef _WIN32
-							char work_dir[1024];
-							GetCurrentDirectoryA(sizeof(work_dir) - 1, work_dir);
-							std::string abs_file = work_dir + std::string("\\") + filename;
-
-							boost::algorithm::replace_all(abs_file, "/", "\\");  /* Fix for path separator */
-							std::string cmdline = std::string("/select,\"" + abs_file + "\"");
-							ShellExecuteA(NULL, "open", "explorer.exe", cmdline.c_str(), NULL, SW_NORMAL);
-#endif
-						});
-					break;
-				}				
-				case CommandsSaved:
-				{
-					int64_t time_elapsed = std::any_cast<decltype(time_elapsed)>(ret[1]);
-					std::string filename = std::any_cast<decltype(filename)>(ret[2]);
-					ShowNotificaiton("Commands saved", wxString::Format("Commands saved in %.3fms\nPath: %s",
-						(double)time_elapsed / 1000000.0, filename), 3, wxICON_INFORMATION, [this, filename](wxCommandEvent& event)
-						{
-#ifdef _WIN32
-							std::string cmdline = std::string("/select,\"" + filename);
-							ShellExecuteA(NULL, "open", "explorer.exe", cmdline.c_str(), NULL, SW_NORMAL);
-#endif
-						});
-					break;
-				}
-				case DidCacheSaved:
-				{
-					int64_t time_elapsed = std::any_cast<decltype(time_elapsed)>(ret[1]);
-					std::string filename = std::any_cast<decltype(filename)>(ret[2]);
-					ShowNotificaiton("DIDs cache saved", wxString::Format("DIDs cache saved in %.3fms\nPath: %s",
-						(double)time_elapsed / 1000000.0, filename), 3, wxICON_INFORMATION, [this, filename](wxCommandEvent& event)
-						{
-#ifdef _WIN32
-							std::string cmdline = std::string("/select,\"" + filename);
-							ShellExecuteA(NULL, "open", "explorer.exe", cmdline.c_str(), NULL, SW_NORMAL);
-#endif
-						});
-					break;
-				}				
-				case DidUpdated:
-				{
-					ShowNotificaiton("DID updated", wxString::Format("DID value has been updated!"), 3, wxICON_INFORMATION, [this](wxCommandEvent& event)
-						{
-
-						});
-					break;
-				}
-				case SelectedLogsCopied:
-				{
-					ShowNotificaiton("Logs copied", wxString::Format("Selected logs copied to clipboard"), 3, wxICON_INFORMATION, [this](wxCommandEvent& event)
-						{
-						});
-					break;
-				}
-				case EverythingSaved:
-				{
-					ShowNotificaiton("Configurations saved", wxString::Format("Every configuration has been saved"), 3, wxICON_INFORMATION, [this](wxCommandEvent& event)
-						{
-							wchar_t work_dir[1024] = {};
-							GetCurrentDirectoryW(WXSIZEOF(work_dir) - 1, work_dir);
-							ShellExecuteW(NULL, NULL, work_dir, NULL, NULL, SW_SHOWNORMAL);
-						});
-					break;
-				}
-				case AlarmSetup:
-				{
-					const std::string name = std::any_cast<decltype(name)>(ret[1]);
-					std::chrono::seconds duration = std::any_cast<decltype(duration)>(ret[2]);
-					ShowNotificaiton(wxString::Format("Alarm setup - %s", name), wxString::Format("Alarm has been setup for %lld seconds", duration.count()), 3, wxICON_INFORMATION, [this](wxCommandEvent& event)
-						{
-
-						});
-					break;
-				}
-				case AlarmTriggered:
-				{
-					const std::string name = std::any_cast<decltype(name)>(ret[1]);
-					ShowNotificaiton(wxString::Format("Alarm executed - %s", name), wxString::Format("Alarm has been executed"), 3, wxICON_INFORMATION, [this](wxCommandEvent& event)
-						{
-
-						});
-					break;
-				}
-				case WorktimeToggled:
-				{
-					const std::string name = std::any_cast<bool>(ret[1]) ? "Started" : "Stopped";
-					boost::posix_time::time_duration duration = std::any_cast<boost::posix_time::time_duration>(ret[2]);
-					std::string strDetails;
-
-					if (duration != boost::posix_time::time_duration(0, 0, 0))
-					{
-						strDetails = wxString::Format("Worktime has been %s\nDuration: %02lld:%02lld:%02lld", name, duration.hours(), duration.minutes(), duration.seconds());
-					}
-					else
-					{
-						strDetails = wxString::Format("Worktime has been %s", name);
-					}
-
-					ShowNotificaiton(wxString::Format("Worktime - %s", name), strDetails, 3, wxICON_INFORMATION, [this](wxCommandEvent& event)
-						{
-
-						});
-					break;
-				}
-			}
-		}
-		catch(const std::exception& e)
-		{
-			LOG(LogLevel::Error, "Exception: {}", e.what());
-		}
-		pending_msgs.pop_front();
+		std::scoped_lock lock(m_notificationMutex);
+		if(m_pendingNotifications.empty())
+			return;
+		notification = std::move(m_pendingNotifications.front());
+		m_pendingNotifications.pop_front();
 	}
+
+	std::visit([this](const auto& value) { HandleNotification(value); }, *notification);
+}
+
+void MyFrame::HandleNotification(const SimpleNotification& notification)
+{
+	wxString title;
+	wxString message;
+	int icon = wxICON_INFORMATION;
+	switch(notification.kind)
+	{
+		case SimpleNotificationKind::ScreenshotSaveFailed:
+			title = "Failed to save the screenshot!";
+			message = "An error occurred while saving the screenshot.";
+			icon = wxICON_ERROR;
+			break;
+		case SimpleNotificationKind::SettingsSaved:
+			title = "Settings saved";
+			message = "Settings have been successfully saved";
+			break;
+		case SimpleNotificationKind::StringEscaped:
+			title = "String escaped";
+			message = "String has been escaped and placed on the clipboard";
+			break;
+		case SimpleNotificationKind::TxListLoaded: title = message = "TX List Loaded"; break;
+		case SimpleNotificationKind::TxListSaved: title = message = "TX List Saved"; break;
+		case SimpleNotificationKind::RxListLoaded: title = message = "RX List Loaded"; break;
+		case SimpleNotificationKind::RxListSaved: title = message = "RX List Saved"; break;
+		case SimpleNotificationKind::FrameMappingLoaded: title = message = "Frame Mapping Loaded"; break;
+		case SimpleNotificationKind::FrameMappingSaved: title = message = "Frame Mapping Saved"; break;
+		case SimpleNotificationKind::TxListLoadError:
+			title = message = "TX List Load failed"; icon = wxICON_ERROR; break;
+		case SimpleNotificationKind::RxListLoadError:
+			title = message = "RX List Load failed"; icon = wxICON_ERROR; break;
+		case SimpleNotificationKind::FrameMappingLoadError:
+			title = message = "Frame Mapping Load failed"; icon = wxICON_ERROR; break;
+		case SimpleNotificationKind::DidUpdated:
+			title = "DID updated"; message = "DID value has been updated!"; break;
+		case SimpleNotificationKind::SelectedLogsCopied:
+			title = "Logs copied"; message = "Selected logs copied to clipboard"; break;
+		case SimpleNotificationKind::EverythingSaved:
+			title = "Configurations saved"; message = "Every configuration has been saved"; break;
+	}
+
+	ShowNotificaiton(title, message, 3, icon, [kind = notification.kind](wxCommandEvent&)
+	{
+#ifdef _WIN32
+		if(kind == SimpleNotificationKind::SettingsSaved)
+		{
+			wchar_t work_dir[1024]{};
+			GetCurrentDirectoryW(WXSIZEOF(work_dir) - 1, work_dir);
+			StrCatW(work_dir, L"\\settings.ini");
+			ShellExecuteW(nullptr, L"open", work_dir, nullptr, nullptr, SW_SHOW);
+		}
+		else if(kind == SimpleNotificationKind::EverythingSaved)
+		{
+			wchar_t work_dir[1024]{};
+			GetCurrentDirectoryW(WXSIZEOF(work_dir) - 1, work_dir);
+			ShellExecuteW(nullptr, nullptr, work_dir, nullptr, nullptr, SW_SHOWNORMAL);
+		}
+#endif
+	});
+}
+
+void MyFrame::HandleNotification(const FileSavedNotification& notification)
+{
+	wxString title;
+	wxString subject;
+	bool path_is_relative = false;
+	switch(notification.kind)
+	{
+		case SavedFileKind::Screenshot: title = "Screenshot saved"; subject = "Screenshot"; break;
+		case SavedFileKind::CanLog: title = "CAN Log saved"; subject = "CAN log"; path_is_relative = true; break;
+		case SavedFileKind::ModbusLog: title = "Modbus Log saved"; subject = "Modbus log"; path_is_relative = true; break;
+		case SavedFileKind::Commands: title = "Commands saved"; subject = "Commands"; break;
+		case SavedFileKind::DidCache: title = "DIDs cache saved"; subject = "DIDs cache"; break;
+	}
+
+	ShowNotificaiton(title, wxString::Format("%s saved in %.3fms\nPath: %s", subject,
+		static_cast<double>(notification.duration_ns) / 1'000'000.0, notification.filename),
+		3, wxICON_INFORMATION, [filename = notification.filename, path_is_relative](wxCommandEvent&)
+	{
+#ifdef _WIN32
+		std::string selected_file = filename;
+		if(path_is_relative)
+		{
+			char work_dir[1024]{};
+			GetCurrentDirectoryA(sizeof(work_dir) - 1, work_dir);
+			selected_file = std::string(work_dir) + "\\" + selected_file;
+			boost::algorithm::replace_all(selected_file, "/", "\\");
+		}
+		const std::string command_line = "/select,\"" + selected_file + "\"";
+		ShellExecuteA(nullptr, "open", "explorer.exe", command_line.c_str(), nullptr, SW_NORMAL);
+#endif
+	});
+}
+
+void MyFrame::HandleNotification(const PathSeparatorsReplacedNotification& notification)
+{
+	ShowNotificaiton("Path separator replaced",
+		wxString::Format("New form is in the clipboard:\n%s", notification.path.substr(0, 64)),
+		3, wxICON_INFORMATION, [](wxCommandEvent&) {});
+}
+
+void MyFrame::HandleNotification(const BackupCompletedNotification& notification)
+{
+	ShowNotificaiton("Backup complete",
+		wxString::Format("Backed up %zu files (%s) to %zu places in %.3fms", notification.file_count,
+			utils::GetDataUnit(notification.bytes_copied), notification.destination_count,
+			static_cast<double>(notification.duration_ns) / 1'000'000.0),
+		3, wxICON_INFORMATION, [destination = notification.destination](wxCommandEvent&)
+	{
+#ifdef _WIN32
+		ShellExecuteA(nullptr, nullptr, destination.generic_string().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#endif
+	});
+}
+
+void MyFrame::HandleNotification(const BackupFailedNotification& notification)
+{
+	ShowNotificaiton("Backup failed!",
+		"Backup failed due to wrong checksum values\nMake sure that your drive is not damaged\nCheck log file for more info",
+		3, wxICON_ERROR, [destination = notification.destination](wxCommandEvent&)
+	{
+#ifdef _WIN32
+		ShellExecuteA(nullptr, nullptr, destination.generic_string().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#endif
+	});
+}
+
+void MyFrame::HandleNotification(const AlarmSetupNotification& notification)
+{
+	ShowNotificaiton(wxString::Format("Alarm setup - %s", notification.name),
+		wxString::Format("Alarm has been set for %lld seconds", notification.duration.count()),
+		3, wxICON_INFORMATION, [](wxCommandEvent&) {});
+}
+
+void MyFrame::HandleNotification(const AlarmTriggeredNotification& notification)
+{
+	ShowNotificaiton(wxString::Format("Alarm executed - %s", notification.name), "Alarm has been executed",
+		3, wxICON_INFORMATION, [](wxCommandEvent&) {});
+}
+
+void MyFrame::HandleNotification(const WorktimeToggledNotification& notification)
+{
+	const std::string state = notification.working ? "Started" : "Stopped";
+	std::string details = wxString::Format("Worktime has been %s", state).ToStdString();
+	if(notification.duration != std::chrono::seconds::zero())
+	{
+		const auto total_seconds = notification.duration.count();
+		details = wxString::Format("Worktime has been %s\nDuration: %02lld:%02lld:%02lld", state,
+			total_seconds / 3600, (total_seconds / 60) % 60, total_seconds % 60).ToStdString();
+	}
+	ShowNotificaiton(wxString::Format("Worktime - %s", state), details,
+		3, wxICON_INFORMATION, [](wxCommandEvent&) {});
 }
 
 template<typename T> void MyFrame::ShowNotificaiton(const wxString& title, const wxString& message, int timeout, int flags, T&& fptr)

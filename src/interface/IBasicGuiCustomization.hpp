@@ -1,13 +1,15 @@
 #pragma once
 
-#include <inttypes.h>
-#include <string.h>
+#include <cstdint>
+#include <compare>
+#include <string>
 
-class BasicGuiTextCustomization
+// Presentation values are domain data, not GUI widgets. Adapters translate
+// these values to wx types at the edge of the application.
+struct TextStyle
 {
-public:
-    BasicGuiTextCustomization() = default;
-    BasicGuiTextCustomization(uint32_t color, uint32_t bg_color, bool is_bold, float scale, const std::string& font_face = "") :
+    TextStyle() = default;
+    TextStyle(uint32_t color, uint32_t bg_color, bool is_bold, float scale, const std::string& font_face = "") :
         m_color(color), m_bg_color(bg_color), m_is_bold(is_bold), m_scale(scale), m_font_face(font_face)
     {
 
@@ -27,4 +29,13 @@ public:
 
     // !\brief Font face
     std::string m_font_face;
+};
+
+struct LogicalSize
+{
+    int width = -1;
+    int height = -1;
+
+    [[nodiscard]] bool IsDefault() const noexcept { return width < 0 || height < 0; }
+    auto operator<=>(const LogicalSize&) const = default;
 };

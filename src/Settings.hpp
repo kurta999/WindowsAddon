@@ -26,7 +26,6 @@ public:
     };
 };
 
-class MacroAppProfile;
 class Settings : public CSingleton < Settings >
 {
     friend class CSingleton < Settings >;

@@ -1,9 +1,12 @@
 #pragma once
 
 #include "utils/CSingleton.hpp"
-#include <future> 
-#include <tuple>
+#include "interface/IBackupEventSink.hpp"
+#include <future>
 #include <filesystem>
+#include <mutex>
+#include <optional>
+#include <string>
 #include <vector>
 
 class BackupEntry
@@ -14,10 +17,6 @@ public:
 
     // !\brief Is constructed backup entry valid?
     bool IsValid() const;
-
-    // !\brief Return true if the given file is in ignore list
-    // !\param p [in] File to check
-    bool IsInIgnoreList(const std::wstring& p) const;
 
     // !\brief Backup source path
     std::filesystem::path from;
@@ -46,12 +45,13 @@ class DirectoryBackup : public CSingleton < DirectoryBackup >
     friend class CSingleton < DirectoryBackup >;
 
 public:
-    friend class Settings;
     DirectoryBackup() = default;
     ~DirectoryBackup() = default;
 
     // !\brief Initialize DirectoryBackup
     void Init();
+
+    void SetEventSink(IBackupEventSink* event_sink) noexcept { m_EventSink.store(event_sink, std::memory_order_release); }
 
     // !\brief Construct backup entry from string
     void LoadEntry(const std::string& from, const std::string& to, const std::string& ignore, int max_backups, bool compress_, bool calculate_hash, size_t buffer_size);
@@ -66,39 +66,44 @@ public:
     // !\brief Delete all backups from backup list
     void Clear();
 
-    // !\brief Backup time format
-    std::string backup_time_format = "_%Y_%m_%d %H_%M_%S";
+    std::size_t AddEntry(BackupEntry entry);
+    bool RemoveEntry(std::size_t id);
+    bool UpdateEntry(std::size_t id, BackupEntry entry);
+    [[nodiscard]] std::optional<BackupEntry> GetEntry(std::size_t id) const;
+    [[nodiscard]] std::vector<BackupEntry> GetEntries() const;
 
-    // !\brief Vector of backups
-    std::vector<std::unique_ptr<BackupEntry>> backups;
-    
-    // !\brief Is backup cancelled?
-    std::atomic<bool> is_cancelled{ false };
+    void SetBackupTimeFormat(std::string format);
+    [[nodiscard]] std::string GetBackupTimeFormat() const;
 
-    std::mutex m_TitleMutex;
-
-    std::string m_currentFile;
+    void RequestCancel() noexcept { m_IsCancelled.store(true); }
+    [[nodiscard]] bool IsCancelled() const noexcept { return m_IsCancelled.load(); }
+    [[nodiscard]] std::string GetCurrentFile() const;
 
 protected:
     // !\brief Backups given backup entry
     // !\param backup [in] Backup entry to execute
-    void DoBackup(BackupEntry* backup);
+    void DoBackup(const BackupEntry& backup);
 
     // !\brief Execute backup rotation (removing older backups)
     // !\param backup [in] Backup entry to execute
-    void BackupRotation(BackupEntry* backup);
+    void BackupRotation(const BackupEntry& backup);
 
-    // !\brief Restore file attributes (e.g. hidden flag) from src to dst
+    // !\brief Produce a 7z archive and remove the uncompressed directory.
+    bool CompressBackup(const std::filesystem::path& dst);
+
     void RestoreAttributes(const std::filesystem::path& src, const std::filesystem::path& dst);
-
-    // !\brief Compresses and remove the final backup
-    bool CompressAndRemoveFinalBackup(const std::filesystem::path& dst);
 
     // !\brief Future for backup async operations
     std::future<void> backup_future;
 
-#ifdef UNIT_TESTS
-    class DirectoryBackupTest;
-    friend class DirectoryBackupTest;
-#endif
+    std::atomic<IBackupEventSink*> m_EventSink = nullptr;
+
+private:
+    void SetCurrentFile(std::string current_file);
+
+    mutable std::mutex m_StateMutex;
+    std::vector<BackupEntry> m_Backups;
+    std::string m_BackupTimeFormat = "_%Y_%m_%d %H_%M_%S";
+    std::string m_CurrentFile;
+    std::atomic<bool> m_IsCancelled{false};
 };

@@ -171,8 +171,7 @@ void AlarmEntryHandler::SetupAlarm(AlarmEntry* entry)
         entry->is_armed = true;
         entry->duration = ParseDurationStringToSeconds(duration_str);
 
-        std::unique_lock lock(frame->mtx);
-        frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::AlarmSetup), entry->name, entry->duration });
+        frame->PostNotification(AlarmSetupNotification{entry->name, entry->duration});
     }
 }
 
@@ -201,8 +200,7 @@ void AlarmEntryHandler::HandleKeypress(const std::string& key, bool force_timer_
             (*it)->is_armed = true;
             (*it)->duration = ParseDurationStringToSeconds(duration_str);
 
-            std::unique_lock lock(frame->mtx);
-            frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::AlarmSetup), (*it)->name, (*it)->duration });
+            frame->PostNotification(AlarmSetupNotification{(*it)->name, (*it)->duration});
         }
     }
 }
@@ -223,8 +221,7 @@ void AlarmEntryHandler::WorkerThread(std::stop_token token)
                         CustomMacro::Get()->SimulateKeypress(a->trigger_key, true);
 
                         MyFrame* frame = static_cast<MyFrame*>(wxGetApp().GetTopWindow());
-                        std::unique_lock lock(frame->mtx);
-                        frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::AlarmTriggered), a->name });
+                        frame->PostNotification(AlarmTriggeredNotification{a->name});
                     }
                     a->is_armed = false;
                 }

@@ -321,6 +321,7 @@ private:
 
     // !\brief Pointer to LogPanel
     ILogHelper* m_helper = nullptr;
+    std::mutex m_helperMutex;
 
     // !\brief Log filters
     std::vector<wxString> m_LogFilters;

@@ -5,6 +5,7 @@
 #include <functional>
 
 #include "IComPortConfig.hpp"
+#include "ISerialTransport.hpp"
 #include "ITcpEndpointConfig.hpp"
 
 class CallbackAsyncSerial;
@@ -15,7 +16,7 @@ using SerialSendFunction = std::function<void(CallbackAsyncSerial&)>;
 // Combines the common port lifecycle with the two focused config sub-interfaces.
 // Code that only needs TCP configuration can depend on ITcpEndpointConfig alone,
 // and code that only needs serial configuration can depend on IComPortConfig alone.
-class ISerialPort : public IComPortConfig, public ITcpEndpointConfig
+class ISerialPort : public ISerialTransport, public IComPortConfig, public ITcpEndpointConfig
 {
 public:
     virtual ~ISerialPort() = default;
@@ -28,10 +29,4 @@ public:
     virtual void SetEnabled(bool enable) = 0;
     virtual bool IsEnabled() const = 0;
 
-    virtual bool IsOpen() = 0;
-    virtual void Open() = 0;
-    virtual void Close() = 0;
-
-    virtual bool IsOk() const = 0;
-    virtual bool IsErrorPresent() const = 0;
 };

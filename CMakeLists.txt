@@ -1,124 +1,488 @@
-cmake_minimum_required(VERSION 3.7)
-project(WindowsAddon)
+cmake_minimum_required(VERSION 3.21)
 
-set (CMAKE_CXX_STANDARD 20)
-
-set(wxWidgets_USE_DEBUG ON)
-set(wxWidgets_USE_STATIC OFF)
-find_package(wxWidgets COMPONENTS core base stc propgrid aui REQUIRED)
-include(${wxWidgets_USE_FILE})
-
-set(Boost_USE_STATIC_LIBS ON) 
-set(Boost_USE_MULTITHREADED ON)  
-set(Boost_USE_STATIC_RUNTIME OFF) 
-find_package(Boost REQUIRED system program_options)
-
-find_package(fmt REQUIRED)
-
-set(USE_HIDAPI true CACHE BOOL "Use HIDAPI library?")
-if(USE_HIDAPI)
-	find_package(hidapi REQUIRED)
-	add_definitions(-DUSE_HIDAPI)
+if(POLICY CMP0167)
+    cmake_policy(SET CMP0167 NEW)
 endif()
 
-include_directories(libs)
-#include_directories(libs/bitfield)
-#include_directories(libs/isotp)
-include_directories(src/interface)
-include_directories(wxWidgets_INCLUDE_DIRS)
+project(WindowsAddon VERSION 1.7 LANGUAGES C CXX)
+
+option(WINDOWSADDON_BUILD_APP "Build the WindowsAddon desktop application" ON)
+option(WINDOWSADDON_USE_HIDAPI "Enable HIDAPI support" ON)
+option(WINDOWSADDON_USE_OPENCV "Enable OpenCV-based image recognition" OFF)
+option(WINDOWSADDON_USE_BSEC "Enable an externally supplied Bosch BSEC library (64-bit Windows only)" OFF)
+option(WINDOWSADDON_BUILD_EXTERNAL_TESTS "Build tests that require SQLite and Boost" ${WINDOWSADDON_BUILD_APP})
+option(WINDOWSADDON_BUILD_FUZZERS "Build libFuzzer targets for network and protocol parsers" OFF)
+option(WINDOWSADDON_WARNINGS_AS_ERRORS "Treat warnings from WindowsAddon code as errors" OFF)
+option(WINDOWSADDON_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(WINDOWSADDON_ENABLE_COVERAGE "Enable coverage instrumentation" OFF)
+
+set(WINDOWSADDON_BSEC_LIBRARY "" CACHE FILEPATH
+    "Path to the externally supplied 64-bit BSECLibrary64.lib")
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+include(CTest)
+
+if(WINDOWSADDON_ENABLE_SANITIZERS AND WINDOWSADDON_ENABLE_COVERAGE)
+    message(FATAL_ERROR "Sanitizers and coverage cannot be enabled in the same build")
+endif()
+
+if((WINDOWSADDON_ENABLE_SANITIZERS OR WINDOWSADDON_ENABLE_COVERAGE) AND
+   NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    message(FATAL_ERROR "Sanitizers and coverage require GCC or Clang")
+endif()
+
+if(WINDOWSADDON_BUILD_FUZZERS AND
+   (NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR NOT WINDOWSADDON_ENABLE_SANITIZERS))
+    message(FATAL_ERROR
+        "Fuzzers require Clang and -DWINDOWSADDON_ENABLE_SANITIZERS=ON")
+endif()
+
+# LLVM's Windows libFuzzer runtime is built against the static release CRT.
+# Keep every target in a Windows fuzz build ABI-compatible with that runtime.
+if(WINDOWSADDON_BUILD_FUZZERS AND WIN32)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+    add_compile_definitions(_ITERATOR_DEBUG_LEVEL=0)
+endif()
+
+if(WINDOWSADDON_BUILD_APP OR (BUILD_TESTING AND WINDOWSADDON_BUILD_EXTERNAL_TESTS))
+    find_package(unofficial-sqlite3 CONFIG QUIET)
+    if(TARGET unofficial::sqlite3::sqlite3)
+        set(WINDOWSADDON_SQLITE_TARGET unofficial::sqlite3::sqlite3)
+    else()
+        find_package(SQLite3 REQUIRED)
+        set(WINDOWSADDON_SQLITE_TARGET SQLite::SQLite3)
+    endif()
+endif()
+
+if(WINDOWSADDON_BUILD_APP)
+    find_package(Boost 1.74 REQUIRED COMPONENTS system program_options)
+elseif(BUILD_TESTING AND WINDOWSADDON_BUILD_EXTERNAL_TESTS)
+    find_package(Boost 1.74 REQUIRED)
+endif()
+
+function(windowsaddon_enable_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE
+            /W4
+            $<$<COMPILE_LANGUAGE:CXX>:/EHsc>
+            $<$<COMPILE_LANGUAGE:CXX>:/permissive->
+        )
+        if(WINDOWSADDON_WARNINGS_AS_ERRORS)
+            target_compile_options(${target} PRIVATE /WX)
+        endif()
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+        if(WINDOWSADDON_WARNINGS_AS_ERRORS)
+            target_compile_options(${target} PRIVATE -Werror)
+        endif()
+    endif()
+endfunction()
+
+function(windowsaddon_enable_instrumentation target)
+    if(WINDOWSADDON_ENABLE_SANITIZERS)
+        target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    elseif(WINDOWSADDON_ENABLE_COVERAGE)
+        target_compile_options(${target} PRIVATE --coverage -O0 -g)
+        target_link_options(${target} PRIVATE --coverage)
+    endif()
+endfunction()
+
+function(windowsaddon_configure_own_target target)
+    windowsaddon_enable_warnings(${target})
+    windowsaddon_enable_instrumentation(${target})
+endfunction()
+
+# libs/ and a few sources are carried over verbatim from upstream, where these
+# names are spelled with the WindowsHelper prefix. Forwarding here keeps those
+# files byte-identical so future syncs stay a plain copy.
+function(windowshelper_configure_own_target target)
+    windowsaddon_configure_own_target(${target})
+endfunction()
+
+function(windowsaddon_allow_legacy_gui_warnings target)
+    if(MSVC)
+        # wxWidgets event handlers intentionally have fixed callback signatures,
+        # and the legacy GUI still contains some side-effect-only locals/shadowing.
+        target_compile_options(${target} PRIVATE /wd4100 /wd4189 /wd4456 /wd4458)
+    endif()
+endfunction()
 
 add_subdirectory(libs)
 
-set(src_SOURCES_pch
-	#${CMAKE_CURRENT_SOURCE_DIR}/src/pch.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/CanEntryHandler.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/CanDeviceLawicel.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/CanDeviceStm32.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/CanSerialPort.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/CryptoPrice.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/CmdExecutor.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/WindowsAddon.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/CustomMacro.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/CorsairHid.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/DatabaseImpl.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/DatabaseLogic.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/DirectoryBackup.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/ExceptionHandler.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/GuiEditor.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/IdlePowerSaver.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/Logger.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/MacroRecorder.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/PathSeparator.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/PrintScreenSaver.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/Sensors.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/Server.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/Session.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/Settings.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/StructParser.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/SymlinkCreator.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/TerminalHotkey.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/TcpMessageExecutor.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/MapConverter.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/SerialPort.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/SerialTcpBackend.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/StringToCEscaper.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/Utils.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/CanPanel/BitEditorDialog.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/CanPanel/CanLogPanel.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/CanPanel/CanPanel.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/CanPanel/CanScriptPanel.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/CanPanel/CanSenderPanel.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/CanPanel/CanUdsRawDialog.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/Configuration.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/ConfigurationBackup.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/CmdExecutorPanel.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/Editor.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/EscaperPanel.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/FilePanel.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/LogPanel.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/MainFrame.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/MainPanel.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/MapConverterPanel.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/ParserPanel.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/DebugPanel.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/gui/TrayIcon.cpp
-)
- 
- set(src_SOURCES
-	${CMAKE_CURRENT_SOURCE_DIR}/src/utils/AsyncSerial.cpp
-)
-if(MSVC)
-	add_definitions(-DWXUSINGDLL=1 -D_CRT_SECURE_NO_WARNINGS -DWIN32 -D_WINDOWS -D_WIN32_WINNT=0x0601)
-	#target_precompile_headers(${PROJECT_NAME} PRIVATE src/pch.hpp)
+if(BUILD_TESTING OR WINDOWSADDON_BUILD_APP OR WINDOWSADDON_BUILD_FUZZERS)
+    add_library(windowsaddon_protocols STATIC
+        src/CanCodecs.cpp
+        src/ModbusClient.cpp
+        src/SensorDataParser.cpp
+        src/TcpMessageParser.cpp
+    )
+    target_include_directories(windowsaddon_protocols PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(windowsaddon_protocols PUBLIC windowshelper_protocol)
+    windowsaddon_configure_own_target(windowsaddon_protocols)
 
-	set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/pch.cpp
-        PROPERTIES
-        COMPILE_FLAGS "/Ycpch.hpp"
+    add_library(windowsaddon_automation STATIC
+        src/automation/CommandTextResolver.cpp
+        src/automation/ScriptCommandResolver.cpp
+        src/automation/ScriptLaunchService.cpp
+        src/DirectoryBackupCore.cpp
+        src/SettingsIniDocument.cpp
+        src/StringToCEscaper.cpp
+        src/TimeTrackerLogic.cpp
+    )
+    target_include_directories(windowsaddon_automation PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    windowsaddon_configure_own_target(windowsaddon_automation)
+
+    add_library(windowsaddon_platform STATIC
+        src/platform/StandardFileSystem.cpp
+        src/platform/SystemClock.cpp
+        src/platform/SystemCommandRunner.cpp
+    )
+    target_include_directories(windowsaddon_platform PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_definitions(windowsaddon_platform PRIVATE
+        $<$<PLATFORM_ID:Windows>:WIN32_LEAN_AND_MEAN;NOMINMAX>
+    )
+    windowsaddon_configure_own_target(windowsaddon_platform)
+
+    add_library(WindowsAddon::Protocols ALIAS windowsaddon_protocols)
+    add_library(WindowsAddon::Automation ALIAS windowsaddon_automation)
+    add_library(WindowsAddon::Platform ALIAS windowsaddon_platform)
+endif()
+
+if(WINDOWSADDON_BUILD_APP OR (BUILD_TESTING AND WINDOWSADDON_BUILD_EXTERNAL_TESTS))
+    add_library(windowsaddon_persistence STATIC
+        src/TimeTracker.cpp
+        src/TimeTrackerStorage.cpp
+    )
+    target_include_directories(windowsaddon_persistence PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(windowsaddon_persistence PUBLIC ${WINDOWSADDON_SQLITE_TARGET})
+    windowsaddon_configure_own_target(windowsaddon_persistence)
+    add_library(WindowsAddon::Persistence ALIAS windowsaddon_persistence)
+endif()
+
+if(BUILD_TESTING)
+    add_library(windowsaddon_test_framework STATIC tests/TestFramework.cpp)
+    target_include_directories(windowsaddon_test_framework PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    windowsaddon_configure_own_target(windowsaddon_test_framework)
+
+    add_executable(WindowsAddonCoreTests
+        tests/BitfieldTests.cpp
+        tests/CanCodecTests.cpp
+        tests/CommandTextResolverTests.cpp
+        tests/DirectoryBackupTests.cpp
+        tests/ModbusEvolutionTests.cpp
+        tests/ModbusClientTests.cpp
+        tests/ObserverTests.cpp
+        tests/PresentationModelTests.cpp
+        tests/ScriptLaunchServiceTests.cpp
+        tests/SingletonTests.cpp
+        tests/IsoTpTests.cpp
+        tests/MeasurementTests.cpp
+        tests/SensorDataParserTests.cpp
+        tests/SettingsIniDocumentTests.cpp
+        tests/Sha256Tests.cpp
+        tests/StringEscaperTests.cpp
+        tests/TcpMessageParserTests.cpp
+    )
+    target_include_directories(WindowsAddonCoreTests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+    )
+    target_link_libraries(WindowsAddonCoreTests PRIVATE
+        WindowsAddon::Protocols
+        WindowsAddon::Automation
+        WindowsAddon::Platform
+        windowsaddon_test_framework
+    )
+    windowsaddon_configure_own_target(WindowsAddonCoreTests)
+    add_test(NAME WindowsAddon.Core COMMAND WindowsAddonCoreTests)
+
+    if(WINDOWSADDON_BUILD_EXTERNAL_TESTS)
+        add_executable(WindowsAddonExternalTests
+            tests/TimeTrackerTests.cpp
+            tests/TimeTrackerStorageTests.cpp
+            tests/XmlConfigurationTests.cpp
+            src/XmlConfigurations.cpp
         )
-    foreach( myproject_SOURCE_FILES ${src_SOURCES_pch} )
-		message("src file: "${myproject_SOURCE_FILES})
-        set_source_files_properties(
-            ${myproject_SOURCE_FILES}
-            PROPERTIES
-            COMPILE_FLAGS "/Yupch.hpp"
-            )
-    endforeach( myproject_SOURCE_FILES ${src_SOURCES_pch} )
-    list(APPEND src_SOURCES_pch ${CMAKE_CURRENT_SOURCE_DIR}/src/pch.cpp)
-	#add_precompiled_header( ${PROJECT_NAME} pch.hpp FORCEINCLUDE src_SOURCES_pch pch.cpp )
-	
-	# Create the source groups for source tree with root at VD_SRC.
-	source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/src FILES ${src_SOURCES_pch})
-else()
-	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-return-type")
+        target_include_directories(WindowsAddonExternalTests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+        )
+        target_link_libraries(WindowsAddonExternalTests PRIVATE
+            WindowsAddon::Persistence
+            WindowsAddon::Automation
+            windowsaddon_test_framework
+            Boost::headers
+        )
+        windowsaddon_configure_own_target(WindowsAddonExternalTests)
+        add_test(NAME WindowsAddon.External COMMAND WindowsAddonExternalTests)
+    endif()
 endif()
 
-#message("wxWidgets_LIBRARIES: " ${wxWidgets_LIBRARIES})
-
-add_executable(${PROJECT_NAME} WIN32 ${src_SOURCES_pch} ${src_SOURCES})
-if(USE_HIDAPI)
-	target_link_libraries(${PROJECT_NAME} $<TARGET_OBJECTS:libs> ${wxWidgets_LIBRARIES} ${Boost_LIBRARIES} ${CMAKE_DL_LIBS} fmt::fmt hidapi::hidapi)
-else()
-	target_link_libraries(${PROJECT_NAME} $<TARGET_OBJECTS:libs> ${wxWidgets_LIBRARIES} ${Boost_LIBRARIES} ${CMAKE_DL_LIBS} fmt::fmt)
+if(WINDOWSADDON_BUILD_FUZZERS)
+    foreach(fuzzer IN ITEMS NetworkMessage ProtocolParsers)
+        add_executable(WindowsAddon${fuzzer}Fuzzer "fuzz/${fuzzer}Fuzz.cpp")
+        target_link_libraries(WindowsAddon${fuzzer}Fuzzer PRIVATE WindowsAddon::Protocols)
+        target_compile_options(WindowsAddon${fuzzer}Fuzzer PRIVATE -fsanitize=fuzzer)
+        target_link_options(WindowsAddon${fuzzer}Fuzzer PRIVATE -fsanitize=fuzzer)
+        windowsaddon_configure_own_target(WindowsAddon${fuzzer}Fuzzer)
+    endforeach()
 endif()
 
-install (TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
+if(NOT WINDOWSADDON_BUILD_APP)
+    return()
+endif()
+
+# Prefer the config package supplied by vcpkg, but retain compatibility with
+# distro-provided wxWidgets packages on Linux.
+find_package(wxWidgets CONFIG QUIET)
+if(wxWidgets_FOUND AND TARGET wx::core)
+    set(WINDOWSADDON_WX_LIBRARIES
+        wx::core
+        wx::base
+        wx::aui
+        wx::stc
+        wx::propgrid
+    )
+else()
+    find_package(wxWidgets REQUIRED COMPONENTS core base aui stc propgrid)
+    include("${wxWidgets_USE_FILE}")
+    set(WINDOWSADDON_WX_LIBRARIES ${wxWidgets_LIBRARIES})
+endif()
+
+find_package(fmt CONFIG REQUIRED)
+find_package(Threads REQUIRED)
+
+find_package(lodepng CONFIG REQUIRED)
+if(NOT TARGET lodepng)
+    message(FATAL_ERROR "The lodepng package was found, but its 'lodepng' target is missing")
+endif()
+
+if(WINDOWSADDON_USE_HIDAPI)
+    find_package(hidapi CONFIG REQUIRED)
+    if(NOT TARGET hidapi::hidapi)
+        message(FATAL_ERROR "The hidapi package was found, but its 'hidapi::hidapi' target is missing")
+    endif()
+endif()
+
+if(WINDOWSADDON_USE_OPENCV)
+    find_package(OpenCV CONFIG REQUIRED)
+endif()
+
+set(WINDOWSADDON_SOURCES
+    src/Alarms.cpp
+    src/BsecHandler.cpp
+    src/CanDeviceFactory.cpp
+    src/CanDeviceLawicel.cpp
+    src/CanDeviceStm32.cpp
+    src/CanEntryHandler.cpp
+    src/CanScriptHandler.cpp
+    src/CanSerialPort.cpp
+    src/CanXmlLoaders.cpp
+    src/CmdExecutor.cpp
+    src/CorsairHid.cpp
+    src/CryptoPrice.cpp
+    src/CustomMacro.cpp
+    src/DatabaseImpl.cpp
+    src/DatabaseLogic.cpp
+    src/DidHandler.cpp
+    src/DirectoryBackup.cpp
+    src/ExceptionHandler.cpp
+    src/GraphGenerator.cpp
+    src/IdlePowerSaver.cpp
+    src/ImageRecognition.cpp
+    src/Logger.cpp
+    src/MeasurementRepository.cpp
+    src/ModbusHandler.cpp
+    src/ModbusMasterSerialPort.cpp
+    src/PathSeparator.cpp
+    src/PrintScreenSaver.cpp
+    src/ScriptLauncher.cpp
+    src/Sensors.cpp
+    src/SerialPort.cpp
+    src/SerialPortBase.cpp
+    src/SerialTcpBackend.cpp
+    src/Server.cpp
+    src/Session.cpp
+    src/Settings.cpp
+    src/TcpMessageExecutor.cpp
+    src/TerminalHotkey.cpp
+    src/Utils.cpp
+    src/WindowsAddon.cpp
+    src/WorkingDays.cpp
+    src/XmlConfigurations.cpp
+    src/utils/AsyncSerial.cpp
+)
+
+set(WINDOWSADDON_GUI_SOURCES
+    src/gui/AlarmPanel.cpp
+    src/gui/CanPanel/BitEditorDialog.cpp
+    src/gui/CanPanel/CanLogPanel.cpp
+    src/gui/CanPanel/CanPanel.cpp
+    src/gui/CanPanel/CanScriptPanel.cpp
+    src/gui/CanPanel/CanSenderPanel.cpp
+    src/gui/CanPanel/CanUdsRawDialog.cpp
+    src/gui/CmdExecutorPanel.cpp
+    src/gui/ConfigurationBackup.cpp
+    src/gui/DebugPanel.cpp
+    src/gui/DidPanel.cpp
+    src/gui/EscaperPanel.cpp
+    src/gui/FilePanel.cpp
+    src/gui/LogPanel.cpp
+    src/gui/MainFrame.cpp
+    src/gui/MainPanel.cpp
+    src/gui/ModbusMasterPanel.cpp
+    src/gui/SettingsDialog.cpp
+    src/gui/TimeTrackerPanel.cpp
+    src/gui/TrayIcon.cpp
+)
+
+if(WIN32)
+    list(APPEND WINDOWSADDON_SOURCES
+        libs/enumser/enumser.cpp
+        cmake/WindowsAddon.rc
+    )
+    # enumser is legacy third-party code stored in its original Windows codepage.
+    set_source_files_properties(libs/enumser/enumser.cpp PROPERTIES
+        COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:MSVC>:/wd4828>"
+    )
+endif()
+
+find_package(Git QUIET)
+set(WINDOWSADDON_COMMIT_TAG "${PROJECT_VERSION}")
+set(WINDOWSADDON_COMMIT_ID "unknown")
+set(WINDOWSADDON_COMMIT_DIRTY "")
+if(Git_FOUND)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" describe --tags --abbrev=0
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        OUTPUT_VARIABLE WINDOWSADDON_COMMIT_TAG
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" rev-parse --short HEAD
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        OUTPUT_VARIABLE WINDOWSADDON_COMMIT_ID
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" diff --shortstat
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        OUTPUT_VARIABLE WINDOWSADDON_COMMIT_DIRTY
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+endif()
+if(NOT WINDOWSADDON_COMMIT_TAG)
+    set(WINDOWSADDON_COMMIT_TAG "${PROJECT_VERSION}")
+endif()
+if(NOT WINDOWSADDON_COMMIT_ID)
+    set(WINDOWSADDON_COMMIT_ID "unknown")
+endif()
+
+set(WINDOWSADDON_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${WINDOWSADDON_GENERATED_DIR}")
+configure_file(
+    cmake/commitid.h.in
+    "${WINDOWSADDON_GENERATED_DIR}/commitid.h"
+    @ONLY
+)
+
+add_library(windowsaddon_gui STATIC ${WINDOWSADDON_GUI_SOURCES})
+add_library(WindowsAddon::Gui ALIAS windowsaddon_gui)
+add_executable(WindowsAddon WIN32 ${WINDOWSADDON_SOURCES})
+
+set(WINDOWSADDON_APP_TARGETS WindowsAddon windowsaddon_gui)
+foreach(target IN LISTS WINDOWSADDON_APP_TARGETS)
+    target_precompile_headers(${target} PRIVATE src/pch.hpp)
+    target_include_directories(${target} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/libs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/interface"
+        "${WINDOWSADDON_GENERATED_DIR}"
+    )
+    target_compile_definitions(${target} PRIVATE
+        WINDOWSADDON_CMAKE_BUILD
+        WINDOWSHELPER_CMAKE_BUILD  # spelling used by the upstream-carried sources
+        $<$<PLATFORM_ID:Windows>:_CRT_SECURE_NO_WARNINGS;WIN32_LEAN_AND_MEAN;NOMINMAX;_WIN32_WINNT=0x0601>
+        $<$<BOOL:${WINDOWSADDON_USE_HIDAPI}>:USE_HIDAPI>
+        $<$<BOOL:${WINDOWSADDON_USE_OPENCV}>:USE_OPENCV>
+        $<$<BOOL:${WINDOWSADDON_USE_BSEC}>:USE_BSEC>
+    )
+    windowsaddon_configure_own_target(${target})
+    windowsaddon_allow_legacy_gui_warnings(${target})
+endforeach()
+
+set(WINDOWSADDON_APP_LIBRARIES
+    WindowsAddon::Protocols
+    WindowsAddon::Persistence
+    WindowsAddon::Automation
+    WindowsAddon::Platform
+    ${WINDOWSADDON_WX_LIBRARIES}
+    Boost::system
+    Boost::program_options
+    fmt::fmt
+    Threads::Threads
+    ${WINDOWSADDON_SQLITE_TARGET}
+    lodepng
+    ${CMAKE_DL_LIBS}
+)
+
+target_link_libraries(windowsaddon_gui PRIVATE ${WINDOWSADDON_APP_LIBRARIES})
+target_link_libraries(WindowsAddon PRIVATE
+    WindowsAddon::Gui
+    ${WINDOWSADDON_APP_LIBRARIES}
+)
+
+if(WINDOWSADDON_USE_HIDAPI)
+    target_link_libraries(windowsaddon_gui PRIVATE hidapi::hidapi)
+    target_link_libraries(WindowsAddon PRIVATE hidapi::hidapi)
+endif()
+
+if(WINDOWSADDON_USE_OPENCV)
+    target_include_directories(windowsaddon_gui PRIVATE ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(windowsaddon_gui PRIVATE ${OpenCV_LIBS})
+    target_include_directories(WindowsAddon PRIVATE ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(WindowsAddon PRIVATE ${OpenCV_LIBS})
+endif()
+
+if(WINDOWSADDON_USE_BSEC)
+    if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+        message(FATAL_ERROR "WINDOWSADDON_USE_BSEC requires a 64-bit Windows build")
+    endif()
+    if(NOT WINDOWSADDON_BSEC_LIBRARY OR NOT EXISTS "${WINDOWSADDON_BSEC_LIBRARY}")
+        message(FATAL_ERROR
+            "WINDOWSADDON_USE_BSEC requires -DWINDOWSADDON_BSEC_LIBRARY=<path-to-BSECLibrary64.lib>")
+    endif()
+    target_link_libraries(windowsaddon_gui PRIVATE "${WINDOWSADDON_BSEC_LIBRARY}")
+    target_link_libraries(WindowsAddon PRIVATE "${WINDOWSADDON_BSEC_LIBRARY}")
+endif()
+
+if(WIN32)
+    target_link_libraries(windowsaddon_gui PRIVATE
+        Dbghelp
+        PowrProf
+        Shlwapi
+        Urlmon
+        Wlanapi
+        Wtsapi32
+    )
+    target_link_libraries(WindowsAddon PRIVATE
+        Dbghelp
+        PowrProf
+        Shlwapi
+        Urlmon
+        Wlanapi
+        Wtsapi32
+    )
+endif()
+
+install(TARGETS WindowsAddon RUNTIME DESTINATION bin)

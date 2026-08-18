@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <boost/asio.hpp>
 
 #include <fstream>
@@ -8,11 +9,10 @@
 #include <set>
 #include <string>
 #include <vector>
-#include <boost/asio/deadline_timer.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 #include "TcpMessageExecutor.hpp"
-
-constexpr size_t SESSION_RECV_BUF_LEN = 1024;
+#include "TcpMessageParser.hpp"
 
 class Session : public std::enable_shared_from_this<Session>
 {
@@ -50,7 +50,7 @@ public:
 	std::queue<std::string> pendingMessages;
 
 	// !\brief Buffer for received data
-	char receivedData[SESSION_RECV_BUF_LEN] = {};
+	std::array<char, tcp_message::MaxMessageSize> receivedData{};
 
 	// !\brief Last sent data
 	std::string sentData;
@@ -76,8 +76,8 @@ public:
 	// !\brief Is session close pending?
 	bool is_close_pending = false;
 
-	// !\brief ASIO Deadline Timer for sending message chunks
-	boost::asio::deadline_timer transferTimer;
+	// !\brief ASIO steady timer for sending message chunks
+	boost::asio::steady_timer transferTimer;
 	
 	// !\brief Pointer to TCP message executor
 	std::unique_ptr<ITcpMessageExecutor> m_msgExecutor;

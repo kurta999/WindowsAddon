@@ -14,10 +14,10 @@ Server::~Server()
 
 void Server::Init(void)
 {
-    if(is_enabled)
+    if(IsEnabled())
     {
         std::scoped_lock lock(m_IoMutex);
-        if(!CreateAcceptor(tcp_port))
+        if(!CreateAcceptor(GetPort()))
         {
             LOG(LogLevel::Error, "createAcceptor fail!");
             return;
@@ -25,7 +25,7 @@ void Server::Init(void)
         m_worker = std::make_unique<std::jthread>(std::bind_front(&Server::StartAsync, this));
         if(m_worker)
             utils::SetThreadName(*m_worker, "Server");
-        DatabaseLogic::Get()->GenerateGraphs();
+        DatabaseLogic::Get()->GenerateGraphs(Sensors::Get()->GetGraphResolution());
     }
 }
 
@@ -40,7 +40,7 @@ void Server::StartAsync(std::stop_token token)
 
 void Server::BroadcastMessage(const std::string& msg)
 {
-    if(is_enabled)
+    if(IsEnabled())
     {
         std::scoped_lock lock(m_IoMutex);
         for(auto& i : sessions)
@@ -52,58 +52,74 @@ void Server::BroadcastMessage(const std::string& msg)
 
 void Server::SetForwardIpAddress(const std::string& ip)
 {
-    if(ip != "null")
-    {
-        size_t pos = ip.find(':');
-        if(pos != std::string::npos)
-        {
-			forward_ip_address = ip.substr(0, pos);
-            try
-            {
-				forward_port = std::stoi(ip.substr(pos + 1));
-			}
-            catch(const std::exception& e)
-            {
-                LOG(LogLevel::Error, "stoi exception: {}", e.what());
-            }
-		}
-    }
+    std::scoped_lock lock(m_StateMutex);
+    SetForwardEndpoint(ip, m_forwardEndpoint);
 }
 
 void Server::SetForwardIpAddress2(const std::string& ip)
 {
-    if(ip != "null")
-    {
-        size_t pos = ip.find(':');
-        if(pos != std::string::npos)
-        {
-			forward_ip_address2 = ip.substr(0, pos);
-            try
-            {
-				forward_port2 = std::stoi(ip.substr(pos + 1));
-			}
-            catch(const std::exception& e)
-            {
-                LOG(LogLevel::Error, "stoi exception: {}", e.what());
-            }
-		}
-    }
+    std::scoped_lock lock(m_StateMutex);
+    SetForwardEndpoint(ip, m_forwardEndpoint2);
 }
 
 const std::string Server::GetForwardIpAddress()
 {
-    if(forward_ip_address == "null")
-		return forward_ip_address;
-
-    return forward_ip_address + ":" + std::to_string(forward_port);
+    std::scoped_lock lock(m_StateMutex);
+    return FormatForwardEndpoint(m_forwardEndpoint);
 }
 
 const std::string Server::GetForwardIpAddress2()
 {
-    if(forward_ip_address2 == "null")
-		return forward_ip_address2;
+    std::scoped_lock lock(m_StateMutex);
+    return FormatForwardEndpoint(m_forwardEndpoint2);
+}
 
-    return forward_ip_address2 + ":" + std::to_string(forward_port2);
+void Server::SetForwardEndpoint(const std::string& value, ForwardEndpoint& endpoint)
+{
+    endpoint = {};
+    if(value == "null" || value.empty())
+        return;
+
+    const size_t separator = value.rfind(':');
+    if(separator == std::string::npos)
+    {
+        LOG(LogLevel::Error, "Invalid forwarding endpoint: {}", value);
+        return;
+    }
+
+    try
+    {
+        const auto parsed_port = std::stoul(value.substr(separator + 1));
+        if(parsed_port > std::numeric_limits<uint16_t>::max())
+            throw std::out_of_range("port");
+        endpoint = {value.substr(0, separator), static_cast<uint32_t>(parsed_port)};
+    }
+    catch(const std::exception& error)
+    {
+        LOG(LogLevel::Error, "Invalid forwarding endpoint '{}': {}", value, error.what());
+    }
+}
+
+std::string Server::FormatForwardEndpoint(const ForwardEndpoint& endpoint) const
+{
+    return endpoint.port == 0 ? "null" : endpoint.address + ":" + std::to_string(endpoint.port);
+}
+
+std::vector<ForwardEndpoint> Server::GetForwardTargets() const
+{
+    std::scoped_lock lock(m_StateMutex);
+    std::vector<ForwardEndpoint> targets;
+    if(m_forwardEndpoint.port != 0)
+        targets.push_back(m_forwardEndpoint);
+    if(m_forwardEndpoint2.port != 0)
+        targets.push_back(m_forwardEndpoint2);
+    return targets;
+}
+
+std::vector<uint32_t> Server::GetConnectedSensorAddresses() const
+{
+    std::scoped_lock lock(m_IoMutex);
+    return {m_usedIpAddresses.begin(), m_usedIpAddresses.end()};
 }
 
 bool Server::CreateAcceptor(unsigned short port)
@@ -141,13 +157,13 @@ bool Server::CreateAcceptor(unsigned short port)
         return false;
     }
     StartAccept();
-    is_ok = true;
+    m_isOk = true;
     return true;
 }
 
 void Server::StopAsync()
 {
-    if(is_enabled)
+    if(IsEnabled())
     {
         std::scoped_lock lock(m_IoMutex);
         if(acceptor)
@@ -180,7 +196,7 @@ void Server::HandleAccept(const boost::system::error_code& error, SharedSession 
         {
             session->StartAsync();
             sessions.emplace(session);
-            if(Server::Get()->used_ip_addresses.emplace(session->sessionIntAddr).second)
+            if(m_usedIpAddresses.emplace(session->sessionIntAddr).second)
             {
                 LOG(LogLevel::Error, "New sensor connected, IP: {}:{}", session->sessionAddress, session->sessionPort);
             }

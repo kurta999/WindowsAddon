@@ -13,9 +13,7 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 
-#ifndef UNIT_TESTS
 #include "Logger.hpp"
-#endif
 
 constexpr uint32_t DEFAULT_TXTCTRL_BACKGROUND = 0x00F0F0F0;
 
@@ -52,7 +50,6 @@ namespace utils
     size_t MBStringToWString(const std::string& src, std::wstring& dest);
     size_t WStringToMBString(const std::wstring& src, std::string& dest);
     uint16_t crc16_modbus(void* data, size_t len);
-#ifndef UNIT_TESTS
     int GetVirtualKeyFromString(const std::string& key);
     std::string GetKeyStringFromVirtualKey(int key_code);
 
@@ -70,7 +67,6 @@ namespace utils
     
 #endif
     std::string exec(const char* cmd);
-#endif
     void ConvertHexBufferToString(const std::vector<uint8_t>& in, std::string& out);
     void ConvertHexBufferToString(const std::vector<uint16_t>& in, std::string& out);
     void ConvertHexBufferToString(const char* in, size_t len, std::string& out);
@@ -194,6 +190,8 @@ namespace utils
     {
         return ((r & 0xff) << 16) + ((g & 0xff) << 8) + (b & 0xff);
     }
+    
+    const std::string GetCurrentWifiSSID();
 }
 
 namespace utils

@@ -65,7 +65,7 @@ void CanScriptHandler::AbortRunningScript()
     cv.notify_all();
 
     raw_frame_blocks.clear();
-    m_FrameIDValues.clear();
+    m_FrameData.clear();
 
     if(m_FutureHandle.valid())
         if(m_FutureHandle.wait_for(std::chrono::milliseconds(10)) == std::future_status::ready)
@@ -109,7 +109,7 @@ template <typename T> void CanScriptHandler::HandleBitWriting(uint32_t frame_id,
     try
     {
         T raw_data = static_cast<T>(std::stoll(new_data, nullptr, 16));
-        set_bitfield(raw_data, offset, size, byte_array, 64);
+        set_bitfield(raw_data, offset, size, byte_array, 8);
     }
     catch(const std::exception& e)
     {
@@ -130,10 +130,10 @@ uint32_t CanScriptHandler::FindFrameIdByFieldName(const CanMapping& mapping, std
 void CanScriptHandler::ApplyEditingOnFrameId(uint32_t frame_id, const std::string& field_name, std::string new_data)
 {
     uint8_t cnt = 0;
-    uint8_t byte_array[8] = {};
+    std::array<uint8_t, 8> byte_array{};
 
-    if(m_FrameIDValues.contains(frame_id))
-        memcpy(byte_array, reinterpret_cast<const uint8_t*>(&m_FrameIDValues[frame_id]), sizeof(uint64_t));
+    if(auto it = m_FrameData.find(frame_id); it != m_FrameData.end())
+        byte_array = it->second;
 
     CanMapping& mapping = m_Handler.GetMapping();
     if(!mapping.contains(frame_id))
@@ -147,19 +147,13 @@ void CanScriptHandler::ApplyEditingOnFrameId(uint32_t frame_id, const std::strin
 
         DispatchBitfieldType(m->m_Type, [&]<typename T>()
         {
-            HandleBitWriting<T>(frame_id, cnt, offset, m->m_Size, byte_array, new_data);
+            HandleBitWriting<T>(frame_id, cnt, offset, m->m_Size, byte_array.data(), new_data);
         });
     }
 
-    uint32_t reversed_1 = boost::endian::endian_reverse(*reinterpret_cast<const uint32_t*>(byte_array));
-    uint32_t reversed_2 = boost::endian::endian_reverse(*reinterpret_cast<const uint32_t*>(&byte_array[4]));
-    m_FrameIDValues[frame_id] = (static_cast<uint64_t>(reversed_1) << 32) | static_cast<uint64_t>(reversed_2);
-
-    m_Handler.AssignNewBufferToTxEntry(frame_id, byte_array, sizeof(byte_array));
-
-    MyFrame* frame = static_cast<MyFrame*>(wxGetApp().GetTopWindow());
-    if(frame && frame->can_panel)
-        frame->can_panel->sender->UpdateGridForTxFrame(frame_id, byte_array);
+    m_FrameData[frame_id] = byte_array;
+    m_Handler.AssignNewBufferToTxEntry(frame_id, byte_array.data(), byte_array.size());
+    m_Result.OnTxFrameUpdated(frame_id, byte_array);
 }
 
 CanScriptReturn CanScriptHandler::SetFrameField(OperandParams& params)
@@ -179,15 +173,12 @@ CanScriptReturn CanScriptHandler::SetFrameField(OperandParams& params)
 
     ApplyEditingOnFrameId(frame_id, field_name, frame_value);
 
-    uint64_t data_to_send  = m_FrameIDValues[frame_id];
     uint8_t  size_in_bytes = 8;
     auto& meta = m_Handler.GetFrameMetadata();
     if(auto it = meta.find(frame_id); it != meta.end())
-        size_in_bytes = it->second.size;
+        size_in_bytes = std::min<uint8_t>(it->second.size, 8);
 
-    std::array<uint8_t, 8> array_to_send;
-    memcpy(array_to_send.data(), reinterpret_cast<const uint8_t*>(&data_to_send), array_to_send.size());
-    std::ranges::reverse(array_to_send);
+    const auto& array_to_send = m_FrameData[frame_id];
 
     std::string hex;
     utils::ConvertHexBufferToString(reinterpret_cast<const char*>(array_to_send.data()), size_in_bytes, hex);
@@ -243,19 +234,19 @@ CanScriptReturn CanScriptHandler::SendFrame(OperandParams& params)
     uint8_t size_in_bytes = 8;
     auto& meta = m_Handler.GetFrameMetadata();
     if(auto it = meta.find(frame_id); it != meta.end())
-        size_in_bytes = it->second.size;
+        size_in_bytes = std::min<uint8_t>(it->second.size, 8);
 
     std::string hex;
-    if(m_FrameIDValues.contains(frame_id))
+    if(m_FrameData.contains(frame_id))
     {
-        uint64_t data_to_send = m_FrameIDValues[frame_id];
-        CanSerialPort::Get()->AddToTxQueue(frame_id, size_in_bytes, reinterpret_cast<uint8_t*>(&data_to_send));
-        utils::ConvertHexBufferToString(reinterpret_cast<const char*>(&data_to_send), size_in_bytes, hex);
+        const auto& data_to_send = m_FrameData[frame_id];
+        m_Handler.SendDataFrame(frame_id, std::span<const uint8_t>{data_to_send}.first(size_in_bytes));
+        utils::ConvertHexBufferToString(reinterpret_cast<const char*>(data_to_send.data()), size_in_bytes, hex);
     }
     else if(raw_frame_blocks.contains(frame_id))
     {
         const auto& to_send = raw_frame_blocks[frame_id];
-        CanSerialPort::Get()->AddToTxQueue(frame_id, static_cast<uint8_t>(to_send.size()), to_send.data());
+        m_Handler.SendDataFrame(frame_id, to_send);
         utils::ConvertHexBufferToString(reinterpret_cast<const char*>(to_send.data()), to_send.size(), hex);
     }
     else

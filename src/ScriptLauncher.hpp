@@ -1,18 +1,23 @@
-#include "utils/CSingleton.hpp"
+#pragma once
 
-#include "Settings.hpp"
+#include "automation/ScriptLaunchService.hpp"
 
-class ScriptLauncher : public CSingleton < ScriptLauncher >
+class ScriptLauncher
 {
-    friend class CSingleton < ScriptLauncher >;
-
 public:
-    ScriptLauncher() = default;
+    ScriptLauncher(ICommandRunner& command_runner, const IFileSystem& file_system,
+                   const IScriptCommandResolver& command_resolver)
+        : m_Service(command_runner, file_system, command_resolver)
+    {
+    }
     ~ScriptLauncher() = default;
 
     void Execute();
-    void LaunchScript(const std::filesystem::path& script_path);
+    [[nodiscard]] ScriptLaunchResult LaunchScript(const std::filesystem::path& script_path);
 
     // !\brief Key to launch (.py, .js) scripts from file explorer
     std::string launcher_key = "G2";
+
+private:
+    ScriptLaunchService m_Service;
 };

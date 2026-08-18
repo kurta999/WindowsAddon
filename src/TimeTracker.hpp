@@ -1,13 +1,15 @@
 #pragma once
 
-#include "utils/CSingleton.hpp"
-#include <atomic>
+#include <cstdint>
+#include <functional>
+#include <map>
 #include <memory>
 #include <string>
-#include <map>
+#include <vector>
 #include <boost/date_time/posix_time/ptime.hpp>
 
-#include "IDatabase.hpp"
+#include "interface/ITimeTrackerStorage.hpp"
+#include "TimeTrackerLogic.hpp"
 
 class TimeEntry
 {
@@ -66,7 +68,7 @@ class MonthlyTimeEntry
 public:
     MonthlyTimeEntry() = default;
 
-    int total_worktime { 0 };  /* Seconds */
+    std::int64_t total_worktime { 0 };  /* Seconds */
 
     std::vector<std::unique_ptr<TimeEntry>> entries;
     std::map<int, std::vector<std::unique_ptr<TimeEntrySerialized>>> serialized_entries;  /* [day] = TimeEntrySerialized */
@@ -75,8 +77,10 @@ public:
 class TimeTracker
 {
 public:
-    TimeTracker();
-    ~TimeTracker();
+    using ErrorHandler = std::function<void(const std::string&)>;
+
+    explicit TimeTracker(std::unique_ptr<ITimeTrackerStorage> storage, ErrorHandler error_handler = {});
+    ~TimeTracker() = default;
 
     // !\brief Initialize the time tracker and load current month entries
     void Init();
@@ -87,9 +91,12 @@ public:
     void UpdateEntries();
 
     TimeEntry* AddEntry(boost::posix_time::ptime start, boost::posix_time::ptime end, const std::string& comment = "", int sqlid = 0);
-    void EditEntry(TimeEntry* entry, boost::posix_time::ptime start, boost::posix_time::ptime end, const std::string& comment = "");
-    void SaveEntry(TimeEntry* entry);
-    void RemoveEntry(TimeEntry* entry);
+    [[nodiscard]] TimeEntry* FindEntry(int sql_id);
+    [[nodiscard]] const TimeEntry* FindEntry(int sql_id) const;
+    [[nodiscard]] bool EditEntry(int sql_id, boost::posix_time::ptime start, boost::posix_time::ptime end, const std::string& comment = "");
+    [[nodiscard]] bool SaveEntry(int sql_id);
+    [[nodiscard]] bool RemoveEntry(int sql_id);
+    [[nodiscard]] const std::string& LastError() const { return m_last_error; }
 
     std::map<int, std::unique_ptr<MonthlyTimeEntry>>& GetEntries() { return m_Entries; }
 
@@ -116,24 +123,21 @@ private:
     int m_Year = 0;
     int m_Month = 0;
 
-    void Query_OneMonth(std::unique_ptr<Result>& result, int year, int month);
     void SerializeEntriesForOneMonth(int year, int month);
+    bool MoveEntryToMonth(int sql_id, int new_map_key);
+    void ReportError(std::string message);
 
     std::map<int, std::unique_ptr<MonthlyTimeEntry>> m_Entries;  /* [YYYYMM] = MonthlyTimeEntry */
     std::map<int, std::unique_ptr<TimeGroupEntry>> m_Groups;     /* [id]    = TimeGroupEntry */
     boost::gregorian::date today;
 
-    // !\brief Pointer to database
-    std::unique_ptr<IDatabase> m_db{ nullptr };
-
-    // !\brief Future for executing async database read for graph generation
-    std::future<void> m_graph_future;
+    std::unique_ptr<ITimeTrackerStorage> m_storage;
+    ErrorHandler m_error_handler;
+    std::string m_last_error;
 
     int hourly_rate = 10;
 
     std::string toggle_key = "G14";
 
     int m_LastId = 0;
-
-    std::atomic<bool> m_destructing{ false };
 };

@@ -12,9 +12,17 @@
 
 #include "Session.hpp"
 #include <thread>
+#include <atomic>
+#include <vector>
 
 typedef std::shared_ptr<boost::asio::ip::tcp::acceptor> SharedAcceptor;
 typedef std::shared_ptr<Session> SharedSession;
+
+struct ForwardEndpoint
+{
+    std::string address;
+    uint32_t port = 0;
+};
 
 class Server : public CSingleton < Server >
 {
@@ -47,31 +55,24 @@ public:
     // !\brief Get Forward TCP Server 2 IP & Port
     const std::string GetForwardIpAddress2();
 
-    // !\brief Is TCP backend server for sensors enabled?
-    bool is_enabled = true;
+    void SetEnabled(bool enabled) noexcept { m_isEnabled = enabled; }
+    [[nodiscard]] bool IsEnabled() const noexcept { return m_isEnabled; }
+    [[nodiscard]] bool IsOk() const noexcept { return m_isOk; }
 
-    // !\brief Is server setup correctly and run without errors?
-    bool is_ok = false;
+    void SetPort(uint16_t port) noexcept { m_tcpPort = port; }
+    [[nodiscard]] uint16_t GetPort() const noexcept { return m_tcpPort; }
 
-    // !\brief TCP Server port
-    uint16_t tcp_port = 2005;
-
-    std::string forward_ip_address = "null";
-
-    uint32_t forward_port = 0;    
-    
-    std::string forward_ip_address2 = "null";
-
-    uint32_t forward_port2 = 0;
-
-    // !\brief IP addresses used by connected sensor(s)
-    std::set<uint32_t> used_ip_addresses;
+    [[nodiscard]] std::vector<ForwardEndpoint> GetForwardTargets() const;
+    [[nodiscard]] std::vector<uint32_t> GetConnectedSensorAddresses() const;
 
 private:
     
     // !\brief Create TCP acceptor
     // !\param port [in] TCP Server port
     bool CreateAcceptor(unsigned short port);
+
+    void SetForwardEndpoint(const std::string& value, ForwardEndpoint& endpoint);
+    [[nodiscard]] std::string FormatForwardEndpoint(const ForwardEndpoint& endpoint) const;
 
     // !\brief Stop async operations
     void StopAsync();
@@ -87,6 +88,8 @@ private:
     // !\brief Set of active sessions
     std::set<SharedSession> sessions;
 
+    std::set<uint32_t> m_usedIpAddresses;
+
     // !\brief Worker thread
     std::unique_ptr<std::jthread> m_worker = nullptr;
 
@@ -94,7 +97,14 @@ private:
     SharedAcceptor acceptor;
 
     // !\brief Mutex for IO operations
-    std::mutex m_IoMutex;
+    mutable std::mutex m_IoMutex;
+
+    mutable std::mutex m_StateMutex;
+    std::atomic<bool> m_isEnabled{true};
+    std::atomic<bool> m_isOk{false};
+    std::atomic<uint16_t> m_tcpPort{2005};
+    ForwardEndpoint m_forwardEndpoint;
+    ForwardEndpoint m_forwardEndpoint2;
 
     // !\brief IO Service
     boost::asio::io_context io_service;

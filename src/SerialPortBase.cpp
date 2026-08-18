@@ -88,26 +88,99 @@ uint16_t SerialPortBase::GetTcpPort() const
     return m_TcpPort;
 }
 
+SerialPortConnectionState SerialPortBase::GetTransportConnectionStateLocked() const
+{
+    if(!m_serial)
+        return SerialPortConnectionState::Disconnected;
+    if(m_serial->isOpen())
+        return SerialPortConnectionState::Connected;
+    if(m_serial->errorStatus())
+        return SerialPortConnectionState::Error;
+    return SerialPortConnectionState::Disconnected;
+}
+
+void SerialPortBase::PublishTransportConnectionStateLocked()
+{
+    m_connectionStatus.Store(GetTransportConnectionStateLocked());
+}
+
+SerialPortConnectionState SerialPortBase::GetConnectionState() const
+{
+    return ProbeSerialPortConnectionStatusNonBlocking(m_serialMutex, m_connectionStatus,
+        [this]() { return GetTransportConnectionStateLocked(); });
+}
+
 bool SerialPortBase::IsOpen()
 {
-    return m_serial->isOpen();
+    return GetConnectionState() == SerialPortConnectionState::Connected;
 }
 
 void SerialPortBase::Open()
 {
-    if (!is_tcp)
+    std::scoped_lock lock(m_serialMutex);
+    if(!m_serialConstructed)
     {
-        m_serial->open("\\\\.\\COM" + std::to_string(com_port), m_Baudrate);
+        PublishTransportConnectionStateLocked();
+        DBG("[SERIAL] Open skipped name=%s constructed=0 tcp=%d\n", m_SerialName.c_str(), is_tcp ? 1 : 0);
+        return;  /* Temporary quick solution to avoid multiple thread related problems */
     }
-    else
+
+    m_connectionStatus.Store(SerialPortConnectionState::Connecting);
+    try
     {
-        m_serial->open(m_TcpIp, m_TcpPort);
+        DBG("[SERIAL] Open begin name=%s tcp=%d ip=%s port=%u com=%u\n", m_SerialName.c_str(), is_tcp ? 1 : 0,
+            m_TcpIp.c_str(), static_cast<unsigned>(m_TcpPort), static_cast<unsigned>(com_port));
+        if (!is_tcp)
+        {
+#ifdef _WIN32
+            m_serial->open("\\\\.\\COM" + std::to_string(com_port), m_Baudrate);
+#else
+            m_serial->open("/dev/ttyUSB" + std::to_string(com_port), m_Baudrate);
+#endif
+        }
+        else
+        {
+            m_serial->open(m_TcpIp, m_TcpPort);
+        }
+        PublishTransportConnectionStateLocked();
+        DBG("[SERIAL] Open end name=%s isOpen=%d err=%d\n", m_SerialName.c_str(), m_serial && m_serial->isOpen() ? 1 : 0,
+            m_serial && m_serial->errorStatus() ? 1 : 0);
+    }
+    catch(const std::exception& e)
+    {
+        m_is_ok = false;
+        m_connectionStatus.Store(SerialPortConnectionState::Error);
+        DBG("[SERIAL] Open exception name=%s what=%s\n", m_SerialName.c_str(), e.what());
+        LOG(LogLevel::Error, "Failed to open {}: {}", m_SerialName, e.what());
+    }
+    catch(...)
+    {
+        m_is_ok = false;
+        m_connectionStatus.Store(SerialPortConnectionState::Error);
+        DBG("[SERIAL] Open unknown exception name=%s\n", m_SerialName.c_str());
+        LOG(LogLevel::Error, "Failed to open {}: unknown transport error", m_SerialName);
     }
 }
 
 void SerialPortBase::Close()
 {
-    m_serial->close();
+    try
+    {
+        std::scoped_lock lock(m_serialMutex);
+        DBG("[SERIAL] Close begin name=%s hasSerial=%d open=%d\n", m_SerialName.c_str(), m_serial ? 1 : 0,
+            m_serial && m_serial->isOpen() ? 1 : 0);
+        if(m_serial)
+            m_serial->close();
+        PublishTransportConnectionStateLocked();
+        DBG("[SERIAL] Close end name=%s hasSerial=%d open=%d\n", m_SerialName.c_str(), m_serial ? 1 : 0,
+            m_serial && m_serial->isOpen() ? 1 : 0);
+    }
+    catch(const std::exception& e)
+    {
+        m_connectionStatus.Store(SerialPortConnectionState::Error);
+        DBG("[SERIAL] Close exception name=%s what=%s\n", m_SerialName.c_str(), e.what());
+		LOG(LogLevel::Error, "Exception {} serial close {}", m_SerialName, e.what());
+	}
 }
 
 void SerialPortBase::SetComPort(uint16_t port)
@@ -137,7 +210,7 @@ bool SerialPortBase::IsOk() const
 
 bool SerialPortBase::IsErrorPresent() const
 {
-    return m_serial->errorStatus();
+    return GetConnectionState() == SerialPortConnectionState::Error;
 }
 
 void SerialPortBase::NotifiyMainThread()
@@ -150,14 +223,20 @@ void SerialPortBase::DestroyWorkerThread()
 {
     if(m_worker)
     {
-        NotifiyMainThread();
-        m_worker.reset(nullptr);
+        DBG("[SERIAL] DestroyWorkerThread requesting stop name=%s\n", m_SerialName.c_str());
+        m_worker->request_stop();
+        m_cv.notify_all();
+        m_worker->join();
+        m_worker.reset();
+        is_notification_pending = false;
+        DBG("[SERIAL] DestroyWorkerThread joined name=%s\n", m_SerialName.c_str());
     }
 }
 
 bool SerialPortBase::IsInstanceInited()
 {
-    return m_serial != nullptr && m_serial;
+    std::scoped_lock lock(m_serialMutex);
+    return m_serial != nullptr && m_serialConstructed != 0;
 }
 
 void SerialPortBase::WorkerThread(std::stop_token token)
@@ -167,35 +246,56 @@ void SerialPortBase::WorkerThread(std::stop_token token)
         std::string err_msg;
         try
         {
-            if (!is_tcp)
             {
+                std::scoped_lock serial_lock(m_serialMutex);
+                m_serialConstructed = 0;
+                if (!is_tcp)
+                {
 #ifdef _WIN32
-                m_serial = std::make_unique<CallbackAsyncSerial>("\\\\.\\COM" + std::to_string(com_port), m_Baudrate);
+                    m_serial = std::make_unique<CallbackAsyncSerial>("\\\\.\\COM" + std::to_string(com_port), m_Baudrate);
 #else
-                m_serial = std::make_unique<CallbackAsyncSerial>("/dev/ttyUSB" + std::to_string(com_port), m_Baudrate);
+                    m_serial = std::make_unique<CallbackAsyncSerial>("/dev/ttyUSB" + std::to_string(com_port), m_Baudrate);
 #endif
+                }
+                else
+                {
+                    m_serial = std::make_unique<CallbackAsyncSerial>(m_TcpIp, m_TcpPort);
+                }
+                m_serial->setCallback(m_RecvFunction);
+                m_serialConstructed = 1;
+                PublishTransportConnectionStateLocked();
             }
-            else
-            {
-                m_serial = std::make_unique<CallbackAsyncSerial>(m_TcpIp, m_TcpPort);
-            }
-            m_serial->setCallback(m_RecvFunction);
 
             while(!token.stop_requested())
             {
-                if(m_serial->errorStatus() && m_serial->isOpen() == false)
                 {
-                    LOG(LogLevel::Error, "Serial port \"{}\" unexpectedly closed", m_SerialName);
-                    m_is_ok = false;
-
-                    if(m_IsAutoOpen)
+                    std::scoped_lock serial_lock(m_serialMutex);
+                    PublishTransportConnectionStateLocked();
+                    if(m_serial && m_serial->errorStatus() && m_serial->isOpen() == false)
+                    {
+                        LOG(LogLevel::Error, "Serial port \"{}\" unexpectedly closed", m_SerialName);
+                        m_is_ok = false;
+                        /*
+                        if(m_IsAutoOpen)
+                            break;
+                            */
                         break;
+                    }
+                }
+
+                {
+                    std::scoped_lock serial_lock(m_serialMutex);
+                    if(!m_serial)
+                    {
+                        m_is_ok = false;
+                        break;
+                    }
                 }
 
                 m_is_ok = true;
                 {
                     std::unique_lock lock(m_mutex);
-                    auto now = std::chrono::system_clock::now();
+                    auto now = std::chrono::steady_clock::now();
                     bool ret = m_cv.wait_until(lock, token, now + m_MainTimeout, [this]() { return is_notification_pending != 0; });
                     /*
                     if(!ret)
@@ -205,15 +305,28 @@ void SerialPortBase::WorkerThread(std::stop_token token)
                     */
                 }
 
-                if(m_SendFunction)
-                    m_SendFunction(*m_serial);
-                is_notification_pending = false;
+                if(token.stop_requested())
+                    break;
+
+                const bool should_send = is_notification_pending.exchange(false);
+                if(should_send && m_SendFunction)
+                {
+                    std::scoped_lock serial_lock(m_serialMutex);
+                    DBG("[SERIAL] Worker send callback name=%s hasSerial=%d open=%d err=%d notified=%d\n", m_SerialName.c_str(),
+                        m_serial ? 1 : 0, m_serial && m_serial->isOpen() ? 1 : 0, m_serial && m_serial->errorStatus() ? 1 : 0,
+                        should_send ? 1 : 0);
+                    if(m_serial)
+                        m_SendFunction(*m_serial);
+                    PublishTransportConnectionStateLocked();
+                }
             }
             try
             {
                 m_is_ok = false;
-                if(m_IsAutoOpen)
+                std::scoped_lock serial_lock(m_serialMutex);
+                if(m_IsAutoOpen && m_serial)
                     m_serial->close();
+                PublishTransportConnectionStateLocked();
             }
             catch(const std::exception& e)
             {
@@ -224,6 +337,7 @@ void SerialPortBase::WorkerThread(std::stop_token token)
         {
             LOG(LogLevel::Error, "Exception {} serial {}", m_SerialName, e.what());
             m_is_ok = false;
+            m_connectionStatus.Store(SerialPortConnectionState::Error);
 
             std::unique_lock lock(m_mutex);
             m_cv.wait_for(lock, token, m_ExceptionTimeout, []() { return 1 == 0; });

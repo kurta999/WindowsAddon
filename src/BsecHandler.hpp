@@ -2,6 +2,7 @@
 
 #include "utils/CSingleton.hpp"
 #include <inttypes.h>
+#include <atomic>
 
 #ifdef USE_BSEC
 #include "bsec/bsec_datatypes.h"
@@ -21,8 +22,8 @@ public:
     void AddMeasurementsAndCalculate(int64_t time_stamp, float temp, float pressure, float hum, float gas);
     void SaveCache();
 
-    float GetIaq() const { return iaq; }
-    float GetGasPercentage() const { return gas_percentage; }
+    float GetIaq() const { return iaq.load(); }
+    float GetGasPercentage() const { return gas_percentage.load(); }
 
 private:
     int UpdateSubscription(float sample_rate);
@@ -33,7 +34,7 @@ private:
 
     int64_t timestamp = 0;
     int64_t last_timestamp = 0;
-    float iaq = 0.0f;
+    std::atomic<float> iaq{0.0f};
     uint8_t iaq_accuracy = 0;
     float temp = 0.0f;
     float raw_temp = 0.0f;
@@ -49,7 +50,7 @@ private:
     uint8_t breath_voc_accuracy = 0;
     float comp_gas_value = 0.0f;
     uint8_t comp_gas_accuracy = 0;
-    float gas_percentage = 0.0f;
+    std::atomic<float> gas_percentage{0.0f};
     uint8_t gas_percentage_acccuracy = 0;
 };
 

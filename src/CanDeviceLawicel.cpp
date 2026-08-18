@@ -17,89 +17,15 @@ CanDeviceLawicel::~CanDeviceLawicel()
 
 }
 
-void CanDeviceLawicel::ProcessReceivedFrames(std::mutex& rx_mutex)
+void CanDeviceLawicel::ProcessReceivedFrames(std::mutex& rx_mutex, const CanFrameReceiver& receiver)
 {
-    while(m_CircBuff.size() > 0)
+    std::unique_lock lock(rx_mutex);
+    std::string received(m_CircBuff.begin(), m_CircBuff.end());
+    m_CircBuff.clear();
+    lock.unlock();
+    for(auto& frame : m_Decoder.Feed(received))
     {
-        uint8_t data_type = 0;
-        boost::circular_buffer<char>::iterator it_start = m_CircBuff.end();
-        boost::circular_buffer<char>::iterator it_end = m_CircBuff.end();
-        for(boost::circular_buffer<char>::iterator i = m_CircBuff.begin(); i != m_CircBuff.end(); ++i)
-        {
-            char start_char = *i;
-            if(start_char == MESSAGE_TRANSMIT_STANDARD_FRAME && it_start == m_CircBuff.end())
-            {
-                it_start = i;
-                data_type = MESSAGE_TRANSMIT_STANDARD_FRAME;
-            }            
-            else if(start_char == MESSAGE_TRANSMIT_EXTENDED_FRAME && it_start == m_CircBuff.end())
-            {
-                it_start = i;
-                data_type = MESSAGE_TRANSMIT_EXTENDED_FRAME;
-            } 
-            else if(start_char == MESSAGE_TRANSMIT_VERSION_INFO && it_start == m_CircBuff.end())
-            {
-                it_start = i;
-                data_type = MESSAGE_TRANSMIT_VERSION_INFO;
-            }
-
-            if(start_char == '\r' && it_start != m_CircBuff.end())
-            {
-                it_end = ++i;
-                break;
-            }
-        }
-
-        if(it_start != m_CircBuff.end() && it_end != m_CircBuff.end())
-        {
-            char data[CAN_SERIAL_RESPONSE_BUFFER_SIZE];
-            size_t data_len = it_end - it_start;
-            if(data_len >= sizeof(data))
-            {
-                LOG(LogLevel::Warning, "Invalid CAN data received, {} is more than {}! Erasing circular buffer", data_len, sizeof(data));
-                m_CircBuff.erase(m_CircBuff.begin(), it_end);
-                return;
-            }
-
-            std::copy(it_start, it_end, data);
-            m_CircBuff.erase(m_CircBuff.begin(), it_end);
-
-            data[data_len] = 0;
-            if(data_type == MESSAGE_TRANSMIT_VERSION_INFO)
-            {
-                LOG(LogLevel::Notification, "LAWICEL CANUSB version: {}", data);
-                return;
-            }
-
-            char frame_id_str[9] = {};
-            char frame_length = 0;
-            uint8_t ret = 0;
-            char response[64] = {};
-            uint8_t newline = 0;
-
-            if(data_type == MESSAGE_TRANSMIT_STANDARD_FRAME)  // (00:58 : 20.531) t3F4 7 80 83 00 00 00 00 00 66 90
-                ret = sscanf(data, "%*c%03s%c%63[^\r]%c", frame_id_str, &frame_length, response, &newline);
-            else
-                ret = sscanf(data, "%*c%08s%c%63[^\r]%c", frame_id_str, &frame_length, response, &newline);
-            if(ret == 4 && newline == '\r')
-            {
-                frame_length = frame_length - '0';
-
-                std::string out;
-                boost::algorithm::unhex(response, response + (frame_length * 2), std::back_inserter(out));
-                uint32_t frame_id = std::stoi(frame_id_str, nullptr, 16);
-                CanSerialPort::Get()->AddToRxQueue(frame_id, frame_length, const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(out.c_str())));
-            }
-            else
-            {
-                m_CircBuff.erase(m_CircBuff.begin(), m_CircBuff.end());
-                LOG(LogLevel::Warning, "Invalid CAN data received! Erasing circular buffer");
-            }
-        }
-        else  /* If no valid data was received, wait for the next iteration */
-        {
-            break;
-        }
+        receiver(frame.id, static_cast<uint8_t>(frame.data.size()), frame.data.data());
     }
 }
 
@@ -143,12 +69,13 @@ size_t CanDeviceLawicel::PrepareSendDataFormat(const std::shared_ptr<CanData>& d
         case 4:  /* Send data to CAN bus */
         {
             remove_from_queue = true;
-            std::string out_hex;
-            boost::algorithm::hex(data_ptr->data, data_ptr->data + data_ptr->data_len, std::back_inserter(out_hex));
-
-            std::string out_str = std::format("{}{:X}{}{}\r", data_ptr->frame_id < 0x7FF ? 't' : 'T', data_ptr->frame_id, data_ptr->data_len, out_hex);
-            send_size = out_str.length();
-            memcpy(out, out_str.c_str(), out_str.length());
+            const can_codec::Frame frame{data_ptr->frame_id,
+                std::vector<uint8_t>(data_ptr->data, data_ptr->data + data_ptr->data_len)};
+            const auto encoded = can_codec::EncodeLawicel(frame);
+            if(!encoded || encoded->size() > max_size)
+                return 0;
+            send_size = encoded->size();
+            memcpy(out, encoded->data(), encoded->size());
             break;
         }
         default:

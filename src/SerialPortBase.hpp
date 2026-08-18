@@ -29,6 +29,7 @@ public:
     void SetTcpPort(uint16_t port) override;
     uint16_t GetTcpPort() const override;
 
+    SerialPortConnectionState GetConnectionState() const override;
     bool IsOpen() override;
     void Open() override;
     void Close() override;
@@ -58,6 +59,9 @@ protected:
 
     void WorkerThread(std::stop_token token);
 
+    SerialPortConnectionState GetTransportConnectionStateLocked() const;
+    void PublishTransportConnectionStateLocked();
+
     // !\brief Is serial port data receiving enabled?
     bool is_enabled = true;
 
@@ -84,9 +88,14 @@ protected:
     // !\brief Mutex for main thread
     std::mutex m_mutex;
 
+    mutable std::mutex m_serialMutex;
+    mutable SerialPortConnectionStatus m_connectionStatus;
+
     // !\brief Conditional variable for main thread exiting
     std::condition_variable_any m_cv;
 
     // !\brief Is serial status OK or ERROR?
     bool m_is_ok = false;
+
+    int m_serialConstructed = 0;
 };

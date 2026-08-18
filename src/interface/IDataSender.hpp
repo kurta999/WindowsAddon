@@ -1,6 +1,14 @@
 #pragma once
 
 #include <filesystem>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "IBasicGuiCustomization.hpp"
 
 class DataEntry;
 
@@ -47,23 +55,17 @@ public:
             response.insert(response.end(), response_data_, response_data_ + response_data_len);
     }
 
-    DataEntryBase(const DataEntryBase& from) :
-        data(from.data)
-    {
-
-    }
+    DataEntryBase(const DataEntryBase&) = default;
+    DataEntryBase& operator=(const DataEntryBase&) = default;
     std::vector<uint8_t> data{};
     std::vector<uint8_t> response{};
     std::chrono::steady_clock::time_point lastExecution;
 };
 
-class DataEntryGui : public BasicGuiTextCustomization
+class DataEntryPresentation : public TextStyle
 {
 public:
-    DataEntryGui() = default;
-
-    // !\brief Associated button
-    wxStaticText* m_Text = nullptr;
+    DataEntryPresentation() = default;
 
     std::string m_TextName;
 
@@ -72,15 +74,16 @@ public:
     std::string m_LastResponse;
 };
 
-class DataEntry : public DataEntryBase, public DataEntryGui
+class DataEntry : public DataEntryBase, public DataEntryPresentation
 {
 public:
     DataEntry() = default;
 
     DataEntry(uint8_t* data_, size_t data_len, uint8_t* response_data_, size_t response_data_len, DataEntryType type, DataEntrySendType send_type,
         size_t step, uint32_t period, uint32_t response_timeout, std::string& comment) :
-        DataEntryBase(data_, data_len, response_data_, response_data_len), m_sendType(send_type),
-        m_maxSendCount(step), m_type(type), m_period(period), m_responseTimeout(response_timeout), m_comment(comment)
+        DataEntryBase(data_, data_len, response_data_, response_data_len), m_comment(comment),
+        m_maxSendCount(step), m_period(period), m_responseTimeout(response_timeout),
+        m_type(type), m_sendType(send_type)
     {
 
     }
@@ -104,7 +107,7 @@ public:
     int m_addCrc{};
 
     // !\brief Type of data
-    DataEntryType m_type;
+    DataEntryType m_type{ DataEntryType::Hex };
 
     // !\brief Type of sending
     DataEntrySendType m_sendType{ DataEntrySendType::Auto };

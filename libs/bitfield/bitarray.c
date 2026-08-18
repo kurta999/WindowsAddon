@@ -7,7 +7,8 @@
     do {                                                          \
     if (bit_count >= (CHAR_BIT - destination_offset_modulo)) {              \
         *destination &= reverse_mask[destination_offset_modulo];              \
-        bit_count -= CHAR_BIT - destination_offset_modulo;                  \
+        bit_count = (uint16_t)(bit_count -                                 \
+            (uint16_t)(CHAR_BIT - destination_offset_modulo));             \
     } else {                                                      \
         *destination &= reverse_mask[destination_offset_modulo]               \
               | reverse_mask_xor[destination_offset_modulo + bit_count];\
@@ -109,7 +110,7 @@ bool copy_bits(const uint8_t* source_origin, const uint16_t source_length,
 }
 
 uint16_t bits_to_bytes(uint32_t bits) {
-    uint8_t byte_count = bits / CHAR_BIT;
+    uint16_t byte_count = (uint16_t)(bits / CHAR_BIT);
     if(bits % CHAR_BIT != 0) {
         ++byte_count;
     }
@@ -123,7 +124,7 @@ uint16_t bits_to_bytes(uint32_t bits) {
  */
 uint8_t find_end_bit(const uint16_t numBits) {
     int endBit = numBits % CHAR_BIT;
-    return endBit == 0 ? CHAR_BIT : endBit;
+    return (uint8_t)(endBit == 0 ? CHAR_BIT : endBit);
 }
 
 bool copy_bits_right_aligned(const uint8_t source[], const uint16_t source_length,

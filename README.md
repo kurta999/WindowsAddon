@@ -1,3 +1,7 @@
+[![CI](https://github.com/kurta999/WindowsAddon/actions/workflows/ci.yml/badge.svg)](https://github.com/kurta999/WindowsAddon/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/kurta999/WindowsAddon/actions/workflows/codeql.yml/badge.svg)](https://github.com/kurta999/WindowsAddon/actions/workflows/codeql.yml)
+[![codecov](https://codecov.io/gh/kurta999/WindowsAddon/branch/main/graph/badge.svg)](https://codecov.io/gh/kurta999/WindowsAddon)
+
 A personal open-source project aimed at improving daily computer usage, particularly for programming and testing workflows. It bundles utilities I built to reduce repetitive tasks and speed up daily work, and is shared freely in case others find it useful.
 
 Feel free to open a Pull Request if you want to use or reuse any part of the project, or if you have a question or suggestion. Bugs and anti-patterns may occur — this is a solo side project maintained alongside a full-time job, so not everything gets retested after every change. Functionality takes priority over perfection.
@@ -6,6 +10,11 @@ An unfinished Qt port of this application is available at https://github.com/kur
 
 If the project is useful to you and you are able, please consider a small donation via PayPal: nmsstulaj@gmail.com
 
+The codebase is split into headless protocol, persistence, automation, and
+platform libraries plus a wxWidgets GUI target. See
+[docs/architecture.md](docs/architecture.md) for module boundaries and the
+dependency-injection migration rules.
+
 # Quick overview
 ### 1. For Automotive development:
 1. **CAN-USB Transceiver** - Send and receive standard and ISO-TP CAN frames over CAN bus via USB — see details below
@@ -13,7 +22,7 @@ If the project is useful to you and you are able, please consider a small donati
 3. **UDS DID Reader & Writer** - Read and write UDS DIDs via GUI. DIDs must be defined in DidList.xml and can optionally be cached locally
 
 ### 2. For General development:
-1. **Modbus Master** - Simple Modbus master for polling Modbus slave devices with GUI support. Coils, Discrete Input, Holding and Input registers supported over Serial and TCP/IP. Supported register types: (u)int16_t, (u)int32_t, (u)int64_t, float, double. Includes logging and error handling.
+1. **Modbus Master** - Modbus RTU/TCP master for polling coils, discrete inputs, holding registers, and input registers. Supports XML layouts, sparse grouped reads, runtime register editing, byte-order selection, scaling, conditional colors, custom frames, and live graphs. Register types include (u)int16_t, (u)int32_t, (u)int64_t, float, and double.
 2. **Command Executor** - Bind commands to GUI buttons with parameter support, executed on button click — see details below
 3. **TerminalHotkey** - System-wide terminal hotkey, similar to Linux. Can be launched from Windows Explorer using the current path, or from the Desktop
 4. **File Explorer Opener** - Open a file explorer window by sending a specific TCP packet to this application
@@ -23,14 +32,13 @@ If the project is useful to you and you are able, please consider a small donati
 1. **CustomMacro** - Connect a second keyboard and bind macros to its keys, with full GUI support for macro editing and a macro recorder
 2. **Sensors** - TCP backend for sensors with an SQLite database for storing measurements and an HTTP server for viewing graphs. Graphs are accessible at http://localhost:2005/graphs by default. STM32 sensor source code: https://github.com/kurta999/AirQualitySensors
 3. **Backend for Corsair's G Keys** - Bind macros to Corsair G keys without installing iCUE
-4. **AntiLock** - Prevents Windows from locking due to inactivity by periodically pressing SCROLL LOCK and moving the mouse. Useful for workstations where idle timeout cannot be disabled
-5. **AntiNumLock** - Prevents NumLock from being disabled; re-enables it immediately if turned off
-6. **CPU Power Saver** - Reduces CPU frequency after a configured idle period to save power. Automatically restores full frequency when load exceeds a configured threshold
-7. **ScreenshotSaver** - Saves the current clipboard screenshot to a .png file
-8. **DirectoryBackup** - Backup folders to one or more destinations from the tray menu, with checksum and compression support
-9. **Filesystem browser** - Lists files and directories recursively, sorted by size from a given path — useful for identifying storage bloat
-10. **Alarm Handler** - Define alarms in Alarms.xml and trigger them with a key on the secondary keyboard. A popup dialog prompts for a delay, after which the configured alarm action is executed
-11. **CryptoPrice** - Displays live ETH & BTC buy/sell prices from Coinbase on the main panel. Disabled by default; enable by setting a non-zero CryptoPriceUpdate interval in settings.ini
+4. **AntiNumLock** - Prevents NumLock from being disabled; re-enables it immediately if turned off
+5. **CPU Power Saver** - Reduces CPU frequency after a configured idle period to save power. Automatically restores full frequency when load exceeds a configured threshold
+6. **ScreenshotSaver** - Saves the current clipboard screenshot to a .png file
+7. **DirectoryBackup** - Backup folders to one or more destinations from the tray menu, with checksum and compression support
+8. **Filesystem browser** - Lists files and directories recursively, sorted by size from a given path — useful for identifying storage bloat
+9. **Alarm Handler** - Define alarms in Alarms.xml and trigger them with a key on the secondary keyboard. A popup dialog prompts for a delay, after which the configured alarm action is executed
+10. **CryptoPrice** - Displays live ETH & BTC buy/sell prices from Coinbase on the main panel. Disabled by default; enable by setting a non-zero CryptoPriceUpdate interval in settings.ini
 
 # In-depth feature details
 ### 1. For Automotive development:
@@ -41,7 +49,7 @@ If the project is useful to you and you are able, please consider a small donati
 3. **UDS DID Reader & Writer** - Supported DID types: uint8_t, uint16_t, uint32_t, uint64_t, string, bytearray. Strings and byte arrays are padded when their length is less than the predefined length, and truncated if longer.
 
 ### 2. For General development:
-1. **Modbus Master** - Registers must be configured in Modbus.xml. They can be edited on the fly in the GUI, and the communication log can be viewed and exported to a .csv file.
+1. **Modbus Master** - Registers are configured in `Modbus.xml`, selected through `[ModbusMaster] DefaultModbusConfig` in `settings.ini`. Layout and style changes are persisted with a backup. The GUI supports typed and scaled values, byte-order changes, conditional colors, custom RTU/TCP commands, live value graphs, and CSV communication-log export.
 
 2. **Command Executor** - Commands are configured in Cmds.xml or directly in the "CMD Executor" panel. Each command is executed via Windows CreateProcess when its button is clicked. This is particularly useful for frequently used command-line calls — no more copy-pasting or remembering aliases. Each command supports up to 16 variable parameters, which can be edited before execution by middle-clicking the button. Button appearance (font, color, bold) and duplication are fully configurable via the GUI.
 
@@ -81,17 +89,15 @@ G4 = BIND_NAME[reddit CPP button] CMD_FG[chrome.exe,C++] CMD_IMG[test_image.png,
 
 3. **Backend for Corsair's G Keys** - iCUE's memory usage can sometimes grow to 500 MB, which is excessive for a background macro application. This feature provides an alternative: G key presses are received via a simple HID API and routed through the CustomMacro system, without iCUE installed. Supported devices: K95 RGB (18 G keys) and K95 RGB Platinum.
 
-4. **AntiLock** - Prevents Windows from locking due to inactivity by periodically pressing SCROLL LOCK and moving the mouse at a configured interval. Useful for workstations where idle timeout cannot be disabled or where activity is monitored.
+4. **AntiNumLock** - Prevents NumLock from being disabled; re-enables it immediately if turned off.
 
-5. **AntiNumLock** - Prevents NumLock from being disabled; re-enables it immediately if turned off.
+5. **CPU Power Saver** - Reduces CPU frequency after a configured idle period to save power. For example, reducing an overclocked i7-10700K to 800–1200 MHz during idle can save 10–15W per hour. Frequency is automatically restored when median CPU usage exceeds the configured threshold, and limiting resumes once load drops back below the minimum.
 
-6. **CPU Power Saver** - Reduces CPU frequency after a configured idle period to save power. For example, reducing an overclocked i7-10700K to 800–1200 MHz during idle can save 10–15W per hour. Frequency is automatically restored when median CPU usage exceeds the configured threshold, and limiting resumes once load drops back below the minimum.
+6. **ScreenshotSaver** - Press the configured screenshot key (F12 by default, on the secondary keyboard) to save the current clipboard image to the Screenshots folder as a .png file. The save path is configurable.
 
-7. **ScreenshotSaver** - Press the configured screenshot key (F12 by default, on the secondary keyboard) to save the current clipboard image to the Screenshots folder as a .png file. The save path is configurable.
+7. **DirectoryBackup** - Configure backup jobs in the settings page or in settings.ini. Configured backups appear in the tray menu — click one to start the backup. Supports an ignore list and SHA-256 checksums for integrity verification.
 
-8. **DirectoryBackup** - Configure backup jobs in the settings page or in settings.ini. Configured backups appear in the tray menu — click one to start the backup. Supports an ignore list and SHA-256 checksums for integrity verification.
-
-9. **CryptoPrice** - Fetches live ETH & BTC buy/sell prices from Coinbase and displays them on the main panel. Disabled by default; enable by setting a non-zero CryptoPriceUpdate interval in settings.ini.
+8. **CryptoPrice** - Fetches live ETH & BTC buy/sell prices from Coinbase and displays them on the main panel. Disabled by default; enable by setting a non-zero CryptoPriceUpdate interval in settings.ini.
 
 ## Libraries
 - [lodepng](https://lodev.org/lodepng/ "lodepng's Homepage")
@@ -106,11 +112,16 @@ G4 = BIND_NAME[reddit CPP button] CMD_FG[chrome.exe,C++] CMD_IMG[test_image.png,
 - [opencv](https://opencv.org/ "OpenCV's Homepage")
 
 Required external dependencies:
+
 - [Boost](https://www.boost.org/ "Boost's Homepage")
 - [wxWidgets](https://www.wxwidgets.org/ "wxWidgets' Homepage")
+- [fmt](https://fmt.dev/ "fmt's Homepage")
+- [SQLite](https://www.sqlite.org/ "SQLite's Homepage")
+- [LodePNG](https://lodev.org/lodepng/ "LodePNG's Homepage")
 - [HIDAPI](https://github.com/libusb/hidapi "HIDAPI's Homepage")
 
 Required external hardware:
+
 - Second keyboard & Sensors: [AirQualitySensors](https://github.com/kurta999/AirQualitySensors "AirQualitySensors + UsbHost")
 - Second keyboard only: [UsbHost](https://github.com/kurta999/UsbHost "UsbHost")
 - CAN: [STM32 CAN USB](https://github.com/kurta999/CanUsbTransceiver "STM32 CAN USB") OR [Lawicel CAN USB](https://www.canusb.com/products/canusb/ "Lawicel CAN USB")
@@ -119,23 +130,59 @@ Required external hardware:
 
 **Windows**
 
-1. Install Visual Studio 2022 and vcpkg, then install the required libraries:
-```
-vcpkg install boost wxwidgets opencv sqlite3 lodepng hidapi
+1. Install Visual Studio 2022 or newer with the C++ desktop workload, CMake, and vcpkg. The code requires C++23. Dependencies are declared in `vcpkg.json` and are installed automatically when the vcpkg toolchain is used.
+
+2. Configure, build, and test from the repository root. `VCPKG_ROOT` must point to the vcpkg installation:
+
+```powershell
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+cmake --build build --config Release --parallel
+ctest --test-dir build -C Release --output-on-failure
 ```
 
-> **Note:** If you are concerned about keylogging due to the HIDAPI dependency, you can remove the CorsairHID component and HIDAPI from the project and recompile.
+The executable is generated as `build/Release/WindowsAddon.exe` with a Visual Studio generator, or `build/WindowsAddon.exe` with a single-configuration generator such as Ninja.
 
-2. Open `CustomKeyboard.sln` and build the desired configuration.
+To build and run only the dependency-free core unit tests:
+
+```powershell
+cmake -S . -B build-tests -DWINDOWSADDON_BUILD_APP=OFF -DBUILD_TESTING=ON
+cmake --build build-tests --config Release --parallel
+ctest --test-dir build-tests -C Release --output-on-failure
+```
+
+Useful CMake options:
+
+- `-DWINDOWSADDON_BUILD_EXTERNAL_TESTS=OFF` excludes the SQLite/Boost-backed tests; this is the default when the application is disabled.
+- `-DWINDOWSADDON_WARNINGS_AS_ERRORS=ON` enables `/WX` with MSVC or `-Werror` with GCC/Clang for repository-owned targets.
+- `-DWINDOWSADDON_ENABLE_SANITIZERS=ON` enables ASan and UBSan for GCC/Clang core builds.
+- `-DWINDOWSADDON_ENABLE_COVERAGE=ON` enables GCC/Clang coverage instrumentation.
+- `-DWINDOWSADDON_USE_HIDAPI=OFF` builds without HID access.
+- `-DWINDOWSADDON_USE_OPENCV=ON` enables OpenCV support and requires the `opencv4` vcpkg port.
+- `-DWINDOWSADDON_USE_BSEC=ON` enables Bosch BSEC for 64-bit Windows. Supply the
+  proprietary binary separately with
+  `-DWINDOWSADDON_BSEC_LIBRARY="C:/path/to/BSECLibrary64.lib"`.
+- `-DWINDOWSADDON_BUILD_FUZZERS=ON` builds the Clang/libFuzzer network and
+  protocol parser targets and requires `-DWINDOWSADDON_ENABLE_SANITIZERS=ON`.
+- `-DBUILD_TESTING=OFF` skips the unit-test target.
+
+The Visual Studio solution remains available as `WindowsAddon.sln` for MSBuild-based development.
+Run `vcpkg integrate install` first; the project defaults to wxWidgets 3.3
+library names. Set the `WxLibraryVersion` MSBuild property to `32` when using a
+manual wxWidgets 3.2 installation.
+For its `Release_Bsec|x64` configuration, set the `BSEC_LIBRARY_DIR` environment
+or MSBuild property to the directory containing your separately obtained
+`BSECLibrary64.lib`.
+
+## Continuous integration
+
+GitHub Actions builds the dependency-free core on Windows with MSVC and on Ubuntu with both GCC and Clang. All three builds treat project warnings as errors. A separate Clang job runs ASan and UBSan, while the full Windows Release job restores a vcpkg binary cache, builds the desktop application, runs all tests, and publishes the executable as a workflow artifact.
+
+CodeQL performs a weekly and per-change C/C++ analysis of the full Windows application. The coverage job always publishes `coverage.xml` as a workflow artifact and makes a non-blocking OIDC upload to Codecov; connect the repository in Codecov to activate the coverage badge.
 
 Available build configurations:
+
 - x86: Debug, Release, Static Release, Release_BSec (with Bosch BSec library)
 - x64: Debug, Release, Static Release, Release_BSec (with Bosch BSec library)
-
-CMake support for Windows is available but not actively maintained — use the `.sln` file instead. Example CMake command:
-```
-cmake .. -DCMAKE_PREFIX_PATH="C:\GIT_Local\CustomKeyboard\fmt-8.1.1\build;C:\Program Files\boost\boost_1_83_0\stage\lib\cmake" -DwxWidgets_ROOT_DIR=C:\wxWidgets-3.2.2 -DBoost_INCLUDE_DIR="C:\Program Files\boost\boost_1_83_0" -DBoost_LIBRARY_DIR="C:\Program Files\boost\boost_1_83_0\stage\lib" -DFMT_LIB_DIR=C:\GIT_Local\CustomKeyboard\fmt-8.1.1 -G "Visual Studio 17 2022"
-```
 
 When debugging under Visual Studio (x64 Debug, Release, or Release_BSec), create symlinks to the config files:
 ```
@@ -149,27 +196,25 @@ mklink "settings.ini" ..\..\settings.ini
 
 **Linux**
 
-The project uses C++20 features — use a recent compiler (GCC 12+ or Clang 15+ recommended).
+The project uses C++23 features — use a recent compiler (GCC 13+ or Clang 17+ recommended).
 
-1. Install dependencies: Boost 1.83.0, wxWidgets 3.2.2, fmt 8.0.0, hidapi
+1. Install development packages for Boost, wxWidgets, fmt, SQLite, LodePNG, and HIDAPI.
 2. Run the following commands from the project root:
 
-To build without HIDAPI support, pass `-DUSE_HIDAPI=false` to CMake (or set it via CMake GUI).
+To build without HIDAPI support, pass `-DWINDOWSADDON_USE_HIDAPI=OFF` to CMake.
 
 With Make:
-```
-mkdir build
-cd build
-cmake ..
-make -j$(nproc)
+```bash
+cmake -S . -B build
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
 ```
 
 With Ninja:
-```
-mkdir build
-cd build
-cmake -GNinja ..
-ninja
+```bash
+cmake -S . -B build -G Ninja
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
 ```
 
 ## Advanced topics
@@ -188,7 +233,7 @@ A basic ECU can be simulated by modifying the source directly. For more flexible
 
         uint8_t byte_buffer[8] = { 0x04, 0x62 };  /* Data length: 4, 0x62 DID reading (code 22) was successful */
         memcpy(&byte_buffer[2], &data[2], 6);  /* Copy source DID from receive buffer */
-        CanSerialPort::Get()->AddToTxQueue(send_id, sizeof(byte_buffer), byte_buffer);
+        m_CanTransport.Send(send_id, byte_buffer);
     }
 ```
 

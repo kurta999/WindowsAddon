@@ -2,69 +2,13 @@
 
 #include "utils/CSingleton.hpp"
 #include "interface/ISensorObserver.hpp"
+#include "Measurement.hpp"
 
 #include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
-
-#pragma pack(push, 1)
-class Measurement
-{
-public:
-    Measurement() = default;
-
-    Measurement(float _temp, float _hum, int _co2, float _voc, int _co, int _pm25, int _pm10,
-                float _pressure, float _r, float _g, float _b, int _lux, int _cct, int _uv,
-                std::string&& time_) :
-        temp(_temp), hum(_hum), co2(_co2), voc(_voc), co(_co), pm25(_pm25), pm10(_pm10),
-        pressure(_pressure), r(_r), g(_g), b(_b), lux(_lux), cct(_cct), uv(_uv),
-        time(std::move(time_))
-    {}
-
-    ~Measurement() = default;
-
-    Measurement(const Measurement& rhs) { *this += rhs; }
-
-    Measurement& operator=(const Measurement& rhs)
-    {
-        temp = rhs.temp; hum = rhs.hum; pressure = rhs.pressure;
-        r = rhs.r; g = rhs.g; b = rhs.b;
-        co2 = rhs.co2; voc = rhs.voc; co = rhs.co;
-        pm25 = rhs.pm25; pm10 = rhs.pm10;
-        lux = rhs.lux; cct = rhs.cct; uv = rhs.uv;
-        time = rhs.time;
-        return *this;
-    }
-
-    Measurement& operator+=(const Measurement& rhs)
-    {
-        temp += rhs.temp; hum += rhs.hum; pressure += rhs.pressure;
-        r += rhs.r; g += rhs.g; b += rhs.b;
-        co2 += rhs.co2; voc += rhs.voc; co += rhs.co;
-        pm25 += rhs.pm25; pm10 += rhs.pm10;
-        lux += rhs.lux; cct += rhs.cct; uv += rhs.uv;
-        cnt++;
-        return *this;
-    }
-
-    void Finalize()
-    {
-        const auto n = static_cast<float>(cnt);
-        temp /= n; hum /= n; pressure /= n;
-        r /= n; g /= n; b /= n; voc /= n;
-        co2 /= cnt; co /= cnt; pm25 /= cnt; pm10 /= cnt;
-        lux /= cnt; cct /= cnt; uv /= cnt;
-        cnt = 1;
-    }
-
-    float   temp = 0.f, hum = 0.f, voc = 0.f, pressure = 0.f, r = 0.f, g = 0.f, b = 0.f;
-    int     co2 = 0, co = 0, pm25 = 0, pm10 = 0, lux = 0, cct = 0, uv = 0;
-    std::string time;
-    uint8_t cnt = 0;
-};
-#pragma pack(pop)
 
 class Sensors : public CSingleton<Sensors>
 {
@@ -100,10 +44,6 @@ public:
     uint16_t GetIntegrationTime()     const { return m_integrationTime; }
 
     void ResetMeasurements();
-
-    // Graph data filled by GraphGenerator (array order: avg[0], max[1], min[2]).
-    std::vector<std::unique_ptr<Measurement>> last_day[3];
-    std::vector<std::unique_ptr<Measurement>> last_week[3];
 
 private:
     enum FieldIndex
@@ -143,11 +83,15 @@ private:
 
     // --- state ---
     std::vector<ISensorObserver*>          m_observers;
+    std::mutex                             m_observerMutex;
     std::unique_ptr<Measurement>           m_currMeas;
     std::chrono::steady_clock::time_point  m_integrationStart;
     std::deque<std::unique_ptr<Measurement>> m_last_meas;
     std::string                            m_templateStr;
     std::mutex                             m_mtx;
+    // Graph aggregation order: average [0], maximum [1], minimum [2].
+    std::vector<std::unique_ptr<Measurement>> m_lastDay[3];
+    std::vector<std::unique_ptr<Measurement>> m_lastWeek[3];
     size_t                                 m_recvCount = 0;
 
     uint16_t m_graphGenerationInterval = 10;

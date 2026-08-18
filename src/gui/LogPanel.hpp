@@ -7,6 +7,7 @@ class LogPanel : public wxPanel, public ILogHelper
 {
 public:
 	LogPanel(wxFrame* parent);
+	~LogPanel() override;
 
 	wxListBox* m_Log = nullptr;
 

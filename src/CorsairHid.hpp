@@ -1,6 +1,7 @@
 #pragma once
 
 #include "utils/CSingleton.hpp"
+#include <atomic>
 #include <string>
 #include <thread>
 #include <memory>
@@ -106,7 +107,7 @@ private:
     CorsairDeviceType m_DeviceType{ CorsairDeviceType::NONE };
 
     // !\brief Is HID communication OK?
-    bool m_IsOk = true;
+    std::atomic_bool m_IsOk{ false };
 
     // !\brief Map with G-Key values and it's name
     const std::map<int, std::string> corsair_GKeys =

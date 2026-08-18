@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "windows-addon",
+  "version-string": "1.7",
+  "builtin-baseline": "89dd0f4d241136b843fb55813b2f0fa6448c204d",
+  "dependencies": [
+    "boost-algorithm",
+    "boost-asio",
+    "boost-circular-buffer",
+    "boost-crc",
+    "boost-date-time",
+    "boost-endian",
+    "boost-foreach",
+    "boost-lexical-cast",
+    "boost-multiprecision",
+    "boost-optional",
+    "boost-predef",
+    "boost-program-options",
+    "boost-property-tree",
+    "boost-range",
+    "boost-smart-ptr",
+    "boost-stacktrace",
+    "boost-system",
+    "boost-tokenizer",
+    "boost-utility",
+    "fmt",
+    "hidapi",
+    "lodepng",
+    "sqlite3",
+    "wxwidgets"
+  ]
+}

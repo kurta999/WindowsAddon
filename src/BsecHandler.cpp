@@ -280,7 +280,8 @@ void BsecHandler::ProcessData(bsec_input_t* bsec_inputs, uint8_t num_bsec_inputs
 
 		if(bsec_status != BSEC_OK)
 		{
-			LOG(LogLevel::Normal, "IAQ: {:.1f} - {}, CO2EQ: {:.1f}, Gas: {:.1f} - status: {}\n", iaq, iaq_accuracy, co2_equivalent, gas_percentage, (int)bsec_status);
+			LOG(LogLevel::Normal, "IAQ: {:.1f} - {}, CO2EQ: {:.1f}, Gas: {:.1f} - status: {}\n",
+				iaq.load(), iaq_accuracy, co2_equivalent, gas_percentage.load(), (int)bsec_status);
 		}
 	}
 #endif

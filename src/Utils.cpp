@@ -161,7 +161,6 @@ namespace utils
 		return crc;
 	}
 
-#ifndef UNIT_TESTS
 #ifdef _WIN32
 	static std::map<std::string, int> vkey_lookup  /* Only Fx keys for now */
 	{
@@ -475,8 +474,6 @@ namespace utils
 		return result;
 	}
 
-#endif
-
 	/*
 	template<typename _Rep, typename _Period>
 	void sleep_for(const std::chrono::duration<_Rep, _Period>& duration, const std::mutex& mutex, const std::condition_variable& cv, const std::stop_token& stop_token)
@@ -531,7 +528,7 @@ namespace utils
 		}
 	}
 
-	const std::unordered_map<std::string, int> color_code_str_mapping =
+	const std::unordered_map<std::string, uint32_t> color_code_str_mapping =
 	{
 		{"red",			0xFF0000},
 		{"green",       0x33FF33},
@@ -671,5 +668,67 @@ namespace utils
 
 		// Return hours and the decimal representation of minutes as an integer
 		return std::make_pair(hours, decimalMinutes);
+	}
+
+	const std::string GetCurrentWifiSSID()
+	{
+		HANDLE hClient = NULL;
+		DWORD dwMaxClient = 2;
+		DWORD dwCurVersion = 0;
+
+		DWORD result = WlanOpenHandle(dwMaxClient, NULL, &dwCurVersion, &hClient);
+		if (result != ERROR_SUCCESS)
+			return "";
+
+		PWLAN_INTERFACE_INFO_LIST pIfList = NULL;
+
+		result = WlanEnumInterfaces(hClient, NULL, &pIfList);
+		if (result != ERROR_SUCCESS || pIfList == NULL)
+		{
+			WlanCloseHandle(hClient, NULL);
+			return "";
+		}
+
+		std::string ssid = "";
+
+		for (DWORD i = 0; i < pIfList->dwNumberOfItems; i++)
+		{
+			PWLAN_INTERFACE_INFO pIfInfo = &pIfList->InterfaceInfo[i];
+
+			PWLAN_CONNECTION_ATTRIBUTES pConnectInfo = NULL;
+			DWORD dataSize = 0;
+
+			WLAN_OPCODE_VALUE_TYPE opCode = wlan_opcode_value_type_invalid;
+
+			result = WlanQueryInterface(
+				hClient,
+				&pIfInfo->InterfaceGuid,
+				wlan_intf_opcode_current_connection,
+				NULL,
+				&dataSize,
+				(PVOID*)&pConnectInfo,
+				&opCode
+			);
+
+			if (result == ERROR_SUCCESS && pConnectInfo != NULL)
+			{
+				if (pConnectInfo->isState == wlan_interface_state_connected)
+				{
+					DOT11_SSID dot11Ssid = pConnectInfo->wlanAssociationAttributes.dot11Ssid;
+
+					ssid.assign(reinterpret_cast<const char*>(dot11Ssid.ucSSID),
+						dot11Ssid.uSSIDLength);
+				}
+
+				WlanFreeMemory(pConnectInfo);
+			}
+		}
+
+		if (pIfList)
+			WlanFreeMemory(pIfList);
+
+		WlanCloseHandle(hClient, NULL);
+
+		return ssid;
 	}
 }

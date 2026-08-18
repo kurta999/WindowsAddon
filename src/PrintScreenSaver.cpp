@@ -92,8 +92,7 @@ void PrintScreenSaver::DoSave()
     {
         LOG(LogLevel::Error, "Failed to decode BMP from clipboard, error: {}", decode_error);
         MyFrame* frame = static_cast<MyFrame*>(wxGetApp().GetTopWindow());
-        std::lock_guard lock(frame->mtx);
-        frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::ScreenshotSaveFailed) });
+        frame->PostNotification(SimpleNotification{SimpleNotificationKind::ScreenshotSaveFailed});
         return;
     }
 
@@ -112,13 +111,10 @@ void PrintScreenSaver::DoSave()
         LOG(LogLevel::Error, "Failed to save image from the clipboard!");
 
     MyFrame* frame = static_cast<MyFrame*>(wxGetApp().GetTopWindow());
-    {
-        std::lock_guard lock(frame->mtx);
-        if(!error_code)
-            frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::ScreenshotSaved), dif, std::move(save_path) });
-        else
-            frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::ScreenshotSaveFailed) });
-    }
+    if(!error_code)
+        frame->PostNotification(FileSavedNotification{SavedFileKind::Screenshot, dif, std::move(save_path)});
+    else
+        frame->PostNotification(SimpleNotification{SimpleNotificationKind::ScreenshotSaveFailed});
 #endif
 }
 

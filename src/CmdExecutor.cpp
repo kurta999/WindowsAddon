@@ -1,30 +1,10 @@
 #include "pch.hpp"
 
-void Command::Execute()
+void Command::Execute(ICommandRunner& command_runner, const ICommandTextResolver& text_resolver)
 {
-    HandleHarcdodedCommand();
-    std::string cmd_to_execute = HandleParameters();
-
-#ifdef _WIN32
-    STARTUPINFOA si = { sizeof(STARTUPINFOA) };
-    si.dwFlags = STARTF_USESHOWWINDOW;  // Requires STARTF_USESHOWWINDOW in dwFlags.
-    si.wShowWindow = IsConsoleHidden() ? SW_HIDE : SW_SHOW;  // Prevents cmd window from flashing.
-
-    PROCESS_INFORMATION pi = { 0 };
-    std::string cmd_line = std::format("C:\\windows\\system32\\cmd.exe /c {}", cmd_to_execute);
-    BOOL fSuccess = CreateProcessA(nullptr, cmd_line.data(), nullptr, nullptr, TRUE, NORMAL_PRIORITY_CLASS, nullptr, nullptr, &si, &pi);
-    if(fSuccess)
-    {
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-    }
-    else
-    {
-        LOG(LogLevel::Error, "CreateProcess failed with error code: {}", GetLastError());
-    }
-#else
-    utils::exec(cmd_to_execute.c_str());
-#endif
+    std::string cmd_to_execute = text_resolver.Resolve(m_name, HandleParameters());
+    if(!command_runner.Start(cmd_to_execute, IsConsoleHidden()))
+        LOG(LogLevel::Error, "Failed to start command: {}", cmd_to_execute);
 }
 
 void CmdExecutor::ExecuteByName(const std::string& page_name, const std::string& cmd_name)
@@ -45,7 +25,7 @@ void CmdExecutor::ExecuteByName(const std::string& page_name, const std::string&
                         {
                             if(c->GetName() == cmd_name)
                             {
-                                c->Execute();
+                                c->Execute(m_CommandRunner, m_CommandTextResolver);
                             }
                         }
                         else if constexpr(std::is_same_v<T, Separator>)
@@ -58,18 +38,6 @@ void CmdExecutor::ExecuteByName(const std::string& page_name, const std::string&
 
             }
         }
-    }
-}
-
-void Command::HandleHarcdodedCommand()
-{
-    if(m_name == "Set date")
-    {
-#ifdef _WIN32
-        const auto now = std::chrono::current_zone()->to_local(std::chrono::system_clock::now());
-        const auto now_truncated_to_sec = std::chrono::floor<std::chrono::seconds>(now);
-        m_cmd = std::format("adb shell \"date -s {:%Y-%m-%d} && date -s {:%H:%M:%OS}\"", now_truncated_to_sec, now_truncated_to_sec);
-#endif
     }
 }
 
@@ -285,10 +253,10 @@ bool XmlCommandLoader::Load(const std::filesystem::path& path, CommandStorage& s
                             LOG(LogLevel::Warning, "Empty cmd for command: {}", *name);
                         }
 
-                        wxSize minimum_size = wxDefaultSize;
+                        LogicalSize minimum_size;
                         if(min_size.has_value())
                         {
-                            if(sscanf(min_size->c_str(), "%d,%d", &minimum_size.x, &minimum_size.y) != 2)
+                            if(sscanf(min_size->c_str(), "%d,%d", &minimum_size.width, &minimum_size.height) != 2)
                                 LOG(LogLevel::Error, "Invalid format for MinSize");
                         }
 
@@ -384,8 +352,8 @@ bool XmlCommandLoader::Save(const std::filesystem::path& path, CommandStorage& s
                                 cmd_node.add("UseSizer", true);
                             if(c->IsAddToPrevSizer())
                                 cmd_node.add("AddToPrevSizer", true);
-                            if(c->GetMinSize() != wxDefaultSize)
-                                cmd_node.add("MinSize", std::format("{},{}", c->GetMinSize().x, c->GetMinSize().y));
+                            if(!c->GetMinSize().IsDefault())
+                                cmd_node.add("MinSize", std::format("{},{}", c->GetMinSize().width, c->GetMinSize().height));
                         }
                         else if constexpr(std::is_same_v<T, Separator>)
                         {
@@ -424,8 +392,7 @@ void CmdExecutor::SetMediator(ICmdHelper* mediator)
 
 void CmdExecutor::AddCommand(uint8_t page, uint8_t col, Command cmd)
 {
-    std::shared_ptr<Command> cmd_ptr = std::make_shared<Command>(std::move(cmd));
-    if(AddItem(page, col, std::move(cmd_ptr)))
+    if(AddItem(page, col, std::make_shared<Command>(std::move(cmd))))
     {
         if(m_CmdMediator)
             m_CmdMediator->OnCommandLoaded(page, col, m_Commands[page - 1][col - 1].back());
@@ -439,16 +406,20 @@ void CmdExecutor::RotateCommand(uint8_t page, uint8_t col, Command& cmd, uint8_t
 
 void CmdExecutor::AddSeparator(uint8_t page, uint8_t col, Separator sep)
 {
-    m_Commands[page - 1][col - 1].push_back(sep); /* TODO: refactor it with AddItem */
-    if(m_CmdMediator)
+    if(AddItem(page, col, sep) && m_CmdMediator)
         m_CmdMediator->OnCommandLoaded(page, col, m_Commands[page - 1][col - 1].back());
 }
 
-bool CmdExecutor::AddItem(uint8_t page, uint8_t col, std::shared_ptr<Command>&& cmd)
+void CmdExecutor::Execute(Command& command)
 {
-    if(page <= m_Commands.size() && col <= m_Commands[page - 1].size())
+    command.Execute(m_CommandRunner, m_CommandTextResolver);
+}
+
+bool CmdExecutor::AddItem(uint8_t page, uint8_t col, CommandTypes item)
+{
+    if(page > 0 && page <= m_Commands.size() && col > 0 && col <= m_Commands[page - 1].size())
     {
-        m_Commands[page - 1][col - 1].push_back(std::move(cmd));
+        m_Commands[page - 1][col - 1].push_back(std::move(item));
         return true;
     }
     return false;

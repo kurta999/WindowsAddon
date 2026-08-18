@@ -77,7 +77,7 @@ public:
     void LoadMapping();
     void SaveMapping();
     void OnKeyDown(wxKeyEvent& evt);
-    void UpdateGridForTxFrame(uint32_t frame_id, uint8_t* buffer);
+    void UpdateGridForTxFrame(uint32_t frame_id, std::span<const uint8_t> buffer);
 
     CanGrid* can_grid_tx = nullptr;
     CanGridRx* can_grid_rx = nullptr;

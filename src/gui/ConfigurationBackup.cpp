@@ -27,9 +27,9 @@ void BackupPanel::OnItemContextMenu(wxTreeListEvent& evt)
 			const wxString& root_str = tree->GetItemText(item, 0);
 			const wxString& item_str = tree->GetItemText(item, 1);
 
-			std::unique_ptr<BackupEntry> p = std::make_unique<BackupEntry>(L"C:\\folder_non_exists", std::vector<std::filesystem::path>{L"C:\\backup"},
-				std::vector<std::wstring>({ L".gitignore", L".txt" }), 2, false, 0, 1);
-			DirectoryBackup::Get()->backups.push_back(std::move(p));
+			DirectoryBackup::Get()->AddEntry(BackupEntry(L"C:\\folder_non_exists",
+				std::vector<std::filesystem::path>{L"C:\\backup"},
+				std::vector<std::wstring>({ L".gitignore", L".txt" }), 2, false, 0, 1));
 
 			UpdateMainTree();
 			break;
@@ -41,7 +41,7 @@ void BackupPanel::OnItemContextMenu(wxTreeListEvent& evt)
 				itemdata = tree->GetItemData(item);
 			wxIntClientData<uint16_t>* dret = dynamic_cast<wxIntClientData<uint16_t>*>(itemdata);
 			uint16_t id = dret->GetValue();
-			DirectoryBackup::Get()->backups.erase(DirectoryBackup::Get()->backups.begin() + id);
+			DirectoryBackup::Get()->RemoveEntry(id);
 			UpdateMainTree();
 			break;
 		}
@@ -60,17 +60,21 @@ void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
 
 		wxIntClientData<uint16_t>* dret = dynamic_cast<wxIntClientData<uint16_t>*>(itemdata);
 		uint16_t id = dret->GetValue();
+		auto entry = DirectoryBackup::Get()->GetEntry(id);
+		if(!entry)
+			return;
 
 		if(type_str == "Source")
 		{
-			wxDirDialog d(this, "Chose source directory", DirectoryBackup::Get()->backups[id]->from.generic_string(), wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
+			wxDirDialog d(this, "Chose source directory", entry->from.generic_string(), wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
 			int ret_code = d.ShowModal();
 			if(ret_code == wxID_OK)  /* OK */
 			{
 				std::wstring str = d.GetPath().ToStdWstring();
 				if(std::filesystem::exists(str))
 				{
-					DirectoryBackup::Get()->backups[id]->from = str;
+					entry->from = str;
+					DirectoryBackup::Get()->UpdateEntry(id, std::move(*entry));
 					UpdateMainTree();
 				}
 				else
@@ -82,11 +86,11 @@ void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
 		else if(type_str == "Destination")
 		{
 			wxString str;
-			for(auto& i : DirectoryBackup::Get()->backups[id]->to)
+			for(auto& i : entry->to)
 			{
 				str += i.generic_string() + "\n";
 			}
-			if(str[str.length() - 1] == '\n')
+			if(!str.empty() && str[str.length() - 1] == '\n')
 				str.erase(str.length() - 1, str.length());
 			wxTextEntryDialog d(this, "Enter below destiantion list where backup(s) will be placed", "Enter destination(s)", str, wxOK | wxCANCEL | wxTE_MULTILINE);
 			int ret_code = d.ShowModal();
@@ -96,18 +100,19 @@ void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
 				std::vector<std::filesystem::path> new_destination_list;
 				boost::split(new_destination_list, result, boost::is_any_of("\n"));
 
-				DirectoryBackup::Get()->backups[id]->to = std::move(new_destination_list);
+				entry->to = std::move(new_destination_list);
+				DirectoryBackup::Get()->UpdateEntry(id, std::move(*entry));
 				UpdateMainTree();
 			}
 		}
 		else if(type_str == "Ignore")
 		{
 			wxString str;
-			for(auto& i : DirectoryBackup::Get()->backups[id]->ignore_list)
+			for(auto& i : entry->ignore_list)
 			{
 				str += i + L"\n";
 			}
-			if(str[str.length() - 1] == '\n')
+			if(!str.empty() && str[str.length() - 1] == '\n')
 				str.erase(str.length() - 1, str.length());
 			wxTextEntryDialog d(this, "Enter below desired folder names which you want to ignore", "Ignore list", str, wxOK | wxCANCEL | wxTE_MULTILINE);
 			int ret_code = d.ShowModal();
@@ -117,13 +122,14 @@ void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
 				std::vector<std::wstring> new_ignore_list;
 				boost::split(new_ignore_list, result, boost::is_any_of("\n"));
 
-				DirectoryBackup::Get()->backups[id]->ignore_list = std::move(new_ignore_list);
+				entry->ignore_list = std::move(new_ignore_list);
+				DirectoryBackup::Get()->UpdateEntry(id, std::move(*entry));
 				UpdateMainTree();
 			}
 		}
 		else if(type_str == "Max backups")
 		{
-			wxTextEntryDialog d(this, "Enter maximum number of backups", "Enter max backups", std::to_string(DirectoryBackup::Get()->backups[id]->max_backups), wxOK | wxCANCEL);
+			wxTextEntryDialog d(this, "Enter maximum number of backups", "Enter max backups", std::to_string(entry->max_backups), wxOK | wxCANCEL);
 			d.SetTextValidator(wxFILTER_DIGITS);
 			int ret_code = d.ShowModal();
 			if(ret_code == wxID_OK)  /* OK */
@@ -131,7 +137,8 @@ void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
 				try
 				{
 					int max_backups = utils::stoi<int>(d.GetValue().ToStdString());
-					DirectoryBackup::Get()->backups[id]->max_backups = max_backups;
+					entry->max_backups = max_backups;
+					DirectoryBackup::Get()->UpdateEntry(id, std::move(*entry));
 					UpdateMainTree();
 				}
 				catch(...)
@@ -143,31 +150,33 @@ void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
 		else if(type_str == "Compress")
 		{
 			wxTextEntryDialog d(this, "Enter 0 or 1 to toggle file compressing after backup\n7z has to be installed on the system, to make it work", 
-				"Toggle backup compressing", std::to_string(DirectoryBackup::Get()->backups[id]->m_Compress), wxOK | wxCANCEL);
+				"Toggle backup compressing", std::to_string(entry->m_Compress), wxOK | wxCANCEL);
 			d.SetTextValidator(wxFILTER_DIGITS);
 			int ret_code = d.ShowModal();
 			if(ret_code == wxID_OK)  /* OK */
 			{
-				DirectoryBackup::Get()->backups[id]->m_Compress = utils::stob(d.GetValue().ToStdString());
+				entry->m_Compress = utils::stob(d.GetValue().ToStdString());
+				DirectoryBackup::Get()->UpdateEntry(id, std::move(*entry));
 				UpdateMainTree();
 			}
 		}
 		else if(type_str == "Calculate hash")
 		{
 			wxTextEntryDialog d(this, "Enter 0 or 1 to toggle hash calculating\nEnabled hash calculation will result in more reliable backup, but takes longer", 
-				"Toggle hash calculating ", std::to_string(DirectoryBackup::Get()->backups[id]->calculate_hash), wxOK | wxCANCEL);
+				"Toggle hash calculating ", std::to_string(entry->calculate_hash), wxOK | wxCANCEL);
 			d.SetTextValidator(wxFILTER_DIGITS);
 			int ret_code = d.ShowModal();
 			if(ret_code == wxID_OK)  /* OK */
 			{
-				DirectoryBackup::Get()->backups[id]->calculate_hash = utils::stob(d.GetValue().ToStdString());
+				entry->calculate_hash = utils::stob(d.GetValue().ToStdString());
+				DirectoryBackup::Get()->UpdateEntry(id, std::move(*entry));
 				UpdateMainTree();
 			}
 		}
 		else if(type_str == "Hash buffer size")
 		{
 			wxTextEntryDialog d(this, "For folders with bigger files raise, for small files leave the default 1 MB.\nIncreasing buffer can result in improved backup performance", 
-				"Hash buffer size ", std::to_string(DirectoryBackup::Get()->backups[id]->hash_buf_size), wxOK | wxCANCEL);
+				"Hash buffer size ", std::to_string(entry->hash_buf_size), wxOK | wxCANCEL);
 			d.SetTextValidator(wxFILTER_DIGITS);
 			int ret_code = d.ShowModal();
 			if(ret_code == wxID_OK)  /* OK */
@@ -175,7 +184,8 @@ void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
 				try
 				{
 					size_t max_backups = utils::stoi<size_t>(d.GetValue().ToStdString());
-					DirectoryBackup::Get()->backups[id]->hash_buf_size = max_backups;
+					entry->hash_buf_size = max_backups;
+					DirectoryBackup::Get()->UpdateEntry(id, std::move(*entry));
 					UpdateMainTree();
 				}
 				catch(...)
@@ -194,31 +204,31 @@ void BackupPanel::UpdateMainTree()
 	wxTreeListItem root = tree->GetRootItem();
 	tree->DeleteAllItems();
 	uint16_t cnt = 0;
-	for(auto& i : DirectoryBackup::Get()->backups)
+	for(const auto& i : DirectoryBackup::Get()->GetEntries())
 	{
-		wxTreeListItem item = tree->AppendItem(root, i->from.filename().generic_string().c_str(), -1, -1, new wxIntClientData(cnt++));
+		wxTreeListItem item = tree->AppendItem(root, i.from.filename().generic_string().c_str(), -1, -1, new wxIntClientData(cnt++));
 		wxTreeListItem bind_item = tree->AppendItem(item, "Source");
-		tree->SetItemText(bind_item, 1, i->from.generic_string());
+		tree->SetItemText(bind_item, 1, i.from.generic_string());
 		bind_item = tree->AppendItem(item, "Destination");
-		tree->SetItemText(bind_item, 1, i->to[0].generic_string());
+		tree->SetItemText(bind_item, 1, i.to.empty() ? "" : i.to[0].generic_string());
 		bind_item = tree->AppendItem(item, "Ignore");
 
 		wxString str_ignore;
-		for(auto& i : i->ignore_list)
+		for(const auto& ignored : i.ignore_list)
 		{
-			str_ignore += i + L" ";
+			str_ignore += ignored + L" ";
 			if(str_ignore.length() > 80)
 				break;
 		}
 		tree->SetItemText(bind_item, 1, str_ignore);
 		bind_item = tree->AppendItem(item, "Max backups");
-		tree->SetItemText(bind_item, 1, std::to_string(i->max_backups));
+		tree->SetItemText(bind_item, 1, std::to_string(i.max_backups));
 		bind_item = tree->AppendItem(item, "Compress");
-		tree->SetItemText(bind_item, 1, i->m_Compress ? "Yes" : "No");
+		tree->SetItemText(bind_item, 1, i.m_Compress ? "Yes" : "No");
 		bind_item = tree->AppendItem(item, "Calculate hash");
-		tree->SetItemText(bind_item, 1, i->calculate_hash ? "Yes" : "No");
+		tree->SetItemText(bind_item, 1, i.calculate_hash ? "Yes" : "No");
 		bind_item = tree->AppendItem(item, "Hash buffer size");
-		tree->SetItemText(bind_item, 1, boost::lexical_cast<std::string>(i->hash_buf_size));
+		tree->SetItemText(bind_item, 1, boost::lexical_cast<std::string>(i.hash_buf_size));
 
 		tree->Expand(item);
 	}

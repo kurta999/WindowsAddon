@@ -54,6 +54,12 @@ Screenshots/
 Win32/
 x64/
 *.aps
+*.exp
+*.lib
+*.pdb
+*.vcxproj.user
+packages/
+vcpkg_installed/
 logfile.txt
 *.db
 output.txt

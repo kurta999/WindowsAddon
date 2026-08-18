@@ -22,10 +22,12 @@ public:
     ~DatabaseLogic();
 
     // Trigger async graph regeneration (no-op while a previous run is in flight).
-    void GenerateGraphs();
+    void GenerateGraphs(uint16_t resolution);
+
+    std::optional<GraphData> TakeGeneratedGraphs();
 
     // Insert one averaged measurement. Blocks if graph generation is running.
-    void InsertMeasurement(std::unique_ptr<Measurement>& m);
+    void InsertMeasurement(const Measurement& measurement);
 
     void     SetGraphHours(uint8_t slot, uint32_t hours);
     uint32_t GetGraphHours(uint8_t slot) const;

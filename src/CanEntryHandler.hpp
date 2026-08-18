@@ -4,25 +4,29 @@
 
 #include "CanModels.hpp"
 #include "ICanEntry.hpp"
+#include "ICanEventSink.hpp"
 #include "ICanSubscriber.hpp"
+#include "ICanTransport.hpp"
+#include "IClock.hpp"
 
 extern "C"
 {
 #include <isotp/isotp.h>
 }
 
-class CanEntryHandler : public ICanSubscriber
+class CanEntryHandler : public ICanSubscriber, public ICanTransportListener
 {
 public:
-    CanEntryHandler(ICanEntryLoader& loader, ICanRxEntryLoader& rx_loader, ICanMappingLoader& mapping_loader);
+    CanEntryHandler(ICanEntryLoader& loader, ICanRxEntryLoader& rx_loader, ICanMappingLoader& mapping_loader,
+        ICanTransport& transport, IClock& clock, ICanEventSink* event_sink = nullptr);
     ~CanEntryHandler();
 
     void Init();
     void LoadFiles();
     void WorkerThread(std::stop_token token);
 
-    void OnFrameSent(uint32_t frame_id, uint8_t data_len, uint8_t* data);
-    void OnFrameReceived(uint32_t frame_id, uint8_t data_len, uint8_t* data);
+    void OnFrameSent(uint32_t frame_id, uint8_t data_len, uint8_t* data) override;
+    void OnFrameReceived(uint32_t frame_id, uint8_t data_len, uint8_t* data) override;
 
     void ToggleAutoSend(bool toggle);
     bool IsAutoSend() const { return m_AutoSend; }
@@ -33,7 +37,7 @@ public:
     void ToggleRecording(bool toggle, bool is_pause);
     void ClearRecording();
 
-    void SendDataFrame(uint32_t frame_id, uint8_t* data, uint16_t size);
+    void SendDataFrame(uint32_t frame_id, std::span<const uint8_t> data);
     void SendIsoTpFrame(uint32_t frame_id, uint8_t* data, uint16_t size);
 
     bool LoadTxList(std::filesystem::path& path);
@@ -90,12 +94,18 @@ public:
     std::mutex m;
 
 private:
+    static int IsoTpSendCan(void* context, uint32_t arbitration_id, const uint8_t* data, uint8_t size);
+    static uint32_t IsoTpGetMilliseconds(void* context);
+
     template <typename T> void HandleBitReading(uint32_t frame_id, bool is_rx, std::unique_ptr<CanMap>& m, size_t offset, CanBitfieldInfo& info);
     template <typename T> void HandleBitWriting(uint32_t frame_id, uint8_t& pos, uint8_t offset, uint8_t size, uint8_t* byte_array, std::vector<std::string>& new_data);
 
     ICanEntryLoader&    m_CanEntryLoader;
     ICanRxEntryLoader&  m_CanRxEntryLoader;
     ICanMappingLoader&  m_CanMappingLoader;
+    ICanTransport&      m_CanTransport;
+    IClock&             m_Clock;
+    ICanEventSink*      m_EventSink = nullptr;
 
     bool m_AutoSend      = false;
     bool m_AutoRecording = false;

@@ -64,9 +64,9 @@ wxMenu* TrayIcon::CreatePopupMenu()
 {
 	wxMenu* popup = new wxMenu;  /* no memory leak here, wxWidgets takes care about it */
 	max_backups = 0;
-	for(auto& i : DirectoryBackup::Get()->backups)
+	for(const auto& i : DirectoryBackup::Get()->GetEntries())
 	{
-		wxMenuItem* item = popup->Append(TrayIcon::ID::DoBackup + max_backups++, i->from.filename().generic_string());
+		wxMenuItem* item = popup->Append(TrayIcon::ID::DoBackup + max_backups++, i.from.filename().generic_string());
 		item->SetBitmap(wxArtProvider::GetBitmap(wxART_NEW_DIR, wxART_OTHER, mainFrame->GetMainWindowOfCompositeControl()->FromDIP(wxSize(14, 14))));
 		if(DirectoryBackup::Get()->IsInProgress())
 			item->Enable(false);

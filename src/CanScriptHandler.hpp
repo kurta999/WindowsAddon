@@ -5,6 +5,7 @@
 #include "Logger.hpp"
 
 #include <map>
+#include <array>
 
 using CanScriptReturn = void;
 using OperandParams = std::vector<std::string>;
@@ -48,7 +49,7 @@ private:
     void OnIsoTpDataReceived(uint32_t frame_id, uint8_t* data, uint16_t size) override;
 
     std::map<std::string, std::function<void(OperandParams&)>> m_operands;
-    std::map<uint32_t, uint64_t>              m_FrameIDValues;
+    std::map<uint32_t, std::array<uint8_t, 8>> m_FrameData;
     std::map<uint32_t, std::vector<uint8_t>>  raw_frame_blocks;
 
     ICanResultPanel& m_Result;

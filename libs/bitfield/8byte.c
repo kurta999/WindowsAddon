@@ -7,6 +7,23 @@
 
 #define EIGHTBYTE_BIT (8 * sizeof(uint64_t))
 
+static uint64_t swap_uint64(uint64_t value) {
+#if defined(_MSC_VER)
+    return _byteswap_uint64(value);
+#elif defined(__GNUC__) || defined(__clang__)
+    return __builtin_bswap64(value);
+#else
+    return ((value << 56) & UINT64_C(0xff00000000000000)) |
+           ((value << 40) & UINT64_C(0x00ff000000000000)) |
+           ((value << 24) & UINT64_C(0x0000ff0000000000)) |
+           ((value << 8)  & UINT64_C(0x000000ff00000000)) |
+           ((value >> 8)  & UINT64_C(0x00000000ff000000)) |
+           ((value >> 24) & UINT64_C(0x0000000000ff0000)) |
+           ((value >> 40) & UINT64_C(0x000000000000ff00)) |
+           ((value >> 56) & UINT64_C(0x00000000000000ff));
+#endif
+}
+
 uint8_t eightbyte_get_nibble(const uint64_t source, const uint8_t nibble_index,
         const bool data_is_big_endian) {
     return (uint8_t) eightbyte_get_bitfield(source, NIBBLE_SIZE * nibble_index,
@@ -16,13 +33,9 @@ uint8_t eightbyte_get_nibble(const uint64_t source, const uint8_t nibble_index,
 uint8_t eightbyte_get_byte(uint64_t source, const uint8_t byte_index,
         const bool data_is_big_endian) {
     if(data_is_big_endian) {
-#ifdef __builtin_bswap64
-        source = __builtin_bswap64(source);
-#else
-        source = _byteswap_uint64(source);
-#endif
+        source = swap_uint64(source);
     }
-    return (source >> (EIGHTBYTE_BIT - ((byte_index + 1) * CHAR_BIT))) & 0xFF;
+    return (uint8_t)((source >> (EIGHTBYTE_BIT - ((byte_index + 1) * CHAR_BIT))) & 0xFF);
 }
 
 // TODO is this funciton necessary anymore? is it any faster for uint64_t than
@@ -34,18 +47,14 @@ uint64_t eightbyte_get_bitfield(uint64_t source, const uint16_t offset,
     int endByte = (offset + bit_count - 1) / CHAR_BIT;
 
     if(!data_is_big_endian) {
-#ifdef __builtin_bswap64
-        source = __builtin_bswap64(source);
-#else
-        source = _byteswap_uint64(source);
-#endif
+        source = swap_uint64(source);
     }
 
     uint8_t* bytes = (uint8_t*)&source;
     uint64_t ret = bytes[startByte];
     if(startByte != endByte) {
         // The lowest byte address contains the most significant bit.
-        uint8_t i;
+        int i;
         for(i = startByte + 1; i <= endByte; i++) {
             ret = ret << 8;
             ret = ret | bytes[i];

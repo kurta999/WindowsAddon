@@ -318,7 +318,7 @@ void CanLogPanel::OnKeyDown(wxKeyEvent& evt)
                         wxTheClipboard->SetData(new wxTextDataObject(str_to_copy));
                         wxTheClipboard->Close();
                         MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-                        frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::SelectedLogsCopied) });
+                        frame->PostNotification(SimpleNotification{SimpleNotificationKind::SelectedLogsCopied});
                     }
                 }
                 break;

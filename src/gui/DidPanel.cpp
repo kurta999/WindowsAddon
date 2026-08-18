@@ -198,8 +198,8 @@ DidPanel::DidPanel(wxFrame* parent)
                 GetCurrentDirectoryA(sizeof(work_dir) - 1, work_dir);
 #endif
                 MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-                std::unique_lock lock(frame->mtx);
-                frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::DidCacheSaved), dif, std::string(work_dir) + "\\" + DID_CACHE_FILENAME });
+                frame->PostNotification(FileSavedNotification{SavedFileKind::DidCache, dif,
+                    std::string(work_dir) + "\\" + DID_CACHE_FILENAME});
             }
         });
     h_sizer_2->Add(m_SaveCache);
@@ -310,8 +310,7 @@ void DidPanel::WriteDid(uint16_t did, uint8_t* data_to_write, uint16_t size)
     did_handler->NotifyDidUpdate();
 
     MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-    std::unique_lock lock(frame->mtx);
-    frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::DidUpdated) });
+    frame->PostNotification(SimpleNotification{SimpleNotificationKind::DidUpdated});
 
 }
 void DidPanel::OnSize(wxSizeEvent& evt)
@@ -430,48 +429,8 @@ void DidPanel::OnCellValueChanged(wxGridEvent& ev)
 
 void DidPanel::OnCellEditorShown(wxGridEvent& ev)
 {
-    ev.Skip();
-    return;
-
-    int row = ev.GetRow(), col = ev.GetCol();
-    if(ev.GetEventObject() == dynamic_cast<wxObject*>(did_grid->m_grid))
-    {
-        did_grid->m_grid->SetReadOnly(row, col);
-        std::unique_ptr<DidHandler>& did_handler = wxGetApp().did_handler;
-        wxString did_str = did_grid->m_grid->GetCellValue(row, DidGridCol::Did_ID);
-        uint32_t did_id = std::stoi(did_str.ToStdString(), nullptr, 16);
-
-        if(did_handler->m_DidList[did_id])
-        {
-            std::unique_ptr<DidEntry>& did_it = did_handler->m_DidList[did_id];
-            switch(did_it->type)
-            {
-                case DET_STRING:
-                {
-                    wxTextEntryDialog d(this, "DID Value", "Value");
-                    d.SetValue(did_it->value_str);
-                    int ret = d.ShowModal();
-                    if(ret == wxID_OK)
-                    {
-
-                    }
-                    break;
-                }
-                case DET_BYTEARRAY:
-                {
-                    wxTextEntryDialog d(this, "DID Value", "Value");
-                    d.SetValue(did_it->value_str);
-                    int ret = d.ShowModal();
-                    if(ret == wxID_OK)
-                    {
-
-                    }
-                    break;
-                }
-            }
-        }
-    }
-    did_grid->m_grid->SetReadOnly(row, col, false);
+    // Editing is handled by the explicit DID edit action. Allow the grid's
+    // normal event processing without retaining an unreachable alternate UI.
     ev.Skip();
 }
 
@@ -483,24 +442,19 @@ void DidPanel::OnKeyDown(wxKeyEvent& evt)
         {
             case 'F':
             {
-                wxWindow* focus = wxWindow::FindFocus();
-                if(evt.GetEventObject() == dynamic_cast<wxObject*>(did_grid->m_grid) || 1)
+                wxTextEntryDialog d(this, "Enter DID name for what you want to filter", "Search for DID name");
+                int ret = d.ShowModal();
+                if(ret == wxID_OK)
                 {
-                    wxTextEntryDialog d(this, "Enter DID name for what you want to filter", "Search for DID name");
-                    int ret = d.ShowModal();
-                    if(ret == wxID_OK)
-                    {
-                        search_pattern = d.GetValue().ToStdString();
-                        if(search_pattern.empty())
-                            static_box_grid->GetStaticBox()->SetLabelText("DID Managment");
-                        else
-                            static_box_grid->GetStaticBox()->SetLabelText(wxString::Format("DID Managment - Search filter: %s", search_pattern));
+                    search_pattern = d.GetValue().ToStdString();
+                    if(search_pattern.empty())
+                        static_box_grid->GetStaticBox()->SetLabelText("DID Management");
+                    else
+                        static_box_grid->GetStaticBox()->SetLabelText(wxString::Format("DID Management - Search filter: %s", search_pattern));
 
-                        UpdateDidList();
-                    }
-                    return;
+                    UpdateDidList();
                 }
-                break;
+                return;
             }
         }
     }

@@ -579,7 +579,8 @@ CanSenderPanel::CanSenderPanel(wxWindow* parent)
                         utils::ConvertHexStringToBuffer(hex_str, std::span{ byte_array });
 
                         uint16_t len = (hex_str.length() / 2);
-                        can_handler->SendDataFrame(frame_id, (uint8_t*)byte_array, len);
+                        can_handler->SendDataFrame(frame_id,
+                            std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(byte_array), len});
                         LOG(LogLevel::Notification, "Sending Data Frame, ID: {:X}, Len: {}", frame_id, len);
                     }
                     else
@@ -1177,9 +1178,9 @@ void CanSenderPanel::LoadTxList()
 
     MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
     if(ret)
-        frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::TxListLoaded) });
+        frame->PostNotification(SimpleNotification{SimpleNotificationKind::TxListLoaded});
     else
-        frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::TxListLoadError) });
+        frame->PostNotification(SimpleNotification{SimpleNotificationKind::TxListLoadError});
 }
 
 void CanSenderPanel::SaveTxList()
@@ -1193,7 +1194,7 @@ void CanSenderPanel::SaveTxList()
     can_handler->SaveTxList(p);
 
     MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-    frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::TxListSaved) });
+    frame->PostNotification(SimpleNotification{SimpleNotificationKind::TxListSaved});
 }
 
 void CanSenderPanel::LoadRxList()
@@ -1210,9 +1211,9 @@ void CanSenderPanel::LoadRxList()
 
     MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
     if(ret)
-        frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::RxListLoaded) });
+        frame->PostNotification(SimpleNotification{SimpleNotificationKind::RxListLoaded});
     else
-        frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::RxListLoadError) });
+        frame->PostNotification(SimpleNotification{SimpleNotificationKind::RxListLoadError});
 }
 
 void CanSenderPanel::SaveRxList()
@@ -1226,7 +1227,7 @@ void CanSenderPanel::SaveRxList()
     can_handler->SaveRxList(p);
 
     MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-    frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::RxListSaved) });
+    frame->PostNotification(SimpleNotification{SimpleNotificationKind::RxListSaved});
 }
 
 void CanSenderPanel::LoadMapping()
@@ -1241,7 +1242,8 @@ void CanSenderPanel::LoadMapping()
     bool ret = can_handler->LoadMapping(p);
 
     MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-    frame->pending_msgs.push_back({ static_cast<uint8_t>(ret ? PopupMsgIds::FrameMappingLoaded : PopupMsgIds::FrameMappingLoadError) });
+    frame->PostNotification(SimpleNotification{ret ? SimpleNotificationKind::FrameMappingLoaded
+                                                    : SimpleNotificationKind::FrameMappingLoadError});
 }
 
 void CanSenderPanel::SaveMapping()
@@ -1255,7 +1257,7 @@ void CanSenderPanel::SaveMapping()
     bool ret = can_handler->SaveMapping(p);
 
     MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-    frame->pending_msgs.push_back({ static_cast<uint8_t>(PopupMsgIds::FrameMappingSaved) });
+    frame->PostNotification(SimpleNotification{SimpleNotificationKind::FrameMappingSaved});
 }
 
 void CanSenderPanel::OnKeyDown(wxKeyEvent& evt)
@@ -1425,10 +1427,10 @@ void CanSenderPanel::OnKeyDown(wxKeyEvent& evt)
     evt.Skip();
 }
 
-void CanSenderPanel::UpdateGridForTxFrame(uint32_t frame_id, uint8_t* buffer)
+void CanSenderPanel::UpdateGridForTxFrame(uint32_t frame_id, std::span<const uint8_t> buffer)
 {
     std::string hex_str;
-    utils::ConvertHexBufferToString((const char*)buffer, 8, hex_str);
+    utils::ConvertHexBufferToString(reinterpret_cast<const char*>(buffer.data()), buffer.size(), hex_str);
 
     for(int i = 0; i != can_grid_tx->cnt; i++)
     {
