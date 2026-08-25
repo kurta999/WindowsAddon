@@ -12,6 +12,7 @@
 #include <mutex>
 #include <optional>
 #include <vector>
+#include "DatabaseImpl.hpp"
 
 class Result;
 

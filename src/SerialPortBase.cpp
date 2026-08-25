@@ -1,4 +1,10 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "SerialPortBase.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
+#include "utils/InterruptibleSleep.hpp"
+
+using namespace std::chrono_literals;
 
 constexpr auto SERIAL_EXCEPTION_DELAY = 1000ms;
 
@@ -20,28 +26,16 @@ void SerialPortBase::InitInternal(const std::string& serial_name, std::chrono::m
 
     if(!m_worker)
     {
-        m_worker = std::make_unique<std::jthread>(std::bind_front(&SerialPortBase::WorkerThread, this));
-        utils::SetThreadName(*m_worker, m_SerialName.c_str());
+        m_worker = utils::StartNamedWorker(m_SerialName.c_str(),
+            std::bind_front(&SerialPortBase::WorkerThread, this));
     }
 }
 
-void SerialPortBase::InitInternal(const std::string& ip, uint16_t port, bool auto_open, std::chrono::milliseconds main_timeout, std::chrono::milliseconds exception_timeout,
-    SerialRecvFunction recv_function, SerialSendFunction send_function)
-{
-    m_TcpIp = ip;
-    m_TcpPort = port;
-    m_IsAutoOpen = auto_open;
-    m_MainTimeout = main_timeout;
-    m_ExceptionTimeout = exception_timeout;
-    m_RecvFunction = recv_function;
-    m_SendFunction = send_function;
-
-    if(!m_worker)
-    {
-        m_worker = std::make_unique<std::jthread>(std::bind_front(&SerialPortBase::WorkerThread, this));
-        utils::SetThreadName(*m_worker, m_SerialName.c_str());
-    }
-}
+/* A second InitInternal overload taking (ip, port, auto_open, ...) was here.
+   Nothing called it - TCP settings reach a port through SetTcp, SetTcpIp and
+   SetTcpPort - and it carried a bug that could therefore never fire: it did
+   not set m_SerialName, so the worker it started would have been named by
+   whatever the string happened to hold. */
 
 void SerialPortBase::DeInitInternal()
 {
@@ -339,8 +333,7 @@ void SerialPortBase::WorkerThread(std::stop_token token)
             m_is_ok = false;
             m_connectionStatus.Store(SerialPortConnectionState::Error);
 
-            std::unique_lock lock(m_mutex);
-            m_cv.wait_for(lock, token, m_ExceptionTimeout, []() { return 1 == 0; });
+            utils::InterruptibleSleep(m_cv, m_mutex, token, m_ExceptionTimeout);
         }
     }
 

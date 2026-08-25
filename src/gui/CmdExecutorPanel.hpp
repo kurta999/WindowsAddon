@@ -1,5 +1,8 @@
 #pragma once
 
+#include "BitFieldEditorDialog.hpp"
+#include "TextStylePanel.hpp"
+
 #include <wx/wx.h>
 #include <wx/spinctrl.h>
 #include <wx/statline.h>
@@ -17,20 +20,19 @@ class CmdExecutorEditDialog : public wxDialog
 public:
     CmdExecutorEditDialog(wxWindow* parent);
 
-    void ShowDialog(const wxString& cmd_name, const wxString& cmd_to_execute, bool hide_console, 
+    void ShowDialog(const wxString& cmd_name, const wxString& cmd_to_execute, bool hide_console,
         uint32_t color, uint32_t bg_color, bool is_bold, const wxString& font_face, float scale, wxSize size, bool is_sizer_base, bool add_to_prev_sizer);
 
     const wxString GetCmdName() { return m_commandName->GetValue(); }
     const wxString GetCmd() { return m_cmdToExecute->GetValue(); }
     bool IsHidden() { return m_isHidden->GetValue(); }
 
-    const wxColor GetTextColor() { return m_color->GetColour(); }
-    const wxColor GetBgColor() { return m_backgroundColor->GetColour(); }
+    // !\brief The appearance half, shared with the CAN and Modbus style
+    // editors. A command stores plain colours, so the panel is built without
+    // its "use custom colour?" checkboxes and these are never empty.
+    [[nodiscard]] gui::TextStyleEdit GetStyle() const { return m_style->GetValue(); }
 
-    bool IsBold() { return m_isBold->GetValue(); }
-    wxString GetFontFace() { return m_fontFace->GetSelectedFont().GetFaceName(); }
-    float GetScale() { return static_cast<float>(m_scale->GetValue()); }
-    wxSize GetMinSize() 
+    wxSize GetMinSize()
     { 
         wxString size_text = m_minSize->GetValue();
         wxSize minimum_size = wxDefaultSize;
@@ -53,17 +55,11 @@ private:
     wxTextCtrl* m_commandName = nullptr;
     wxTextCtrl* m_cmdToExecute = nullptr;
     wxCheckBox* m_isHidden = nullptr;
-    wxColourPickerCtrl* m_color = nullptr;
-    wxColourPickerCtrl* m_backgroundColor = nullptr;
-    wxCheckBox* m_isBold = nullptr;
-    wxFontPickerCtrl* m_fontFace = nullptr;
-    wxSpinCtrlDouble* m_scale = nullptr;
+    gui::TextStylePanel* m_style = nullptr;
     wxTextCtrl* m_minSize = nullptr;
     wxCheckBox* m_isSizerBase = nullptr;
     wxCheckBox* m_isAddToPrevSizer = nullptr;
-    wxStaticText* m_labelResult = nullptr;
     bool m_IsApplyClicked = false;
-    wxTimer* m_timer = nullptr;
 
     wxDECLARE_EVENT_TABLE();
     wxDECLARE_NO_COPY_CLASS(CmdExecutorEditDialog);
@@ -73,15 +69,19 @@ class CmdExecutorPanelPage;
 class CmdExecutorPanelBase : public wxPanel, public ICmdHelper
 {
 public:
-	CmdExecutorPanelBase(wxFrame* parent, CmdExecutor& executor);
+	CmdExecutorPanelBase(wxFrame* parent, CmdExecutor& executor, const wxSize& notebook_size);
 	~CmdExecutorPanelBase() override;
 
 	void ReloadCommands();
 
-    static inline uint8_t m_CurrentPage = 0;
 private:
     void OnSize(wxSizeEvent& evt);
     void OnAuiRightClick(wxAuiNotebookEvent& evt);
+
+    /* The two page commands with a dialog behind them. The other four
+       are a single call each and stay in the menu table. */
+    void RenamePage(int page_id);
+    void ChangePageIcon(int page_id);
 
 	void OnPreReload(uint8_t page) override;
 	void OnPreReloadColumns(uint8_t pages, uint8_t cols) override;
@@ -98,7 +98,6 @@ private:
 	wxDECLARE_EVENT_TABLE();
 };
 
-class CmdExecutorParamDialog;
 
 class CmdExecutorPanelPage : public wxPanel
 {
@@ -127,12 +126,20 @@ private:
     void AddSeparatorElement(uint8_t col, Separator s);
 
     void UpdateCommandButon(Command* c, wxButton* btn, bool force_font_reset = false);
+
+    /* The edit dialog and its twelve setters, which is the only menu
+       command here long enough not to read as one action. */
+    void EditCommand(Command* c, wxButton* btn);
+
+    /* The column `btn` sits in, or 0xFF when it is in none - the value
+       the two copies of this search already used as their sentinel. */
+    [[nodiscard]] uint8_t ColumnOfButton(wxButton* btn);
     void DeleteCommandButton(Command* c, wxButton* btn);
 
     void Execute(Command* c);
 
     CmdExecutorEditDialog* edit_dlg = nullptr;
-    CmdExecutorParamDialog* param_dlg = nullptr;
+    gui::BitFieldEditorDialog* param_dlg = nullptr;
 
     wxGridSizer* m_BaseGrid = nullptr;
     std::vector<wxStaticBoxSizer*> m_VertialBoxes;
@@ -215,54 +222,3 @@ private:
     wxBitmapComboBox* icon_combo_box;
 };
 
-class CmdExecutorParamDialog : public wxDialog
-{
-public:
-    CmdExecutorParamDialog(wxWindow* parent);
-
-    // [label] = value
-    void ShowDialog(std::vector<std::string>& params);
-    std::vector<std::string> GetOutput();
-
-    enum class BitSelection
-    {
-        Decimal,
-        Hex,
-        Binary,
-    };
-
-    enum class ClickType
-    {
-        None,
-        Ok,
-        Close,
-        Apply,
-    };
-
-    ClickType GetClickType() { return m_ClickType; }
-
-protected:
-    void OnApply(wxCommandEvent& event);
-    void OnOk(wxCommandEvent& event);
-    void OnCancel(wxCommandEvent& event);
-    void OnClose(wxCloseEvent& event);
-    //void OnRadioButtonClicked(wxCommandEvent& event);
-private:
-    int m_Id = 0;
-    uint8_t m_DataFormat = 0;
-    wxRadioButton* m_IsDecimal = {};
-    wxRadioButton* m_IsHex = {};
-    wxRadioButton* m_IsBinary = {};
-    wxStaticText* m_InputLabel[MAX_BITEDITOR_FIELDS] = {};
-    wxTextCtrl* m_Input[MAX_BITEDITOR_FIELDS] = {};
-    wxRadioButton* m_InputBit[MAX_BITEDITOR_FIELDS] = {};
-    wxSizer* sizerTop = {};
-    wxSizer* sizerMsgs = {};
-
-    ClickType m_ClickType = ClickType::None;
-
-    BitSelection bit_sel = BitSelection::Decimal;
-
-    wxDECLARE_EVENT_TABLE();
-    wxDECLARE_NO_COPY_CLASS(CmdExecutorParamDialog);
-};

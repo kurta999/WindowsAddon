@@ -6,6 +6,10 @@
 #include <thread>
 #include <memory>
 
+#include "interface/ISettingsBinding.hpp"
+#include <iosfwd>
+#include <string_view>
+
 #ifdef USE_HIDAPI
 extern "C"
 {
@@ -20,11 +24,23 @@ enum class CorsairDeviceType
     K95_PLATINUM
 };
 
-class CorsairHid : public CSingleton < CorsairHid >
-{
-    friend class CSingleton < CorsairHid >;
+// !\brief The Corsair keyboard's extra key block, read over HID.
+//
+// Only the main page asks it anything - which device is attached, whether the
+// link is healthy - and the composition root starts it.
+class IKeySink;
 
+class CorsairHid : public ISettingsBinding
+{
 public:
+    // ISettingsBinding - this subsystem owns its own block of settings.ini.
+    [[nodiscard]] std::string_view SettingsSection() const override { return "CorsairHid"; }
+
+    // !\brief Where a decoded key goes. See SerialPort::SetKeySink.
+    void SetKeySink(IKeySink* sink) noexcept { m_KeySink = sink; }
+    void LoadSettings(SettingsReader& reader) override;
+    void SaveSettings(std::ostream& out) const override;
+
     CorsairHid() = default;
     ~CorsairHid();
 
@@ -59,6 +75,7 @@ public:
     // !\return true if OK, false in case of error with HID communication
     bool IsOk() const;
 
+IKeySink* m_KeySink = nullptr;
 private:
     // !\brief Execute init sequence for HID
     // !\details Initialization can't be in main thread because sometimes hid_open_path takes more than 1 minute to finish

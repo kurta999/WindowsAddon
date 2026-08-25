@@ -1,4 +1,14 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "PrintScreenSaver.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
+#include "SettingsReader.hpp"
+#include "SettingsWriter.hpp"
+#include <ostream>
+#include "Logger.hpp"
+
+#include <lodepng.h>
+#include <bitfield/bitfield.h>
 
 //#define SAVE_BMP_TOO
 
@@ -8,6 +18,11 @@ namespace {
 
 void PrintScreenSaver::Init()
 {
+}
+
+void PrintScreenSaver::OnHotkeyPressed()
+{
+    SaveScreenshot();
 }
 
 void PrintScreenSaver::SaveScreenshot()
@@ -91,8 +106,8 @@ void PrintScreenSaver::DoSave()
     if(decode_error != 0)
     {
         LOG(LogLevel::Error, "Failed to decode BMP from clipboard, error: {}", decode_error);
-        MyFrame* frame = static_cast<MyFrame*>(wxGetApp().GetTopWindow());
-        frame->PostNotification(SimpleNotification{SimpleNotificationKind::ScreenshotSaveFailed});
+        if(m_Sink)
+            m_Sink->PostNotification(SimpleNotification{SimpleNotificationKind::ScreenshotSaveFailed});
         return;
     }
 
@@ -110,11 +125,13 @@ void PrintScreenSaver::DoSave()
     else
         LOG(LogLevel::Error, "Failed to save image from the clipboard!");
 
-    MyFrame* frame = static_cast<MyFrame*>(wxGetApp().GetTopWindow());
-    if(!error_code)
-        frame->PostNotification(FileSavedNotification{SavedFileKind::Screenshot, dif, std::move(save_path)});
-    else
-        frame->PostNotification(SimpleNotification{SimpleNotificationKind::ScreenshotSaveFailed});
+    if(m_Sink)
+    {
+        if(!error_code)
+            m_Sink->PostNotification(FileSavedNotification{SavedFileKind::Screenshot, dif, std::move(save_path)});
+        else
+            m_Sink->PostNotification(SimpleNotification{SimpleNotificationKind::ScreenshotSaveFailed});
+    }
 #endif
 }
 
@@ -217,3 +234,27 @@ unsigned PrintScreenSaver::decodeBMP(std::vector<unsigned char>& image, unsigned
     return 0;
 }
 #endif
+
+void PrintScreenSaver::LoadSettings(SettingsReader& reader)
+{
+    screenshot_key = reader.Required("Screenshot", "ScreenshotKey");
+    timestamp_format = reader.Required("Screenshot", "ScreenshotDateFormat");
+    screenshot_path = reader.Required("Screenshot", "ScreenshotPath");
+
+    /* Creating the directory belongs with the setting that names it. */
+    if(std::filesystem::exists(screenshot_path))
+        return;
+    std::error_code ec;
+    std::filesystem::create_directory(screenshot_path, ec);
+    if(ec)
+        LOG(LogLevel::Error, "Error with create_directory ({}): {}", screenshot_path.generic_string(), ec.message());
+}
+
+void PrintScreenSaver::SaveSettings(std::ostream& out) const
+{
+    SettingsWriter(out, "Screenshot")
+        .Key("ScreenshotKey", screenshot_key)
+        .Key("ScreenshotDateFormat", timestamp_format)
+        .Key("ScreenshotPath", screenshot_path.generic_string())
+        .Blank();
+}

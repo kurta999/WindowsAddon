@@ -1,5 +1,7 @@
 #pragma once
 
+#include "utils/EnumNameTable.hpp"
+
 #include "ICanEntry.hpp"
 #include "CanModels.hpp"
 #include <map>
@@ -30,20 +32,25 @@ public:
     static std::pair<int64_t, int64_t> GetMinMaxForType(CanBitfieldType type);
 
 private:
-    static inline std::map<CanBitfieldType, std::string> m_CanBitfieldTypeMap
-    {
-        {CBT_BOOL,    "bool"},
-        {CBT_UI8,     "uint8_t"},
-        {CBT_I8,      "int8_t"},
-        {CBT_UI16,    "uint16_t"},
-        {CBT_I16,     "int16_t"},
-        {CBT_UI32,    "uint32_t"},
-        {CBT_I32,     "int32_t"},
-        {CBT_UI64,    "uint64_t"},
-        {CBT_I64,     "int64_t"},
-        {CBT_FLOAT,   "float"},
-        {CBT_DOUBLE,  "double"},
-        {CBT_INVALID, "invalid"}
+    /* A constexpr table rather than a std::map built at static-init time: the
+       lookup is twelve string compares either way, and this one costs no
+       allocation and no ordering between translation units. */
+    static constexpr utils::EnumNameTable m_CanBitfieldTypeMap{
+        CBT_INVALID,
+        std::array<utils::EnumName<CanBitfieldType>, 12>{{
+            { CBT_INVALID, "invalid" },
+            { CBT_BOOL,    "bool" },
+            { CBT_UI8,     "uint8_t" },
+            { CBT_I8,      "int8_t" },
+            { CBT_UI16,    "uint16_t" },
+            { CBT_I16,     "int16_t" },
+            { CBT_UI32,    "uint32_t" },
+            { CBT_I32,     "int32_t" },
+            { CBT_UI64,    "uint64_t" },
+            { CBT_I64,     "int64_t" },
+            { CBT_FLOAT,   "float" },
+            { CBT_DOUBLE,  "double" },
+        }}
     };
 
     static inline std::map<CanBitfieldType, std::pair<int64_t, int64_t>> m_CanTypeSizes

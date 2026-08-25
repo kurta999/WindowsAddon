@@ -3,6 +3,9 @@
 #include <wx/taskbar.h>
 
 class MyFrame;
+class PrintScreenSaver;
+class DirectoryBackup;
+class Settings;
 
 class MenuEventFilter : public wxEventFilter  /* without this event filter doing backups from tray is not possible due to dynamic menu ids */
 {
@@ -21,9 +24,10 @@ public:
 class TrayIcon : public wxTaskBarIcon
 {
 public:
-	TrayIcon(void)
+	TrayIcon(PrintScreenSaver& screenshots, DirectoryBackup& backups,
+		Settings& settings) :
+		m_Screenshots(screenshots), m_Backups(backups), m_Settings(settings)
 	{
-
 	}
 	~TrayIcon(void);
 
@@ -50,6 +54,9 @@ public:
 protected:
 	MyFrame* mainFrame = nullptr;
 private:
+	PrintScreenSaver& m_Screenshots;
+	DirectoryBackup& m_Backups;
+	Settings& m_Settings;
 	MenuEventFilter* filter = nullptr;
 
 	DECLARE_EVENT_TABLE()

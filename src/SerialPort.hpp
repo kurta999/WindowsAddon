@@ -1,13 +1,31 @@
+#pragma once
+
 #include "utils/CSingleton.hpp"
 #include <atomic>
 #include <condition_variable>
 #include <string>
+#include "SerialPortBase.hpp"
+#include "interface/ISettingsBinding.hpp"
+#include <iosfwd>
+#include <string_view>
 
-class SerialPort : public SerialPortBase, public CSingleton < SerialPort >
+class IKeySink;
+
+class SerialPort : public SerialPortBase, public CSingleton < SerialPort >, public ISettingsBinding
 {
     friend class CSingleton < SerialPort >;
 
 public:
+    // ISettingsBinding - this subsystem owns its own block of settings.ini.
+    [[nodiscard]] std::string_view SettingsSection() const override { return "COM_Backend"; }
+
+    // !\brief Where bytes off the wire go. Supplied by the composition root;
+    // without it the port reads and discards rather than reaching for a
+    // global from its receive thread.
+    void SetKeySink(IKeySink* sink) noexcept { m_KeySink = sink; }
+    void LoadSettings(SettingsReader& reader) override;
+    void SaveSettings(std::ostream& out) const override;
+
     SerialPort() = default;
     ~SerialPort();
 
@@ -18,23 +36,24 @@ public:
     void SetForwardToTcp(bool enable);
 
     // !\brief Is TCP forwarding enabled?
-    bool IsForwardToTcp();
+    bool IsForwardToTcp() const;
 
     // !\brief Set remote TCP IP
     void SetRemoteTcpIp(const std::string & ip);
 
     // !\brief Get remote TCP IP
-    std::string& GetRemoteTcpIp();
+    const std::string& GetRemoteTcpIp() const;
 
     // !\brief Set remote TCP Port
     void SetRemoteTcpPort(uint16_t remote_port);
 
     // !\brief Get remote TCP Port
-    uint16_t GetRemoteTcpPort();
+    uint16_t GetRemoteTcpPort() const;
 
     // !\brief Simulate data reception
     void SimulateDataReception(const char* data, unsigned int len);
 
+IKeySink* m_KeySink = nullptr;
 private:
     // !\brief Called when data was received via serial port (called by boost::asio::read_some)
     // !\param serial_port [in] Pointer to received data

@@ -1,4 +1,3 @@
-#include "pch.hpp"
 #include "TimeTracker.hpp"
 
 #include <algorithm>
@@ -7,6 +6,11 @@
 
 #include <boost/date_time/gregorian/gregorian.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
+#include "SettingsReader.hpp"
+#include "SettingsWriter.hpp"
+#include <charconv>
+#include <ostream>
+#include <stdexcept>
 
 namespace {
     constexpr int64_t      SecondsPerDay = 86400;
@@ -353,4 +357,32 @@ int TimeTracker::CalculateMapDateOffset(const boost::posix_time::ptime& start)
 {
     const boost::gregorian::date date = start.date();
     return date.year() * 100 + date.month();
+}
+
+namespace
+{
+/* Persistence deliberately does not depend on the application's utils layer, so
+   the whole-string integer parse it would otherwise borrow lives here. */
+[[nodiscard]] int ParseWholeInt(const std::string& text)
+{
+    int value = 0;
+    const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+    if(result.ec != std::errc() || result.ptr != text.data() + text.size())
+        throw std::runtime_error("Bad integer input (" + text + ")");
+    return value;
+}
+}
+
+void TimeTracker::LoadSettings(SettingsReader& reader)
+{
+    SetHourlyRate(ParseWholeInt(reader.Required("TimeTracker", "HourlyRate")));
+    SetToggleKey(reader.Required("TimeTracker", "WorktimeCounterKey"));
+}
+
+void TimeTracker::SaveSettings(std::ostream& out) const
+{
+    /* No trailing blank line - see the note in DatabaseLogic::SaveSettings. */
+    SettingsWriter(out, "TimeTracker")
+        .Key("HourlyRate", GetHourlyRate())
+        .Key("WorktimeCounterKey", GetToggleKey());
 }

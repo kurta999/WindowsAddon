@@ -1,7 +1,15 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "SerialTcpBackend.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
+#include "SerialPort.hpp"
+#include "SettingsReader.hpp"
+#include "SettingsWriter.hpp"
+#include <ostream>
 
 constexpr int LOCA_RECV_BUFFER = 1024;
 
+#ifdef _WIN32
 boost::asio::awaitable<void> SerialTcpBackend::echo(tcp_socket socket)
 {
     try
@@ -11,7 +19,8 @@ boost::asio::awaitable<void> SerialTcpBackend::echo(tcp_socket socket)
         {
             std::size_t n = co_await socket.async_read_some(boost::asio::buffer(data));
 
-            SerialPort::Get()->SimulateDataReception(data, n);
+            if(m_Reception)
+                m_Reception(data, static_cast<unsigned int>(n));
         }
     }
     catch(const std::exception& e)
@@ -23,13 +32,16 @@ boost::asio::awaitable<void> SerialTcpBackend::echo(tcp_socket socket)
 boost::asio::awaitable<void> SerialTcpBackend::listener()
 {
     auto executor = co_await boost::asio::this_coro::executor;
-    tcp_acceptor acceptor(executor, { tcp::endpoint(boost::asio::ip::make_address(SerialTcpBackend::Get()->bind_ip), SerialTcpBackend::Get()->tcp_port) });
+    /* This is a member function: the two settings it needs are its own, and
+       going through the singleton for them was a habit, not a dependency. */
+    tcp_acceptor acceptor(executor, { tcp::endpoint(boost::asio::ip::make_address(bind_ip), tcp_port) });
     for(;;)
     {
         auto socket = co_await acceptor.async_accept();
         boost::asio::co_spawn(executor, echo(std::move(socket)), boost::asio::detached);
     }
 }
+#endif // _WIN32
 
 SerialTcpBackend::SerialTcpBackend()
 {
@@ -40,7 +52,7 @@ void SerialTcpBackend::Init()
 {
     if(is_enabled)
     {
-        m_worker = std::make_unique<std::jthread>([this] {
+        m_worker = utils::StartNamedWorker("SerialForwarder", [this] {
 #ifdef _WIN32
             try
             {
@@ -56,10 +68,10 @@ void SerialTcpBackend::Init()
             {
                 LOG(LogLevel::Error, "Unknown exception");
             }
-        });
+#else
+            LOG(LogLevel::Warning, "Serial-over-TCP forwarding is not supported on this platform");
 #endif
-        if(m_worker)
-            utils::SetThreadName(*m_worker, "SerialForwarder");
+        });
     }
 }
 
@@ -68,4 +80,20 @@ SerialTcpBackend::~SerialTcpBackend()
     io_context.stop();
     if(m_worker)
         m_worker.reset(nullptr);
+}
+
+void SerialTcpBackend::LoadSettings(SettingsReader& reader)
+{
+    is_enabled = utils::stob(reader.Required("COM_TcpBackend", "Enable"));
+    bind_ip = reader.Required("COM_TcpBackend", "ListeningIp");
+    tcp_port = utils::stoi<uint16_t>(reader.Required("COM_TcpBackend", "ListeningPort"));
+}
+
+void SerialTcpBackend::SaveSettings(std::ostream& out) const
+{
+    SettingsWriter(out, "COM_TcpBackend")
+        .Key("Enable", is_enabled, "Listening port from second instance where the TCP Forwarder forwards data received from COM port")
+        .Key("ListeningIp", bind_ip)
+        .Key("ListeningPort", tcp_port)
+        .Blank();
 }

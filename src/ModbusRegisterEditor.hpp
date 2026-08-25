@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include "ModbusTypeTraits.hpp"
 
 enum class ModbusRegisterEditAction { MoveUp, MoveDown, Delete, InsertAfter };
 
@@ -157,22 +158,16 @@ inline ModbusRegisterEditResult ChangeModbusRegisterType(ModbusItemType& items, 
     const auto old_type = items[index]->m_Type;
     const auto old_size = items[index]->m_RegisterSize;
     const auto old_value = items[index]->m_Value;
-    const auto old_float = items[index]->m_fValue;
-    const auto old_double = items[index]->m_dValue;
 
     items[index]->m_Type = new_type;
     items[index]->m_RegisterSize.reset();
-    items[index]->m_Value = 0;
-    items[index]->m_fValue = 0.0f;
-    items[index]->m_dValue = 0.0;
+    items[index]->m_Value.Reset();
     ReflowModbusRegisterGroup(items, group_start, group_end, group_offset);
     if(WouldOverlapNextModbusGroup(items, group_end))
     {
         items[index]->m_Type = old_type;
         items[index]->m_RegisterSize = old_size;
         items[index]->m_Value = old_value;
-        items[index]->m_fValue = old_float;
-        items[index]->m_dValue = old_double;
         ReflowModbusRegisterGroup(items, group_start, group_end, group_offset);
         return { false, "Changing this register type would overlap the next address group.", index };
     }

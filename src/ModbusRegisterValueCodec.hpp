@@ -1,6 +1,7 @@
 #pragma once
 
 #include "interface/IModbusEntry.hpp"
+#include "ModbusTypeTraits.hpp"
 
 #include <array>
 #include <cstdint>
@@ -17,8 +18,8 @@ inline ModbusRegisterByteOrder ResolveModbusRegisterByteOrder(ModbusBitfieldType
 {
     if(byte_order != ModbusRegisterByteOrder::Default)
         return byte_order;
-    if(type == MBT_UI32 || type == MBT_I32 || type == MBT_UI64 || type == MBT_I64 ||
-        type == MBT_FLOAT || type == MBT_DOUBLE)
+    /* Anything wider than one register defaults to little-endian word order. */
+    if(modbus_types::Of(type).register_count > 1)
         return ModbusRegisterByteOrder::LittleEndian;
     return ModbusRegisterByteOrder::BigEndian;
 }

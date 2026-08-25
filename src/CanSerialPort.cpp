@@ -1,6 +1,11 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "CanSerialPort.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
 
 #include "CanDeviceFactory.hpp"
+
+using namespace std::chrono_literals;
 
 constexpr size_t TX_QUEUE_MAX_SIZE = 100;
 constexpr size_t RX_CIRCBUFF_SIZE = 1024;  /* Bytes */
@@ -10,7 +15,7 @@ constexpr auto CAN_SERIAL_PORT_EXCEPTION_TIMEOUT = 1000ms;
 constexpr auto SEND_DELAY_BETWEEN_FRAMES = 100us;
 
 CanSerialPort::CanSerialPort() : m_CircBuff(RX_CIRCBUFF_SIZE),
-    m_DeviceFactory(std::make_unique<CanDeviceFactory>(m_CircBuff))
+    m_DeviceFactory(std::make_unique<CanDeviceFactory>())
 {
 
 }
@@ -24,7 +29,9 @@ void CanSerialPort::Init()
 {
     if(is_enabled)
     {
-        auto recv_f = std::bind(&CanSerialPort::OnDataReceived, this, std::placeholders::_1, std::placeholders::_2);
+        /* The transport's callback carries a size_t length; std::bind would
+           narrow it silently, so the conversion is spelled out here. */
+        auto recv_f = [this](const char* data, std::size_t len) { OnDataReceived(data, static_cast<unsigned int>(len)); };
         auto send_f = std::bind(&CanSerialPort::OnDataSent, this, std::placeholders::_1);
         InitInternal("CanSerialPort", CAN_SERIAL_PORT_TIMEOUT, CAN_SERIAL_PORT_EXCEPTION_TIMEOUT, recv_f, send_f);
         m_Device = m_DeviceFactory->Create(m_DeviceType);
@@ -82,7 +89,18 @@ void CanSerialPort::OnDataReceived(const char* data, unsigned int len)
 
 void CanSerialPort::OnDataSent(CallbackAsyncSerial& serial_port)
 {
-    m_Device->ProcessReceivedFrames(m_RxMutex, [this](uint32_t frame_id, uint8_t data_len, uint8_t* data)
+    /* The buffer and its lock belong to the transport; the device is handed
+       the bytes and knows nothing about how they were collected. */
+    std::vector<std::uint8_t> received;
+    {
+        std::scoped_lock lock(m_RxMutex);
+        received.reserve(m_CircBuff.size());
+        for(const char byte : m_CircBuff)
+            received.push_back(static_cast<std::uint8_t>(byte));
+        m_CircBuff.clear();
+    }
+
+    m_Device->DecodeReceivedBytes(received, [this](uint32_t frame_id, uint8_t data_len, uint8_t* data)
     {
         if(auto* listener = m_Listener.load(std::memory_order_acquire))
             listener->OnFrameReceived(frame_id, data_len, data);

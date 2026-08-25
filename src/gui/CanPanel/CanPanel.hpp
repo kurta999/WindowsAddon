@@ -16,20 +16,24 @@
 #include "CanLogPanel.hpp"
 #include "CanScriptPanel.hpp"
 
+class CanEntryHandler;
+
 
 class CanTxEntry;
 class CanRxData;
 class CanByteEditorDialog;
-class BitEditorDialog;
+
 class CanLogForFrameDialog;
 class CanUdsRawDialog;
 class CanMap;
 class IResultPanel;
 
+class CanSerialPort;
+
 class CanPanel : public wxPanel
 {
 public:
-	CanPanel(wxWindow* parent);
+	CanPanel(wxWindow* parent, CanEntryHandler& handler, CanSerialPort& port, const wxSize& notebook_size);
     ~CanPanel();
 
     void On10MsTimer();
@@ -40,6 +44,13 @@ public:
     void LoadMapping();
     void SaveMapping();
     void RefreshSubpanels();
+
+    // !\brief Size this page and its notebook children to the frame's new size.
+    //
+    // MainFrame::OnSize used to reach through the public members below to
+    // do this - the one place outside this class that knew the notebook's
+    // structure.
+    void OnFrameResized(const wxSize& size);
 
     CanSenderPanel* sender = nullptr;
     CanLogPanel* log = nullptr;
@@ -52,6 +63,12 @@ private:
 
     // !\brief AUI manager for subwindows
     wxAuiManager m_mgr;
+
+
+    /* Handed in rather than fetched from wxGetApp() on every use.
+       docs/code-style.md: "A class gets its collaborators through its
+       constructor. It does not fetch them." */
+    CanEntryHandler& m_handler;
 
 	wxDECLARE_EVENT_TABLE();
 };

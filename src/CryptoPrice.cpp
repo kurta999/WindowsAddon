@@ -1,76 +1,82 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "CryptoPrice.hpp"
+#include "Settings.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
+#include "CryptoPriceParser.hpp"
+#include "utils/WindowsCommand.hpp"
+
+namespace
+{
+constexpr const wchar_t* COINBASE_CURL_ARGUMENTS =
+    L"/C curl --silent https://api.coinbase.com/v2/prices/ETH-USD/buy"
+    L" -: https://api.coinbase.com/v2/prices/ETH-USD/sell"
+    L" -: https://api.coinbase.com/v2/prices/BTC-USD/buy"
+    L" -: https://api.coinbase.com/v2/prices/BTC-USD/sell";
+
+constexpr const char* COINBASE_CURL_COMMAND =
+    "curl https://api.coinbase.com/v2/prices/ETH-USD/buy"
+    " -: https://api.coinbase.com/v2/prices/ETH-USD/sell"
+    " -: https://api.coinbase.com/v2/prices/BTC-USD/buy"
+    " -: https://api.coinbase.com/v2/prices/BTC-USD/sell";
+}
+
+void CryptoPrice::ApplyResponse(std::string_view response)
+{
+    /* Splitting the answer and picking the amounts out of it is plain text
+       handling, so it lives in crypto_price where it can be tested without a
+       shell or a network. */
+    const auto prices = crypto_price::ParseCoinbaseResponse(response);
+    if(!prices)
+    {
+        if(crypto_price::LooksLikeMissingCurl(response))
+            LOG(LogLevel::Error, "curl is not found on the system, coin price requests won't work!");
+        else
+            LOG(LogLevel::Error, "Unexpected coin price response from curl: {}", response);
+        return;
+    }
+
+    /* A field the response did not carry keeps the price we already had. */
+    if(prices->eth_buy)  eth_buy  = *prices->eth_buy;
+    if(prices->eth_sell) eth_sell = *prices->eth_sell;
+    if(prices->btc_buy)  btc_buy  = *prices->btc_buy;
+    if(prices->btc_sell) btc_sell = *prices->btc_sell;
+    is_pending = true;
+
+    LOG(LogLevel::Notification, "Coin price successfully retrieved! Buy, Sell - ETH: {}, {}, BTC: {}, {}",
+        eth_buy.load(), eth_sell.load(), btc_buy.load(), btc_sell.load());
+}
 
 void CryptoPrice::ExecuteApiRead()
 {
-    if(Settings::Get()->crypto_price_update == 0)
+    if(UpdateIntervalMinutes() == 0)
         return;
 
-    std::vector<std::string> arr;
 #ifdef _WIN32
-    CStringA str = utils::ExecuteCmdWithoutWindow(L"/C curl --silent https://api.coinbase.com/v2/prices/ETH-USD/buy -: https://api.coinbase.com/v2/prices/ETH-USD/sell -: https://api.coinbase.com/v2/prices/BTC-USD/buy -: https://api.coinbase.com/v2/prices/BTC-USD/sell", 5000);
-  
-    boost::algorithm::split_regex(arr, str.GetString(), boost::regex("{\"data\":{"));
+    const CStringA response = utils::ExecuteCmdWithoutWindow(COINBASE_CURL_ARGUMENTS, 5000);
+    ApplyResponse(std::string_view(response.GetString(), static_cast<std::size_t>(response.GetLength())));
 #else
-    std::string response = utils::exec("curl https://api.coinbase.com/v2/prices/ETH-USD/buy -: https://api.coinbase.com/v2/prices/ETH-USD/sell -: https://api.coinbase.com/v2/prices/BTC-USD/buy -: https://api.coinbase.com/v2/prices/BTC-USD/sell");
-    boost::algorithm::split_regex(arr, response, boost::regex("{\"data\":{"));
+    ApplyResponse(utils::exec(COINBASE_CURL_COMMAND));
 #endif
 
-    if(arr.empty())
-    {
-        LOG(LogLevel::Error, "curl returned no output");
-        return;
-    }
-
-    if(arr[0].find("not recognized") == std::string::npos) /* 'curl' is not recognized as an internal or external command, operable program or batch file. */
-    {
-        if(arr.size() == 5)
-        {
-            arr.erase(arr.begin());
-
-            auto ExtractAmount = [](std::string& str, std::atomic<float>& out)
-            {
-                try
-                {
-                    const size_t pos = str.find("\"amount\":\"");
-                    if(pos != std::string::npos)
-                        out = std::stof(str.c_str() + pos + 10);
-                }
-                catch(const std::exception& e)
-                {
-                    LOG(LogLevel::Error, "Exception: {}", e.what());
-                }
-            };
-            ExtractAmount(arr[0], eth_buy);
-            ExtractAmount(arr[1], eth_sell);
-            ExtractAmount(arr[2], btc_buy);
-            ExtractAmount(arr[3], btc_sell);
-            is_pending = true;
-
-            LOG(LogLevel::Notification, "Coin price successfully retrieved! Buy, Sell - ETH: {}, {}, BTC: {}, {}", eth_buy.load(), eth_sell.load(), btc_buy.load(), btc_sell.load());
-        }
-        else
-        {
-            LOG(LogLevel::Error, "Invalid number of requests received from curl. Expected: 4, Current: {}", arr.size());
-            LOG(LogLevel::Error, "Received data: {}", arr[0]);
-        }
-    }
-    else
-    {
-        LOG(LogLevel::Error, "curl is not found on the system, coin price requests won't work!");
-    }
     last_update = std::chrono::steady_clock::now();
+}
+
+std::uint16_t CryptoPrice::UpdateIntervalMinutes() const
+{
+    return m_Settings != nullptr ? m_Settings->crypto_price_update : 0;
 }
 
 void CryptoPrice::UpdatePrices(bool force)
 {
-    if(!Settings::Get()->crypto_price_update)
+    if(!UpdateIntervalMinutes())
     {
         last_update = std::chrono::steady_clock::now();
         return;
     }
 
     uint64_t dif = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - last_update).count();
-    if(dif > (Settings::Get()->crypto_price_update * 60) || force)
+    if(dif > (UpdateIntervalMinutes() * 60) || force)
     {
         if(m_api_future.valid())
             if(m_api_future.wait_for(std::chrono::nanoseconds(1)) != std::future_status::ready)

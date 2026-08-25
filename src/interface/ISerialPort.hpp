@@ -1,5 +1,7 @@
 #pragma once
 
+#include "utils/AsyncSerial.hpp"
+
 #include <string>
 #include <chrono>
 #include <functional>
@@ -23,8 +25,6 @@ public:
 
     virtual void InitInternal(const std::string& serial_name, std::chrono::milliseconds main_timeout, std::chrono::milliseconds exception_timeout,
         SerialRecvFunction recv_function, SerialSendFunction send_function, uint32_t baudrate = 921600, bool auto_open = false) = 0;
-    virtual void InitInternal(const std::string& ip, uint16_t port, bool auto_open, std::chrono::milliseconds main_timeout, std::chrono::milliseconds exception_timeout,
-        SerialRecvFunction recv_function, SerialSendFunction send_function) = 0;
     virtual void DeInitInternal() = 0;
     virtual void SetEnabled(bool enable) = 0;
     virtual bool IsEnabled() const = 0;

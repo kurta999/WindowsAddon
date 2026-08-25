@@ -1,4 +1,7 @@
 #include "pch.hpp"
+#include "utils/HexBytes.hpp"
+#include "GridBuilder.hpp"
+#include "MainFrameAccess.hpp"
 
 wxBEGIN_EVENT_TABLE(DidPanel, wxPanel)
 EVT_SIZE(DidPanel::OnSize)
@@ -9,54 +12,31 @@ wxEND_EVENT_TABLE()
 
 DidGrid::DidGrid(wxWindow* parent)
 {
-    m_grid = new wxGrid(parent, wxID_ANY, wxDefaultPosition, wxSize(1024, 600), 0);
+    /* In DidGridCol order. */
+    static constexpr gui::GridColumn kColumns[]{
+        { "DID", 50 },        // Did_ID
+        { "Type", 100 },      // Did_Type
+        { "Name", 200 },      // Did_Name
+        { "Value", 250 },     // Did_Value
+        { "Len" },            // Did_Len
+        { "Min" },            // Did_MinVal
+        { "Max" },            // Did_MaxVal
+        { "Timestamp", 135 }, // Did_Timestamp
+    };
+    static_assert(std::size(kColumns) == DidGridCol::Did_Max);
 
-    // Grid
-    m_grid->CreateGrid(1, DidGridCol::Did_Max);
-    m_grid->EnableEditing(true);
-    m_grid->EnableGridLines(true);
-    m_grid->EnableDragGridSize(false);
-    m_grid->SetMargins(0, 0);
-
-    m_grid->SetColLabelValue(DidGridCol::Did_ID, "DID");
-    m_grid->SetColLabelValue(DidGridCol::Did_Type, "Type");
-    m_grid->SetColLabelValue(DidGridCol::Did_Name, "Name");
-    m_grid->SetColLabelValue(DidGridCol::Did_Value, "Value");
-    m_grid->SetColLabelValue(DidGridCol::Did_Len, "Len");
-    m_grid->SetColLabelValue(DidGridCol::Did_MinVal, "Min");
-    m_grid->SetColLabelValue(DidGridCol::Did_MaxVal, "Max");
-    m_grid->SetColLabelValue(DidGridCol::Did_Timestamp, "Timestamp");
-
-    // Columns
-    m_grid->EnableDragColMove(true);
-    m_grid->EnableDragColSize(true);
-    m_grid->SetColLabelAlignment(wxALIGN_CENTER, wxALIGN_CENTER);
-
-    m_grid->SetSelectionMode(wxGrid::wxGridSelectionModes::wxGridSelectRows);
-
-    // Rows
-    m_grid->EnableDragRowSize(true);
-    m_grid->SetRowLabelAlignment(wxALIGN_CENTER, wxALIGN_CENTER);
-
-
-    // Label Appearance
-
-    // Cell Defaults
-    m_grid->SetDefaultCellAlignment(wxALIGN_LEFT, wxALIGN_TOP);
-    m_grid->HideRowLabels();
-
-    m_grid->SetColSize(DidGridCol::Did_ID, 50);
-    m_grid->SetColSize(DidGridCol::Did_Type, 100);
-    m_grid->SetColSize(DidGridCol::Did_Name, 200);
-    m_grid->SetColSize(DidGridCol::Did_Value, 250);
-    m_grid->SetColSize(DidGridCol::Did_Timestamp, 135);
+    m_grid = gui::BuildGrid(parent, gui::GridSpec{
+        .size = wxSize(1024, 600),
+        .initial_rows = 1,
+        .columns = kColumns,
+        .selection_mode = wxGrid::wxGridSelectRows,
+        .hide_row_labels = true,
+    });
 }
 
 void DidGrid::AddRow(std::unique_ptr<DidEntry>& entry)
 {
-    int num_rows = m_grid->GetNumberRows();
-    if(num_rows <= cnt)
-        m_grid->AppendRows(1);
+    gui::EnsureRow(*m_grid, cnt);
 
     m_grid->SetCellValue(wxGridCellCoords(cnt, DidGridCol::Did_ID), wxString::Format("%X", entry->id));
     m_grid->SetCellValue(wxGridCellCoords(cnt, DidGridCol::Did_Type), wxString::Format("%s", XmlDidLoader::GetStringFromType(entry->type)));
@@ -103,8 +83,7 @@ void DidGrid::AddRow(std::unique_ptr<DidEntry>& entry)
             cell_font.SetWeight(wxFONTWEIGHT_BOLD);
             m_grid->SetCellFont(cnt, Did_Name, cell_font);
 
-            for(uint8_t i = 0; i != DidGridCol::Did_Max; i++)
-                m_grid->SetCellBackgroundColour(cnt, i, (cnt & 1) ? 0xE6E6E6 : 0xFFFFFF);
+            gui::ApplyRowShading(*m_grid, static_cast<int>(cnt), DidGridCol::Did_Max);
         }
     }
     m_grid->SetCellValue(wxGridCellCoords(cnt, DidGridCol::Did_Timestamp), last_update_str);
@@ -115,8 +94,8 @@ void DidGrid::AddRow(std::unique_ptr<DidEntry>& entry)
     cnt++;
 }
 
-DidPanel::DidPanel(wxFrame* parent)
-    : wxPanel(parent, wxID_ANY)
+DidPanel::DidPanel(wxFrame* parent, CanEntryHandler& can_handler, DidHandler& did_handler)
+    : wxPanel(parent, wxID_ANY), m_canHandler(can_handler), m_didHandler(did_handler)
 {
     wxBoxSizer* bSizer1 = new wxBoxSizer(wxVERTICAL);
 
@@ -131,7 +110,6 @@ DidPanel::DidPanel(wxFrame* parent)
     m_RefreshSelected->SetToolTip("Start refreshing process for selected DIDs)");
     m_RefreshSelected->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event)
         {
-            std::unique_ptr<DidHandler>& did_handler = wxGetApp().did_handler;
             wxGrid* m_grid = did_grid->m_grid;
 
             wxArrayInt rows = m_grid->GetSelectedRows();
@@ -139,11 +117,18 @@ DidPanel::DidPanel(wxFrame* parent)
 
             for(auto& i : rows)
             {
-                uint16_t did = std::stoi(did_grid->m_grid->GetCellValue(wxGridCellCoords(i, DidGridCol::Did_ID)).ToStdString(), nullptr, 16);
-                std::unique_lock lock{ did_handler->m };  /* TODO: solve this deadlock if it's called while already being processed */
-                did_handler->AddDidToReadQueue(did); 
+                const std::optional<uint16_t> did = utils::TryParse<uint16_t>(
+                    did_grid->m_grid->GetCellValue(wxGridCellCoords(i, DidGridCol::Did_ID)).ToStdString(),
+                    utils::ParseMode::Whole, 16);
+                if(!did)
+                    continue;
+
+                /* AddDidToReadQueue takes the handler's mutex itself. Taking it
+                   here as well deadlocked on the first selected row, because
+                   that mutex is not recursive. */
+                m_didHandler.AddDidToReadQueue(*did);
             }
-            did_handler->NotifyDidUpdate();
+            m_didHandler.NotifyDidUpdate();
         });
     h_sizer->Add(m_RefreshSelected);
 
@@ -151,10 +136,9 @@ DidPanel::DidPanel(wxFrame* parent)
     m_Abort->SetToolTip("Abort DID update)");
     m_Abort->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event)
         {
-            std::unique_ptr<DidHandler>& did_handler = wxGetApp().did_handler;
             wxGrid* m_grid = did_grid->m_grid;
 
-            did_handler->AbortDidUpdate();
+            m_didHandler.AbortDidUpdate();
         });
     h_sizer->Add(m_Abort);
 
@@ -173,8 +157,7 @@ DidPanel::DidPanel(wxFrame* parent)
                 did_grid->m_grid->SetCellValue(i, Did_Value, "");
                 did_grid->m_grid->SetCellBackgroundColour(i, DidGridCol::Did_Value, wxNullColour);
 
-                for(uint8_t x = 0; x != DidGridCol::Did_Max; x++)
-                    did_grid->m_grid->SetCellBackgroundColour(i, x, (i & 1) ? 0xE6E6E6 : 0xFFFFFF);
+                gui::ApplyRowShading(*did_grid->m_grid, static_cast<int>(i), DidGridCol::Did_Max);
             }
         });
     h_sizer->Add(m_ClearDids);
@@ -185,9 +168,8 @@ DidPanel::DidPanel(wxFrame* parent)
     m_SaveCache->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event)
         {
             std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
-            std::unique_ptr<DidHandler>& did_handler = wxGetApp().did_handler;
             
-            bool ret = did_handler->SaveChache();
+            bool ret = m_didHandler.SaveCache();
             if(ret)
             {
                 std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
@@ -197,8 +179,7 @@ DidPanel::DidPanel(wxFrame* parent)
 #ifdef _WIN32
                 GetCurrentDirectoryA(sizeof(work_dir) - 1, work_dir);
 #endif
-                MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-                frame->PostNotification(FileSavedNotification{SavedFileKind::DidCache, dif,
+                PostAppNotification(FileSavedNotification{SavedFileKind::DidCache, dif,
                     std::string(work_dir) + "\\" + DID_CACHE_FILENAME});
             }
         });
@@ -215,102 +196,133 @@ DidPanel::DidPanel(wxFrame* parent)
 
 void DidPanel::UpdateDidList()
 {
-    std::unique_ptr<DidHandler>& did_handler = wxGetApp().did_handler;
     if(did_grid->m_grid->GetNumberRows())
         did_grid->m_grid->DeleteRows(0, did_grid->m_grid->GetNumberRows());
     did_grid->cnt = 0;
 
-    did_handler->m_UpdatedDids.clear();
-    for(auto& i : did_handler->m_DidList)
+    /* Rebuilt on user action, not per tick, so the worker is held off for the
+       rebuild rather than the list being read while it writes. */
+    m_didHandler.WithModel([this](DidHandler::Model& model)
     {
-        bool add_row = false;
-        if(search_pattern.empty())
-            add_row = true;
-        else
+        model.updated_dids.clear();
+        for(auto& i : model.did_list)
         {
-            if(boost::icontains(i.second->name, search_pattern))
+            bool add_row = false;
+            if(search_pattern.empty())
                 add_row = true;
-        }
+            else
+            {
+                if(boost::icontains(i.second->name, search_pattern))
+                    add_row = true;
+            }
 
-        if(add_row)
-        {
-            did_grid->AddRow(i.second);
-            did_handler->m_UpdatedDids.push_back(i.first);
+            if(add_row)
+            {
+                did_grid->AddRow(i.second);
+                model.updated_dids.push_back(i.first);
+            }
         }
-    }
+    });
 }
 
 void DidPanel::On100msTimer()
 {
-    std::unique_ptr<DidHandler>& did_handler = wxGetApp().did_handler;
-    std::unique_ptr<CanEntryHandler>& can_handler = wxGetApp().can_entry;
 
     if(!is_dids_initialized)
     {
-        for(auto& i : did_handler->m_DidList)
+        /* Runs once, so the worker is held off for the initial fill rather
+           than the entries being read while it writes them. */
+        m_didHandler.WithModel([this](DidHandler::Model& model)
         {
-            did_grid->AddRow(i.second);
-        }
+            for(auto& i : model.did_list)
+            {
+                did_grid->AddRow(i.second);
+            }
+        });
         is_dids_initialized = true;
     }
 
-    if(!did_handler->m_UpdatedDids.empty())
+    /* The UDS worker fills the update list and the entries it points at, so what
+       is rendered is copied out under the handler's lock first. Rendering used
+       to read the live entries with the lock commented out, and holding it
+       across this many wxGrid calls would stall the worker instead. */
+    struct DidUpdate
     {
-        //std::unique_lock lock{ did_handler->m };
-        for(auto& did : did_handler->m_UpdatedDids)
+        uint16_t row;
+        uint16_t nrc;
+        std::string value_str;
+        boost::posix_time::ptime last_update;
+    };
+    const std::vector<DidUpdate> updates = m_didHandler.WithModel(
+        [this](DidHandler::Model& model)
+    {
+        std::vector<DidUpdate> collected;
+        collected.reserve(model.updated_dids.size());
+        for(uint16_t did : model.updated_dids)
         {
-            auto& did_it = did_handler->m_DidList[did];
-            uint16_t did_row = did_grid->did_to_row[did];
+            /* find rather than operator[]: the latter inserts a null entry for
+               a DID that is not in the list, and a row 0 for one that has no
+               grid row yet. */
+            const auto entry = model.did_list.find(did);
+            const auto row = did_grid->did_to_row.find(did);
+            if(entry == model.did_list.end() || !entry->second || row == did_grid->did_to_row.end())
+                continue;
 
-            if(did_it->nrc != 0)
+            collected.push_back({ row->second, entry->second->nrc, entry->second->value_str,
+                entry->second->last_update });
+        }
+        model.updated_dids.clear();
+        return collected;
+    });
+
+    for(const DidUpdate& update : updates)
+    {
+        const uint16_t did_row = update.row;
+        if(update.nrc != 0)
+        {
+            switch(update.nrc)
             {
-                switch(did_it->nrc)
+                case 0x78:
                 {
-                    case 0x78:
-                    {
-                        did_grid->m_grid->SetCellValue(wxGridCellCoords(did_row, DidGridCol::Did_Value), "Pending... NRC 78");
-                        did_grid->m_grid->SetCellBackgroundColour(did_row, DidGridCol::Did_Value, *wxBLUE);
-                        break;
-                    }
-                    default:
-                    {
-                        did_grid->m_grid->SetCellValue(wxGridCellCoords(did_row, DidGridCol::Did_Value), wxString::Format("NRC %X", did_it->nrc));
-                        did_grid->m_grid->SetCellBackgroundColour(did_row, DidGridCol::Did_Value, *wxRED);
+                    did_grid->m_grid->SetCellValue(wxGridCellCoords(did_row, DidGridCol::Did_Value), "Pending... NRC 78");
+                    did_grid->m_grid->SetCellBackgroundColour(did_row, DidGridCol::Did_Value, *wxBLUE);
+                    break;
+                }
+                default:
+                {
+                    did_grid->m_grid->SetCellValue(wxGridCellCoords(did_row, DidGridCol::Did_Value), wxString::Format("NRC %X", update.nrc));
+                    did_grid->m_grid->SetCellBackgroundColour(did_row, DidGridCol::Did_Value, *wxRED);
 
-                        wxFont cell_font = did_grid->m_grid->GetCellFont(did_row, Did_Name);
-                        cell_font.SetWeight(wxFONTWEIGHT_NORMAL);
-                        did_grid->m_grid->SetCellFont(did_row, Did_Name, cell_font);
-                        break;
-                    }
+                    wxFont cell_font = did_grid->m_grid->GetCellFont(did_row, Did_Name);
+                    cell_font.SetWeight(wxFONTWEIGHT_NORMAL);
+                    did_grid->m_grid->SetCellFont(did_row, Did_Name, cell_font);
+                    break;
                 }
             }
-            else
-            {
-                did_grid->m_grid->SetCellValue(wxGridCellCoords(did_row, DidGridCol::Did_Value), did_it->value_str);
-                wxFont cell_font = did_grid->m_grid->GetCellFont(did_row, Did_Name);
-                cell_font.SetWeight(wxFONTWEIGHT_BOLD);
-                did_grid->m_grid->SetCellFont(did_row, Did_Name, cell_font);
-                did_grid->m_grid->SetCellBackgroundColour(did_row, DidGridCol::Did_Value, (did_row & 1) ? 0xE6E6E6 : 0xFFFFFF);
-            }
-
-            if(!did_it->last_update.is_not_a_date_time())
-            {
-                wxString last_update_str = boost::posix_time::to_iso_extended_string(did_it->last_update);
-                did_grid->m_grid->SetCellValue(wxGridCellCoords(did_row, DidGridCol::Did_Timestamp), last_update_str);
-            }
         }
-        did_handler->m_UpdatedDids.clear();
+        else
+        {
+            did_grid->m_grid->SetCellValue(wxGridCellCoords(did_row, DidGridCol::Did_Value), update.value_str);
+            wxFont cell_font = did_grid->m_grid->GetCellFont(did_row, Did_Name);
+            cell_font.SetWeight(wxFONTWEIGHT_BOLD);
+            did_grid->m_grid->SetCellFont(did_row, Did_Name, cell_font);
+            did_grid->m_grid->SetCellBackgroundColour(did_row, DidGridCol::Did_Value, gui::RowShade(did_row));
+        }
+
+        if(!update.last_update.is_not_a_date_time())
+        {
+            wxString last_update_str = boost::posix_time::to_iso_extended_string(update.last_update);
+            did_grid->m_grid->SetCellValue(wxGridCellCoords(did_row, DidGridCol::Did_Timestamp), last_update_str);
+        }
     }
 }
 
 void DidPanel::WriteDid(uint16_t did, uint8_t* data_to_write, uint16_t size)
 {
-    std::unique_ptr<DidHandler>& did_handler = wxGetApp().did_handler;
-    did_handler->WriteDid(did, data_to_write, size);
-    did_handler->NotifyDidUpdate();
+    m_didHandler.WriteDid(did, data_to_write, size);
+    m_didHandler.NotifyDidUpdate();
 
-    MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-    frame->PostNotification(SimpleNotification{SimpleNotificationKind::DidUpdated});
+    PostAppNotification(SimpleNotification{SimpleNotificationKind::DidUpdated});
 
 }
 void DidPanel::OnSize(wxSizeEvent& evt)
@@ -321,34 +333,62 @@ void DidPanel::OnSize(wxSizeEvent& evt)
 void DidPanel::OnCellValueChanged(wxGridEvent& ev)
 {
     int row = ev.GetRow(), col = ev.GetCol();
-    if(ev.GetEventObject() == dynamic_cast<wxObject*>(did_grid->m_grid))
+    if(ev.GetEventObject() == static_cast<wxObject*>(did_grid->m_grid))
     {
-        std::unique_ptr<DidHandler>& did_handler = wxGetApp().did_handler;
-        std::unique_ptr<CanEntryHandler>& can_handler = wxGetApp().can_entry;
 
-        wxString did_str = did_grid->m_grid->GetCellValue(row, DidGridCol::Did_ID);
-        uint32_t did_id = std::stoi(did_str.ToStdString(), nullptr, 16);
+        const wxString did_str = did_grid->m_grid->GetCellValue(row, DidGridCol::Did_ID);
+        const std::optional<uint32_t> did_id = utils::TryParse<uint32_t>(
+            did_str.ToStdString(), utils::ParseMode::Whole, 16);
+        if(!did_id)
+            return;
 
-        std::unique_ptr<DidEntry>& did_it = did_handler->m_DidList[did_id];
+        /* The three fields the edit needs, read under the lock. This was the
+           one model read in this panel that took no lock at all, while the UDS
+           worker writes the same entry's value, nrc and timestamp. WriteDid
+           below takes that same lock, so it cannot be called from inside
+           WithModel - hence a snapshot rather than a reference.
 
-        uint32_t hex_val = 0;
-        std::string hex_str;
+           find rather than operator[]: the latter inserts a null unique_ptr for
+           a DID that is not in the list and then dereferences it. */
+        struct DidTarget
+        {
+            uint16_t id;
+            DidEntryType type;
+            size_t len;
+        };
 
+        const std::optional<DidTarget> did_it = m_didHandler.WithModel(
+            [did_id](DidHandler::Model& model) -> std::optional<DidTarget>
+        {
+            const auto entry = model.did_list.find(*did_id);
+            if(entry == model.did_list.end() || !entry->second)
+                return std::nullopt;
+            return DidTarget{ entry->second->id, entry->second->type, entry->second->len };
+        });
+        if(!did_it)
+            return;
+
+        /* Not const: the DET_STRING and DET_BYTEARRAY branches pad and trim it
+           to the DID's declared length in place. */
+        std::string hex_str = did_grid->m_grid->GetCellValue(row, DidGridCol::Did_Value).ToStdString();
+        uint64_t hex_val = 0;
         bool is_ok = true;
-        try
+        if(did_types::IsInteger(did_it->type))
         {
-            hex_str = did_grid->m_grid->GetCellValue(row, DidGridCol::Did_Value);
-            if(did_it->type == DET_UI8 || did_it->type == DET_UI16 || did_it->type == DET_UI32 || did_it->type == DET_UI64)
-                hex_val = std::stoi(hex_str, nullptr, 16);
-        }
-        catch(const std::exception& e)
-        {
-            LOG(LogLevel::Error, "stoi exception: {}", e.what());
-            //can_grid_rx->m_grid->SetCellValue(wxGridCellCoords(row, CanSenderGridCol::Sender_LogLevel), wxString::Format("%d", can_handler->m_rxData[frame_id]->log_level));
-            is_ok = false;
+            /* std::stoi also capped this at int width, so a 64-bit DID value
+               threw out_of_range instead of being written. */
+            const std::optional<uint64_t> parsed = utils::TryParse<uint64_t>(
+                hex_str, utils::ParseMode::Whole, 16);
+            if(parsed)
+                hex_val = *parsed;
+            else
+            {
+                LOG(LogLevel::Error, "Rejecting DID value '{}': not a hexadecimal number", hex_str);
+                is_ok = false;
+            }
         }
 
-        if(did_handler->m_DidList[did_id] && is_ok)
+        if(is_ok)
         {
             switch(did_it->type)
             {
@@ -360,29 +400,22 @@ void DidPanel::OnCellValueChanged(wxGridEvent& ev)
                 }
                 case DET_UI16:
                 {
-                    uint16_t val_to_write = static_cast<uint8_t>(hex_val);
+                    /* This narrowed to uint8_t before widening back out, so
+                       every 16-bit DID was written with its high byte zeroed. */
+                    uint16_t val_to_write = static_cast<uint16_t>(hex_val);
                     WriteDid(did_it->id, (uint8_t*)&val_to_write, sizeof(val_to_write));
                     break;
                 }
                 case DET_UI32:
                 {
-                    uint32_t val_to_write = static_cast<uint8_t>(hex_val);
+                    /* Same truncation through uint8_t as DET_UI16 above. */
+                    uint32_t val_to_write = static_cast<uint32_t>(hex_val);
                     WriteDid(did_it->id, (uint8_t*)&val_to_write, sizeof(val_to_write));
                     break;
                 }
                 case DET_STRING:
                 {
-                    if(hex_str.length() < did_it->len)
-                    {
-                        while(hex_str.length() < did_it->len)
-                        {
-                            hex_str += hex_str.back();
-                        }
-                    }
-                    else
-                    {
-                        hex_str.erase(did_it->len - 1, hex_str.length() - did_it->len);
-                    }
+                    hex_str = did::FitToDeclaredLength(std::move(hex_str), did_it->len);
                     uint8_t* byte_array = (uint8_t*)const_cast<const char*>(hex_str.c_str());
 
                     WriteDid(did_it->id, byte_array, hex_str.length());
@@ -390,40 +423,32 @@ void DidPanel::OnCellValueChanged(wxGridEvent& ev)
                 }
                 case DET_BYTEARRAY:
                 {
-                    char byte_array[MAX_ISOTP_FRAME_LEN];
-                    boost::algorithm::erase_all(hex_str, " ");
-                    boost::algorithm::erase_all(hex_str, ".");
-                    
-                    uint16_t len = (hex_str.length() / 2);
-                    if(len == 0)
+
+                    hex_str = utils::StripHexSeparators(hex_str);
+                    if(hex_str.empty())
                     {
-                        LOG(LogLevel::Warning, "Skipping IsoTP frame, input length is zero");
+                        LOG(LogLevel::Warning, "Skipping DID {:X}: input length is zero", did_it->id);
                         break;
                     }
 
-                    if(hex_str.length() < did_it->len)
+                    hex_str = did::FitToDeclaredLength(std::move(hex_str), did_it->len);
+
+                    auto bytes = utils::ParseHexBytes(hex_str, MAX_ISOTP_FRAME_LEN);
+                    if(!bytes)
                     {
-                        while(hex_str.length() < did_it->len)
-                        {
-                            hex_str += hex_str.back();
-                        }
-                    }
-                    else
-                    {
-                        hex_str.erase(did_it->len - 1, hex_str.length() - did_it->len);
+                        LOG(LogLevel::Error, "Skipping DID {:X}: '{}' is not valid hex", did_it->id, hex_str);
+                        break;
                     }
 
-                    utils::ConvertHexStringToBuffer(hex_str, std::span{ byte_array });
-
-                    WriteDid(did_it->id, (uint8_t*)&byte_array, len);
+                    WriteDid(did_it->id, bytes->data(), static_cast<uint16_t>(bytes->size()));
                     break;
                 }
             }
         }
-        else
-        {
-            LOG(LogLevel::Error, "Invalid DID: {:X}", did_id);
-        }
+        /* The "Invalid DID" branch that used to sit here covered two different
+           failures - a DID missing from the list and a value that would not
+           parse - and reported both as the first. Each is now rejected where it
+           is detected, with a message that says which one happened. */
     }
 }
 

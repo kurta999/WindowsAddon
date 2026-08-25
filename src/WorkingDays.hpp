@@ -1,11 +1,16 @@
-#include "utils/CSingleton.hpp"
+#pragma once
 
 #include <boost/date_time/gregorian/gregorian.hpp>
 
-class WorkingDays : public CSingleton < WorkingDays >
-{
-    friend class CSingleton < WorkingDays >;
+#include <string>
 
+// !\brief How many working days and public holidays this month has, per country.
+//
+// A value holder with one method that fills it in. It was a singleton, which
+// meant the one panel that shows the numbers reached for it eleven times
+// rather than being handed it once.
+class WorkingDays
+{
 public:
     WorkingDays() = default;
     ~WorkingDays() = default;
@@ -25,13 +30,6 @@ public:
     int m_HolidaysAustria;
     std::string m_HolidaysStrAustria;
 
-private:
-    bool IsWeekend(boost::gregorian::day_iterator dit);
-    boost::gregorian::date CalculateEaster(int year);
-    std::set<boost::gregorian::date> GetSlovakHolidays(int year);
-    std::set<boost::gregorian::date> GetHungarianHolidays(int year);
-    std::set<boost::gregorian::date> GetAustrianHolidays(int year);
-    std::map<std::string, std::string> GetHolidayDescriptions(const std::set<boost::gregorian::date>& holidays);
-    bool IsSlovakHoliday(const boost::gregorian::date& d, const std::set<boost::gregorian::date>& holidays);
-    void CountWorkingDaysForCountry(const boost::gregorian::date& start_date, const boost::gregorian::date& end_date, const std::set<boost::gregorian::date>& holidays, int& working_days, int& holidays_count, std::string& holidays_str);
+    /* The date arithmetic lives in working_days (WorkingDaysCalendar.hpp),
+       where it can be tested without waiting for the right day of the year. */
 };

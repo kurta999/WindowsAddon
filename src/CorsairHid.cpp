@@ -1,4 +1,14 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "CorsairHid.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
+#include "utils/InterruptibleSleep.hpp"
+#include "SettingsReader.hpp"
+#include "SettingsWriter.hpp"
+#include <ostream>
+#include "interface/IKeySink.hpp"
+
+using namespace std::chrono_literals;
 
 namespace {
     constexpr int HID_READ_TIMEOUT      = 100;
@@ -20,9 +30,7 @@ bool CorsairHid::Init()
         if(hid_inited)
             DestroyWorkingThread();
 
-        m_worker = std::make_unique<std::jthread>(std::bind_front(&CorsairHid::ThreadFunc, this));
-        if(m_worker)
-            utils::SetThreadName(*m_worker, "CorsairHid");
+        m_worker = utils::StartNamedWorker("CorsairHid", std::bind_front(&CorsairHid::ThreadFunc, this));
     }
     else
     {
@@ -182,8 +190,7 @@ void CorsairHid::ThreadFunc(std::stop_token token)
                     read_error_reported = true;
                 }
 
-                std::unique_lock lock{ m_Mutex };
-                m_cv.wait_for(lock, token, 1000ms, []() { return false; }); /* Back-off after error */
+                utils::InterruptibleSleep(m_cv, m_Mutex, token, 1000ms);  /* Back-off after error */
             }
             else
             {
@@ -205,8 +212,7 @@ void CorsairHid::ThreadFunc(std::stop_token token)
                 
         }
 
-        std::unique_lock lock{ m_Mutex };
-        m_cv.wait_for(lock, token, 1ms, []() { return false; });
+        utils::InterruptibleSleep(m_cv, m_Mutex, token, 1ms);
     }
 #endif
 }
@@ -218,10 +224,25 @@ void CorsairHid::HandleKeypress(const std::string& key)
     if(elapsed > m_DebouncingInterval)
     {
         last_keypress = time_now;
-        CustomMacro::Get()->SimulateKeypress(key);
+        if(m_KeySink != nullptr)
+            m_KeySink->OnKeyPressed(key);
     }
     else
     {
         LOG(LogLevel::Normal, "Bouncing detected, keypress has been skipped. Elapsed time (ms): {}", elapsed);
     }
+}
+
+void CorsairHid::LoadSettings(SettingsReader& reader)
+{
+    SetEnabled(utils::stob(reader.Required("CorsairHid", "Enable")));
+    SetDebouncingInterval(utils::stoi<uint16_t>(reader.Required("CorsairHid", "DebouncingInterval")));
+}
+
+void CorsairHid::SaveSettings(std::ostream& out) const
+{
+    SettingsWriter(out, "CorsairHid")
+        .Key("Enable", IsEnabled())
+        .Key("DebouncingInterval", GetDebouncingInterval())
+        .Blank();
 }

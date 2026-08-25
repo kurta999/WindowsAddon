@@ -11,3 +11,7 @@ add_library(windowshelper_protocol STATIC
 target_include_directories(windowshelper_protocol PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_definitions(windowshelper_protocol PRIVATE _CRT_SECURE_NO_WARNINGS)
 windowshelper_configure_own_target(windowshelper_protocol)
+
+# bitfield.c relies on the legacy BSD BYTE_ORDER/LITTLE_ENDIAN macros from
+# <sys/param.h>, which glibc only exposes under GNU extensions.
+set_target_properties(windowshelper_protocol PROPERTIES C_EXTENSIONS ON)

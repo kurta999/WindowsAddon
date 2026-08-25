@@ -1,3 +1,7 @@
+#pragma once
+
+#include "utils/AsyncSerial.hpp"
+
 #include "utils/CSingleton.hpp"
 #include <atomic>
 #include <condition_variable>
@@ -7,13 +11,13 @@
 #include <ICanDevice.hpp>
 #include <ICanDeviceFactory.hpp>
 #include <ICanTransport.hpp>
+#include "SerialPortBase.hpp"
 
-/* TODO: create asbtraction for this & SerialPort because it's the same - but no time currently */
 class CallbackAsyncSerial;
-class CanSerialPort : public SerialPortBase, public ICanTransport, public CSingleton < CanSerialPort >
+// !\brief The CAN transport. Everything that speaks CAN already receives it
+// as ICanTransport&; the singleton was down to being a locator for two panels.
+class CanSerialPort : public SerialPortBase, public ICanTransport
 {
-    friend class CSingleton < CanSerialPort >;
-
 public:
     CanSerialPort();
     ~CanSerialPort();

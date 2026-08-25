@@ -21,6 +21,18 @@ static const uint8_t reverse_mask[] =
 static const uint8_t reverse_mask_xor[] =
     { 0xff, 0x7f, 0x3f, 0x1f, 0x0f, 0x07, 0x03, 0x01, 0x00 };
 
+/*
+ * The misaligned-copy path below assembles each destination byte from two
+ * adjacent source bytes (a shift-left of the current byte combined with a
+ * shift-right "peek" at the next one). On the final iteration that peek can
+ * land one byte past source_origin + source_length; those bits are always
+ * outside the validated [source_offset, source_offset + bit_count) range,
+ * so treating an out-of-range peek as 0 is safe and avoids the overread.
+ */
+static inline uint8_t peek_next_source_byte(const uint8_t* source, const uint8_t* source_end) {
+    return (source < source_end) ? *source : 0;
+}
+
 bool copy_bits(const uint8_t* source_origin, const uint16_t source_length,
         const uint16_t source_offset, uint16_t bit_count,
         uint8_t* destination_origin, const uint16_t destination_length,
@@ -35,6 +47,7 @@ bool copy_bits(const uint8_t* source_origin, const uint16_t source_length,
     }
 
     const uint8_t* source = source_origin + (source_offset / CHAR_BIT);
+    const uint8_t* const source_end = source_origin + source_length;
     uint8_t* destination = destination_origin + (destination_offset / CHAR_BIT);
     int source_offset_modulo = source_offset % CHAR_BIT;
     int destination_offset_modulo = destination_offset % CHAR_BIT;
@@ -71,7 +84,7 @@ bool copy_bits(const uint8_t* source_origin, const uint16_t source_length,
             bit_diff_right_shift = CHAR_BIT - bit_diff_left_shift;
 
             c = *source++ << bit_diff_left_shift;
-            c |= *source >> bit_diff_right_shift;
+            c |= peek_next_source_byte(source, source_end) >> bit_diff_right_shift;
             c &= reverse_mask_xor[destination_offset_modulo];
         } else {
             bit_diff_right_shift = destination_offset_modulo - source_offset_modulo;
@@ -89,7 +102,7 @@ bool copy_bits(const uint8_t* source_origin, const uint16_t source_length,
         int byte_len = bit_count / CHAR_BIT;
         while(--byte_len >= 0) {
             c = *source++ << bit_diff_left_shift;
-            c |= *source >> bit_diff_right_shift;
+            c |= peek_next_source_byte(source, source_end) >> bit_diff_right_shift;
             *destination++ = c;
         }
 
@@ -99,7 +112,7 @@ bool copy_bits(const uint8_t* source_origin, const uint16_t source_length,
         int bit_count_modulo = bit_count % CHAR_BIT;
         if(bit_count_modulo > 0) {
             c = *source++ << bit_diff_left_shift;
-            c |= *source >> bit_diff_right_shift;
+            c |= peek_next_source_byte(source, source_end) >> bit_diff_right_shift;
             c &= reverse_mask[bit_count_modulo];
 
             *destination &= reverse_mask_xor[bit_count_modulo];

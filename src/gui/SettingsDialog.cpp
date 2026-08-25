@@ -105,7 +105,7 @@ SettingsDialog::SettingsDialog(wxWindow* parent)
     auto* main_sizer = new wxBoxSizer(wxVERTICAL);
     auto* description = new wxStaticText(this, wxID_ANY,
         "Edit settings.ini values below. Macro, command-executor, and directory-backup editors are intentionally excluded.\n"
-        "Some layout and connection changes take full effect after restarting WindowsHelper.");
+        "Some layout and connection changes take full effect after restarting WindowsAddon.");
     main_sizer->Add(description, 0, wxEXPAND | wxALL, FromDIP(10));
 
     m_grid = new wxPropertyGrid(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
@@ -124,21 +124,12 @@ SettingsDialog::SettingsDialog(wxWindow* parent)
         save_button->SetLabel("&Save");
     Bind(wxEVT_BUTTON, &SettingsDialog::OnSave, this, wxID_OK);
 
-    std::ifstream input(SETTINGS_PATH, std::ios::binary);
     std::string error;
-    if(!input.is_open())
+    if(m_document.LoadFromFile(SETTINGS_PATH, error))
     {
-        error = "Unable to open settings.ini";
-    }
-    else
-    {
-        std::string content{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-        if(m_document.Parse(std::move(content), error))
-        {
-            PopulateGrid();
-            m_ready = true;
-            return;
-        }
+        PopulateGrid();
+        m_ready = true;
+        return;
     }
 
     if(auto* save_button = FindWindow(wxID_OK))
@@ -224,48 +215,8 @@ bool SettingsDialog::CopyValuesFromGrid(std::string& error)
 
 bool SettingsDialog::WriteSettings(std::string& error) const
 {
-    const std::filesystem::path settings_path = std::filesystem::absolute(SETTINGS_PATH).lexically_normal();
-    std::filesystem::path temporary_path = settings_path;
-    temporary_path += ".tmp";
-
-    std::ofstream output(temporary_path, std::ios::binary | std::ios::trunc);
-    if(!output.is_open())
-    {
-        error = "Unable to open the temporary settings file for writing";
-        return false;
-    }
-    output << m_document.Render();
-    output.flush();
-    if(!output)
-    {
-        error = "Failed while writing the temporary settings file";
-        output.close();
-        std::error_code remove_error;
-        std::filesystem::remove(temporary_path, remove_error);
-        return false;
-    }
-    output.close();
-
-#ifdef _WIN32
-    if(!MoveFileExW(temporary_path.c_str(), settings_path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-    {
-        error = "Unable to replace settings.ini (Windows error " + std::to_string(GetLastError()) + ")";
-        std::error_code remove_error;
-        std::filesystem::remove(temporary_path, remove_error);
-        return false;
-    }
-#else
-    std::error_code rename_error;
-    std::filesystem::rename(temporary_path, settings_path, rename_error);
-    if(rename_error)
-    {
-        error = "Unable to replace settings.ini: " + rename_error.message();
-        std::error_code remove_error;
-        std::filesystem::remove(temporary_path, remove_error);
-        return false;
-    }
-#endif
-    return true;
+    /* The document owns keeping settings.ini intact; the dialog only asks. */
+    return m_document.SaveToFileAtomically(SETTINGS_PATH, error);
 }
 
 void SettingsDialog::OnSave(wxCommandEvent& WXUNUSED(event))

@@ -5,8 +5,8 @@ EVT_FILEPICKER_CHANGED(ID_FilePickerCanScript, CanScriptPanel::OnFileSelected)
 EVT_SIZE(CanScriptPanel::OnSize)
 wxEND_EVENT_TABLE()
 
-CanScriptPanel::CanScriptPanel(wxWindow* parent)
-    : wxPanel(parent, wxID_ANY)
+CanScriptPanel::CanScriptPanel(wxWindow* parent, CanEntryHandler& handler)
+    : wxPanel(parent, wxID_ANY), m_handler(handler)
 {
     m_Script = std::make_unique<CanScriptHandler>(*this, *wxGetApp().can_entry);
 

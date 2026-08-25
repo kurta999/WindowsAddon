@@ -1,3 +1,5 @@
+#pragma once
+
 #include "utils/CSingleton.hpp"
 #include <atomic>
 #include <condition_variable>
@@ -14,6 +16,7 @@
 #include "SerialPortBase.hpp"
 #include "IModbusEntry.hpp"
 #include "IModbusRecorder.hpp"
+#include "ModbusProtocol.hpp"
 
 enum class ModbusError
 {
@@ -56,22 +59,19 @@ public:
     std::expected<std::vector<uint16_t>, ModbusError> ReadInputRegisters(uint8_t slave_id, uint16_t read_offset, uint16_t read_count);
     ModbusCustomCommandResult SendCustomCommand(const std::vector<uint8_t>& frame);
 
-    uint16_t m_ResponseTimeout = 5000;
+    /* Read by the polling worker while the settings load and the GUI spin
+       control write it. */
+    std::atomic<uint16_t> m_ResponseTimeout = 5000;
 
     size_t GetTimeoutPackets() { return timeout_packets; }
     void ResetTimeoutPackets() { timeout_packets = 0; }
 
 private:
-    enum ModbusFunctionCodes : uint8_t
-    {
-        FC_ReadCoilStatus      = 1,
-        FC_ReadInputStatus     = 2,
-        FC_ReadHoldingRegister = 3,
-        FC_ReadInputRegister   = 4,
-        FC_ForceSingleCoil     = 5,
-        FC_WriteSingleRegister = 6,
-        FC_WriteMultipleRegister = 16,
-    };
+    /* The function codes moved to modbus:: in ModbusProtocol.hpp, where the
+       builders and the response-length logic that dispatch on them live. The
+       using-declaration keeps every FC_ name in this file meaning what it
+       meant. */
+    using enum modbus::ModbusFunctionCodes;
 
     enum ResponseStatus : uint8_t
     {
@@ -81,10 +81,69 @@ private:
         CrcError
     };
 
-    void SetupHeader(std::vector<uint8_t>& vec, uint8_t slave_id, uint16_t fcode, uint16_t len);
-    void AddCrcToFrame(std::vector<uint8_t>& vec);
+    // !\brief The transaction id a TCP response has to echo back, taken from
+    // the request's MBAP header. An RTU frame carries none.
+    using TransactionId = std::optional<uint16_t>;
+
+    [[nodiscard]] TransactionId TransactionOf(const std::vector<uint8_t>& frame) const;
+
+    // !\brief The transaction id for the next request. TCP burns one per
+    // exchange; RTU has none to burn. Was `if(IsTcp()) ++sequence_id;`
+    // written out after every build call.
+    [[nodiscard]] uint16_t ConsumeSequenceId()
+    {
+        return IsTcp() ? sequence_id++ : sequence_id;
+    }
+
+    // !\brief Send a framed request and wait for its answer.
+    //
+    // The six request functions each wrote out the same failure mapping, and
+    // each had to remember to clear m_RecvData before returning from it.
+    // !\return What the response must echo, or the error the exchange failed with.
+    [[nodiscard]] std::expected<TransactionId, ModbusError> SendAndAwait(
+        const std::vector<uint8_t>& frame);
+
+    // !\brief Build one of the four read requests, send it, and wait.
+    [[nodiscard]] std::expected<TransactionId, ModbusError> SendReadRequest(
+        uint8_t slave_id, uint8_t function_code, uint16_t read_offset, uint16_t read_count);
+
+    // !\brief Read `read_count` registers in chunks the protocol allows, in order.
+    //
+    // ReadHoldingRegisters and ReadInputRegisters were this loop twice,
+    // character for character apart from which single read they call.
+    template <typename ReadOne>
+    [[nodiscard]] std::expected<std::vector<uint16_t>, ModbusError> ChunkedRead(
+        uint16_t read_offset, uint16_t read_count, ReadOne read_one)
+    {
+        if(read_count == 0 || static_cast<uint32_t>(read_offset) + read_count > 0x10000)
+            return std::unexpected(ModbusError::InvalidRequest);
+
+        std::vector<uint16_t> result;
+        size_t remaining = read_count;
+        uint16_t offset = read_offset;
+        while(remaining > 0)
+        {
+            const uint16_t step = static_cast<uint16_t>(
+                std::min<size_t>(remaining, kMaxRegistersPerRequest));
+            const auto chunk = read_one(offset, step);
+            if(!chunk.has_value())
+                return std::unexpected(chunk.error());
+            if(chunk->size() != step)
+                return std::unexpected(ModbusError::InvalidLength);
+
+            result.insert(result.end(), chunk->begin(), chunk->end());
+            offset    += step;
+            remaining -= step;
+        }
+        return result;
+    }
+
+    // !\brief The most registers one request may carry. Both chunked reads used
+    // this same limit, including the input-register one whose name said
+    // holding.
+    static constexpr size_t kMaxRegistersPerRequest = 120;
+
     ResponseStatus NotifyAndWaitForResponse(const std::vector<uint8_t>& vec);
-    void DoCleanup(std::vector<uint8_t>& recv_data);
     bool WaitForResponse();
     uint8_t ExtractFunctionCode(const std::vector<uint8_t>& data) const;
     size_t TrimmedLen(size_t raw_len) const;

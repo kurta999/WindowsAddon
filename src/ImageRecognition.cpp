@@ -1,4 +1,10 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "ImageRecognition.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
+#ifdef USE_OPENCV
+#include <opencv4/opencv2/opencv.hpp>
+#endif
 
 namespace ImageRecognition
 {
@@ -90,6 +96,7 @@ void MoveCursorAndClick(POINT pos)
 #endif
 }
 
+#ifdef _WIN32
 void GetAllWindowsFromProcessID(DWORD dwProcessID, std::vector <HWND>& vhWnds)
 {
 #ifdef USE_BSEC
@@ -181,8 +188,15 @@ void BringWindowToForeground(HWND hwnd)
     */
 }
 
+void Minimize(HWND hwnd)
+{
+    SendMessage(hwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
+}
+#endif // _WIN32
+
 bool BringWindowToForegroundByName(const std::string& process_name, const std::string& window_name)
 {
+#ifdef _WIN32
     const std::wstring process_namew = std::wstring(process_name.begin(), process_name.end());
     DWORD pid = FindProcessId(process_namew);
     if(pid == 0)
@@ -198,10 +212,10 @@ bool BringWindowToForegroundByName(const std::string& process_name, const std::s
 
     BringWindowToForeground(chrome_window);
     return true;
-}
-
-void Minimize(HWND hwnd)
-{
-    SendMessage(hwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
+#else
+    (void)process_name;
+    (void)window_name;
+    return false;
+#endif
 }
 }

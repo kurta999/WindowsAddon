@@ -7,14 +7,15 @@
 class CanDeviceLawicel : public ICanDevice
 {
 public:
-    CanDeviceLawicel(boost::circular_buffer<char>& CircBuff);
+    CanDeviceLawicel();
     ~CanDeviceLawicel();
 
-    void ProcessReceivedFrames(std::mutex& rx_mutex, const CanFrameReceiver& receiver) override;
+    void DecodeReceivedBytes(std::span<const std::uint8_t> received, const CanFrameReceiver& receiver) override;
     size_t PrepareSendDataFormat(const std::shared_ptr<CanData>& data_ptr, char* out, size_t size, bool& remove_from_queue) override;
 
 private:
-    boost::circular_buffer<char>& m_CircBuff;
     can_codec::LawicelStreamDecoder m_Decoder;
-    uint8_t device_state = 0;
+    // !\brief How far through kHandshake the adapter has been walked. At
+    // the table's size, the handshake is done and frames flow.
+    size_t m_HandshakeStep = 0;
 };

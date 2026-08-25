@@ -16,9 +16,11 @@
 /**************************************************************
  * OS specific defines
  *************************************************************/
-#ifdef _WIN32
-#define snprintf _snprintf
-#endif
+/* `#define snprintf _snprintf` used to sit here. Nothing in this library
+   calls snprintf, MSVC has had a conforming one since VS2015, and _snprintf
+   does not guarantee null termination. Worse, an unguarded macro in a header
+   leaks into everything included after it: boost/system's `using std::snprintf`
+   became `using std::_snprintf` and failed to compile. */
 
 #ifdef _WIN32
 #define ISOTP_BYTE_ORDER_LITTLE_ENDIAN

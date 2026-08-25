@@ -1,6 +1,33 @@
-#include "pch.hpp"
+#include "Logger.hpp"
+#include "LogFileSearch.hpp"
+
+#include <boost/algorithm/string.hpp>
+
+#include <array>
+#include <cassert>
+#include <cstdio>
+#include <fstream>
+#include <string>
+#include <utility>
+#include "SettingsReader.hpp"
+#include "SettingsWriter.hpp"
 
 constexpr const char* LOG_FILENAME = "./logfile.txt";
+
+namespace
+{
+/* One table for both directions. Two independent if-chains used to encode the
+   same mapping, so a level could be parsed and then printed as something else. */
+constexpr std::array<std::pair<LogLevel, std::string_view>, 7> kLogLevelNames{{
+    {LogLevel::Debug, "Debug"},
+    {LogLevel::Verbose, "Verbose"},
+    {LogLevel::Normal, "Normal"},
+    {LogLevel::Notification, "Notification"},
+    {LogLevel::Warning, "Warning"},
+    {LogLevel::Error, "Error"},
+    {LogLevel::Critical, "Critical"},
+}};
+}
 
 Logger::Logger()
 {
@@ -24,12 +51,25 @@ LogLevel Logger::GetDefaultLogLevel() const
 	return m_DefaultLogLevel;
 }
 
+void Logger::LoadSettingsFrom(SettingsReader& reader, std::string_view section)
+{
+	const std::string block(section);
+	SetLogLevelAsString(reader.Required(block, "DefaultLogLevel"));
+	SetLogFilters(reader.Required(block, "LogFilters"));
+}
+
+void Logger::WriteSettingsTo(SettingsWriter& writer) const
+{
+	writer.Key("DefaultLogLevel", GetLogLevelAsString())
+		.Key("LogFilters", GetLogFilters());
+}
+
 void Logger::SetLogLevelAsString(const std::string& level)
 {
 	m_DefaultLogLevel = StringToLogLevel(level);
 }
 
-const std::string Logger::GetLogLevelAsString()
+const std::string Logger::GetLogLevelAsString() const
 {
 	const std::string ret = LogLevelToString(m_DefaultLogLevel);
 	return ret;
@@ -50,7 +90,7 @@ void Logger::SetLogFilters(const std::string& filter_list)
 	}
 }
 
-std::string Logger::GetLogFilters()
+std::string Logger::GetLogFilters() const
 {
 	std::string ret;
 	for(auto& i : m_LogFilters)
@@ -78,45 +118,38 @@ bool Logger::SearchInLogFile(std::string_view filter, std::string_view log_level
 		return false;
 	}
 
+	/* Splitting a line into its fields is log_file::Parse, which has no
+	   buffers to overrun - the sscanf this replaced skipped any line whose
+	   function signature was longer than 255 characters, which in a recent
+	   test run was twelve lines out of sixty-five. */
 	m_helper->ClearEntries();
 	std::string line;
-	while(std::getline(in, line, '\n'))  /* "2022.08.12.591 15:54:00 [Warning] [CorsairHid.cpp:59 - CorsairHid::ExecuteInitSequence] 5 \n" */
+	while(std::getline(in, line, '\n'))
 	{
-		int year, month, day, hour, minute, second, millisecond;
-		char level[32] = {};
-		char cppfile[64] = {};
-		int linenumber;
-		char funcname[256] = {};
-		char logstr[512] = {};
-		int ret = sscanf(line.c_str(), "%d.%d.%d %d:%d:%d.%d [%31[^]]] [%63[^:]:%d - %255[^]]] %511[^\n]",
-			&year, &month, &day, &hour, &minute, &second, &millisecond, level, cppfile, &linenumber, funcname, logstr);
-		if(ret == 12)
-		{
-			std::string_view logline(logstr);
-			std::string_view levelline(level);
+		const auto parsed = log_file::Parse(line);
+		if(!parsed || !log_file::Matches(*parsed, filter, log_level))
+			continue;
 
-			if(!filter.empty() && boost::algorithm::ifind_first(logline, filter).begin() == logline.end()) continue;  /* Skip if no match */
-			if(!log_level.empty() && boost::algorithm::ifind_first(levelline, log_level).begin() == levelline.end()) continue;  /* Skip if no match */
-			m_helper->AppendLog(cppfile, line);
-		}
+		m_helper->AppendLog(std::string(parsed->file), line);
 	}
 	return true;
 }
 
 void Logger::AppendPreinitedEntries()
 {
-	MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
+	/* A registered helper is what "the log view exists" means here. Looking the
+	   frame up as well only re-asked the same question through the GUI. */
 	std::scoped_lock helper_lock(m_helperMutex);
-	if(frame && frame->log_panel && m_helper)
+	if(!m_helper)
+		return;
+
+	std::unique_lock lock(m_mutex);
+	for(auto& i : preinit_entries)
 	{
-		std::unique_lock lock(m_mutex);
-		for(auto& i : preinit_entries)
-		{
-			if(!i.message.empty())
-				m_helper->AppendLog(i.file.ToStdString(), i.message.ToStdString(), true);
-		}
-		preinit_entries.clear();
+		if(!i.message.empty())
+			m_helper->AppendLog(i.file, i.message, true);
 	}
+	preinit_entries.clear();
 }
 
 void Logger::Tick()
@@ -126,45 +159,22 @@ void Logger::Tick()
 
 LogLevel Logger::StringToLogLevel(const std::string& level)
 {
-	LogLevel ret = LogLevel::Verbose;
-	if(boost::algorithm::icontains(level, "Debug"))
-		ret = LogLevel::Debug;
-	else if(boost::algorithm::icontains(level, "Verbose"))
-		ret = LogLevel::Verbose;
-	else if(boost::algorithm::icontains(level, "Normal"))
-		ret = LogLevel::Normal;
-	else if(boost::algorithm::icontains(level, "Notification"))
-		ret = LogLevel::Notification;
-	else if(boost::algorithm::icontains(level, "Warning"))
-		ret = LogLevel::Warning;
-	else if(boost::algorithm::icontains(level, "Error"))
-		ret = LogLevel::Error;
-	else if(boost::algorithm::icontains(level, "Critical"))
-		ret = LogLevel::Critical;
-	else
-		LOG(LogLevel::Error, "Invalid log level: {}", level);
-	return ret;
+	for(const auto& [value, name] : kLogLevelNames)
+	{
+		if(boost::algorithm::icontains(level, name))
+			return value;
+	}
+	LOG(LogLevel::Error, "Invalid log level: {}", level);
+	return LogLevel::Verbose;
 }
 
-std::string Logger::LogLevelToString(LogLevel level)
+std::string Logger::LogLevelToString(LogLevel level) const
 {
-	std::string ret = "Verbose";
-	if(level == LogLevel::Debug)
-		ret = "Debug";
-	else if(level == LogLevel::Verbose)
-		ret = "Verbose";
-	else if(level == LogLevel::Normal)
-		ret = "Normal";
-	else if(level == LogLevel::Notification)
-		ret = "Notification";
-	else if(level == LogLevel::Warning)
-		ret = "Warning";
-	else if(level == LogLevel::Error)
-		ret = "Error";
-	else if(level == LogLevel::Critical)
-		ret = "Critical";
-	else
-		LOG(LogLevel::Error, "Invalid log level: {}", static_cast<int>(level));
-	return ret;
-
+	for(const auto& [value, name] : kLogLevelNames)
+	{
+		if(value == level)
+			return std::string(name);
+	}
+	LOG(LogLevel::Error, "Invalid log level: {}", static_cast<int>(level));
+	return "Verbose";
 }

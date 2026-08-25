@@ -2,10 +2,15 @@
 
 #include <wx/wx.h>
 
+class PrintScreenSaver;
+class IdlePowerSaver;
+class IKeySink;
+
 class DebugPanel : public wxPanel
 {
 public:
-	DebugPanel(wxFrame* parent);
+	DebugPanel(wxFrame* parent, PrintScreenSaver& screenshots, IdlePowerSaver& power_saver,
+		IKeySink& keys);
 	
 	void HandleUpdate();
 
@@ -28,6 +33,12 @@ public:
 	wxButton* m_HourConvert = nullptr;
 
 private:
+	/* Held rather than captured: the button's handler outlives the
+	   constructor, so a reference to its parameter would dangle. */
+	PrintScreenSaver& m_Screenshots;
+	IdlePowerSaver& m_PowerSaver;
+	IKeySink& m_Keys;
+
 	std::future<void> keypress_future;
 	wxDECLARE_EVENT_TABLE();
 };

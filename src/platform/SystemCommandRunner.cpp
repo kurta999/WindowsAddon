@@ -34,7 +34,9 @@ bool SystemCommandRunner::Start(std::string_view command, bool hidden)
     command_line.append(command);
 
     const DWORD creation_flags = hidden ? CREATE_NO_WINDOW : NORMAL_PRIORITY_CLASS;
-    const BOOL started = CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, TRUE,
+    /* No handles are inherited: the child needs none, and inheriting every
+       inheritable handle in the process leaks them into an arbitrary command. */
+    const BOOL started = CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, FALSE,
         creation_flags, nullptr, nullptr, &startup_info, &process_info);
     if(!started)
         return false;

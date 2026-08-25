@@ -1,4 +1,5 @@
 #include "pch.hpp"
+#include "MenuCommand.hpp"
 
 wxBEGIN_EVENT_TABLE(BackupPanel, wxPanel)
 EVT_TREELIST_ITEM_CONTEXT_MENU(ID_BackupPanel, BackupPanel::OnItemContextMenu)
@@ -7,45 +8,37 @@ wxEND_EVENT_TABLE()
 
 void BackupPanel::OnItemContextMenu(wxTreeListEvent& evt)
 {
-	wxMenu menu;
-	menu.Append(Id_Backup_AddNew, "&Add new backup")->SetBitmap(wxArtProvider::GetBitmap(wxART_NEW_DIR, wxART_OTHER, FromDIP(wxSize(14, 14))));
-	menu.Append(Id_Backup_Delete, "&Delete")->SetBitmap(wxArtProvider::GetBitmap(wxART_DELETE, wxART_OTHER, FromDIP(wxSize(14, 14))));
-
 	const wxTreeListItem item = evt.GetItem();
-	wxTreeListItem root = tree->GetItemParent(item);
+	const wxTreeListItem root = tree->GetItemParent(item);
 	if(root == NULL) return;
-	wxTreeListItem root2 = tree->GetItemParent(root);
 
-	wxTreeListItem child = tree->GetFirstChild(item);
-	menu.Enable(Id_Backup_Delete, !(child == 0));
+	const gui::MenuEntry entries[]{
+		gui::MenuCommand{ "&Add new backup", [this, item]
+			{
+				m_Backups.AddEntry(BackupEntry(L"C:\\folder_non_exists",
+					std::vector<std::filesystem::path>{L"C:\\backup"},
+					std::vector<std::string>({ ".gitignore", ".txt" }), 2, false, 0, 1));
 
-	int ret = tree->GetPopupMenuSelectionFromUser(menu);
-	switch(ret)
-	{
-		case Id_Backup_AddNew:
-		{
-			const wxString& root_str = tree->GetItemText(item, 0);
-			const wxString& item_str = tree->GetItemText(item, 1);
+				UpdateMainTree();
+			}, wxART_NEW_DIR },
+		gui::MenuCommand{ "&Delete", [this, item, root]
+			{
+				wxClientData* itemdata = tree->GetItemData(root);
+				if(!itemdata)
+					itemdata = tree->GetItemData(item);
 
-			DirectoryBackup::Get()->AddEntry(BackupEntry(L"C:\\folder_non_exists",
-				std::vector<std::filesystem::path>{L"C:\\backup"},
-				std::vector<std::wstring>({ L".gitignore", L".txt" }), 2, false, 0, 1));
+				wxIntClientData<uint16_t>* dret = dynamic_cast<wxIntClientData<uint16_t>*>(itemdata);
+				if(!dret)
+					return;
 
-			UpdateMainTree();
-			break;
-		}
-		case Id_Backup_Delete:
-		{
-			wxClientData* itemdata = tree->GetItemData(root);
-			if(!itemdata)
-				itemdata = tree->GetItemData(item);
-			wxIntClientData<uint16_t>* dret = dynamic_cast<wxIntClientData<uint16_t>*>(itemdata);
-			uint16_t id = dret->GetValue();
-			DirectoryBackup::Get()->RemoveEntry(id);
-			UpdateMainTree();
-			break;
-		}
-	}
+				m_Backups.RemoveEntry(dret->GetValue());
+				UpdateMainTree();
+			}, wxART_DELETE,
+			/* Offered always, but only choosable on an item that has children -
+			   the menu keeps its shape whichever row is right-clicked. */
+			{}, [this, item] { return tree->GetFirstChild(item).IsOk(); } },
+	};
+	gui::RunContextMenu(tree, entries);
 }
 
 void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
@@ -60,7 +53,7 @@ void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
 
 		wxIntClientData<uint16_t>* dret = dynamic_cast<wxIntClientData<uint16_t>*>(itemdata);
 		uint16_t id = dret->GetValue();
-		auto entry = DirectoryBackup::Get()->GetEntry(id);
+		auto entry = m_Backups.GetEntry(id);
 		if(!entry)
 			return;
 
@@ -74,7 +67,7 @@ void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
 				if(std::filesystem::exists(str))
 				{
 					entry->from = str;
-					DirectoryBackup::Get()->UpdateEntry(id, std::move(*entry));
+					m_Backups.UpdateEntry(id, std::move(*entry));
 					UpdateMainTree();
 				}
 				else
@@ -101,7 +94,7 @@ void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
 				boost::split(new_destination_list, result, boost::is_any_of("\n"));
 
 				entry->to = std::move(new_destination_list);
-				DirectoryBackup::Get()->UpdateEntry(id, std::move(*entry));
+				m_Backups.UpdateEntry(id, std::move(*entry));
 				UpdateMainTree();
 			}
 		}
@@ -110,7 +103,7 @@ void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
 			wxString str;
 			for(auto& i : entry->ignore_list)
 			{
-				str += i + L"\n";
+				str += i + "\n";
 			}
 			if(!str.empty() && str[str.length() - 1] == '\n')
 				str.erase(str.length() - 1, str.length());
@@ -118,12 +111,12 @@ void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
 			int ret_code = d.ShowModal();
 			if(ret_code == wxID_OK)  /* OK */
 			{ 
-				std::wstring result = d.GetValue().ToStdWstring();
-				std::vector<std::wstring> new_ignore_list;
+				std::string result = d.GetValue().ToStdString();
+				std::vector<std::string> new_ignore_list;
 				boost::split(new_ignore_list, result, boost::is_any_of("\n"));
 
 				entry->ignore_list = std::move(new_ignore_list);
-				DirectoryBackup::Get()->UpdateEntry(id, std::move(*entry));
+				m_Backups.UpdateEntry(id, std::move(*entry));
 				UpdateMainTree();
 			}
 		}
@@ -136,9 +129,9 @@ void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
 			{
 				try
 				{
-					int max_backups = utils::stoi<int>(d.GetValue().ToStdString());
-					entry->max_backups = max_backups;
-					DirectoryBackup::Get()->UpdateEntry(id, std::move(*entry));
+					entry->max_backups = BackupEntry::ClampMaxBackups(
+						utils::stoi<long long>(d.GetValue().ToStdString()));
+					m_Backups.UpdateEntry(id, std::move(*entry));
 					UpdateMainTree();
 				}
 				catch(...)
@@ -156,7 +149,7 @@ void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
 			if(ret_code == wxID_OK)  /* OK */
 			{
 				entry->m_Compress = utils::stob(d.GetValue().ToStdString());
-				DirectoryBackup::Get()->UpdateEntry(id, std::move(*entry));
+				m_Backups.UpdateEntry(id, std::move(*entry));
 				UpdateMainTree();
 			}
 		}
@@ -169,7 +162,7 @@ void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
 			if(ret_code == wxID_OK)  /* OK */
 			{
 				entry->calculate_hash = utils::stob(d.GetValue().ToStdString());
-				DirectoryBackup::Get()->UpdateEntry(id, std::move(*entry));
+				m_Backups.UpdateEntry(id, std::move(*entry));
 				UpdateMainTree();
 			}
 		}
@@ -185,7 +178,7 @@ void BackupPanel::OnItemActivated(wxTreeListEvent& evt)
 				{
 					size_t max_backups = utils::stoi<size_t>(d.GetValue().ToStdString());
 					entry->hash_buf_size = max_backups;
-					DirectoryBackup::Get()->UpdateEntry(id, std::move(*entry));
+					m_Backups.UpdateEntry(id, std::move(*entry));
 					UpdateMainTree();
 				}
 				catch(...)
@@ -204,7 +197,7 @@ void BackupPanel::UpdateMainTree()
 	wxTreeListItem root = tree->GetRootItem();
 	tree->DeleteAllItems();
 	uint16_t cnt = 0;
-	for(const auto& i : DirectoryBackup::Get()->GetEntries())
+	for(const auto& i : m_Backups.GetEntries())
 	{
 		wxTreeListItem item = tree->AppendItem(root, i.from.filename().generic_string().c_str(), -1, -1, new wxIntClientData(cnt++));
 		wxTreeListItem bind_item = tree->AppendItem(item, "Source");
@@ -216,7 +209,7 @@ void BackupPanel::UpdateMainTree()
 		wxString str_ignore;
 		for(const auto& ignored : i.ignore_list)
 		{
-			str_ignore += ignored + L" ";
+			str_ignore += ignored + " ";
 			if(str_ignore.length() > 80)
 				break;
 		}
@@ -234,8 +227,8 @@ void BackupPanel::UpdateMainTree()
 	}
 }
 
-BackupPanel::BackupPanel(wxWindow* parent)
-	: wxPanel(parent, wxID_ANY)
+BackupPanel::BackupPanel(wxWindow* parent, DirectoryBackup& backups)
+	: wxPanel(parent, wxID_ANY), m_Backups(backups)
 {
 	wxBoxSizer* bSizer1 = new wxBoxSizer(wxHORIZONTAL);
 

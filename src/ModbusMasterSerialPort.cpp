@@ -1,5 +1,10 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "ModbusMasterSerialPort.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
 #include "ModbusProtocol.hpp"
+
+using namespace std::chrono_literals;
 
 constexpr uint32_t RX_QUEUE_MAX_SIZE = 1000;
 
@@ -141,60 +146,52 @@ ModbusMasterSerialPort::ResponseStatus ModbusMasterSerialPort::NotifyAndWaitForR
     return ret;
 }
 
-void ModbusMasterSerialPort::AddCrcToFrame(std::vector<uint8_t>& vec)
+
+ModbusMasterSerialPort::TransactionId ModbusMasterSerialPort::TransactionOf(
+    const std::vector<uint8_t>& frame) const
 {
-    if (!IsTcp())
-    {
-        modbus::AppendCrc(vec);
-    }
+    /* The two leading MBAP bytes. Guarded: the six copies of this indexed
+       frame[0] and frame[1] without looking, which held for every frame they
+       were given but said nothing about it. */
+    if(!IsTcp() || frame.size() < 2)
+        return std::nullopt;
+    return static_cast<uint16_t>((frame[0] << 8) | frame[1]);
 }
 
-void ModbusMasterSerialPort::SetupHeader(std::vector<uint8_t>& vec, uint8_t slave_id, uint16_t fcode, uint16_t len)
+std::expected<ModbusMasterSerialPort::TransactionId, ModbusError>
+ModbusMasterSerialPort::SendAndAwait(const std::vector<uint8_t>& frame)
 {
-    if (IsTcp())
-    {
-        WriteToByteBuffer<uint16_t>(vec, sequence_id);
-        WriteToByteBuffer<uint16_t>(vec, 0x0);
-        WriteToByteBuffer<uint16_t>(vec, len + 2);
-        WriteToByteBuffer<uint8_t>(vec, slave_id);
-        WriteToByteBuffer<uint8_t>(vec, fcode);
-        sequence_id++;
-    }
-    else
-    {
-        WriteToByteBuffer<uint8_t>(vec, static_cast<uint8_t>(slave_id));
-        WriteToByteBuffer<uint8_t>(vec, static_cast<uint8_t>(fcode));
-    }
-}
-
-void ModbusMasterSerialPort::DoCleanup(std::vector<uint8_t>& recv_data)
-{
-    if (IsTcp() && recv_data.size() > 3)
-    {
-        recv_data.erase(recv_data.begin(), recv_data.begin() + 3);
-        recv_data.erase(recv_data.begin() + 2, recv_data.begin() + 5);
-    }
-}
-
-std::expected<std::vector<uint8_t>, ModbusError> ModbusMasterSerialPort::ReadCoilStatus(uint8_t slave_id, uint16_t read_offset, uint16_t read_count)
-{
-    const std::scoped_lock request_lock(m_RequestMutex);
-    const auto frame = modbus::BuildReadRequest(ToTransport(IsTcp()), sequence_id, slave_id,
-        FC_ReadCoilStatus, read_offset, read_count);
-    if(!frame.Ok())
-        return std::unexpected(ToModbusError(frame.error));
-    if(IsTcp())
-        ++sequence_id;
-    const auto response = NotifyAndWaitForResponse(frame.frame);
+    const auto response = NotifyAndWaitForResponse(frame);
     if(response != ResponseStatus::Ok)
     {
         m_RecvData.clear();
         return std::unexpected(response == ResponseStatus::ModbusException ? ModbusError::ExceptionResponse :
             response == ResponseStatus::CrcError ? ModbusError::Crc : ModbusError::UnexpectedResponse);
     }
+    return TransactionOf(frame);
+}
+
+std::expected<ModbusMasterSerialPort::TransactionId, ModbusError>
+ModbusMasterSerialPort::SendReadRequest(uint8_t slave_id, uint8_t function_code,
+    uint16_t read_offset, uint16_t read_count)
+{
+    const auto frame = modbus::BuildReadRequest(ToTransport(IsTcp()), ConsumeSequenceId(),
+        slave_id, function_code, read_offset, read_count);
+    if(!frame.Ok())
+        return std::unexpected(ToModbusError(frame.error));
+
+    return SendAndAwait(frame.frame);
+}
+
+std::expected<std::vector<uint8_t>, ModbusError> ModbusMasterSerialPort::ReadCoilStatus(uint8_t slave_id, uint16_t read_offset, uint16_t read_count)
+{
+    const std::scoped_lock request_lock(m_RequestMutex);
+    const auto transaction = SendReadRequest(slave_id, FC_ReadCoilStatus, read_offset, read_count);
+    if(!transaction)
+        return std::unexpected(transaction.error());
+
     const auto parsed = modbus::ParseReadBitsResponse(ToTransport(IsTcp()), m_RecvData, slave_id,
-        FC_ReadCoilStatus, read_count, false, IsTcp() ? std::optional<uint16_t>(
-            static_cast<uint16_t>((frame.frame[0] << 8) | frame.frame[1])) : std::nullopt);
+        FC_ReadCoilStatus, read_count, false, *transaction);
     m_RecvData.clear();
     if(!parsed.Ok())
         return std::unexpected(ToModbusError(parsed.error));
@@ -204,23 +201,19 @@ std::expected<std::vector<uint8_t>, ModbusError> ModbusMasterSerialPort::ReadCoi
 std::expected<std::vector<uint8_t>, ModbusError> ModbusMasterSerialPort::ForceSingleCoil(uint8_t slave_id, uint16_t write_offset, bool status)
 {
     const std::scoped_lock request_lock(m_RequestMutex);
-    std::vector<uint8_t> vec;
-    SetupHeader(vec, slave_id, FC_ForceSingleCoil, 4);
-    WriteToByteBuffer(vec, write_offset);
-    vec.push_back(status ? 0xFF : 0x0);
-    vec.push_back(0x0);
-    AddCrcToFrame(vec);
+    auto frame = modbus::BuildWriteCoilRequest(ToTransport(IsTcp()), ConsumeSequenceId(),
+        slave_id, write_offset, status);
+    if(!frame.Ok())
+        return std::unexpected(ToModbusError(frame.error));
+    std::vector<uint8_t>& vec = frame.frame;
 
-    auto response = NotifyAndWaitForResponse(vec);
-    if(response != ResponseStatus::Ok)
-    {
-        m_RecvData.clear();
-        return std::unexpected(response == ResponseStatus::ModbusException ? ModbusError::ExceptionResponse :
-            response == ResponseStatus::CrcError ? ModbusError::Crc : ModbusError::UnexpectedResponse);
-    }
+    const auto transaction = SendAndAwait(vec);
+    if(!transaction)
+        return std::unexpected(transaction.error());
+
     const auto parsed = modbus::ParseWriteResponse(ToTransport(IsTcp()), m_RecvData, slave_id,
         FC_ForceSingleCoil, write_offset, status ? uint16_t{0xFF00} : uint16_t{0}, false,
-        IsTcp() ? std::optional<uint16_t>(static_cast<uint16_t>((vec[0] << 8) | vec[1])) : std::nullopt);
+        *transaction);
     m_RecvData.clear();
     if(!parsed.Ok())
         return std::unexpected(ToModbusError(parsed.error));
@@ -230,22 +223,12 @@ std::expected<std::vector<uint8_t>, ModbusError> ModbusMasterSerialPort::ForceSi
 std::expected<std::vector<uint8_t>, ModbusError> ModbusMasterSerialPort::ReadInputStatus(uint8_t slave_id, uint16_t read_offset, uint16_t read_count)
 {
     const std::scoped_lock request_lock(m_RequestMutex);
-    const auto frame = modbus::BuildReadRequest(ToTransport(IsTcp()), sequence_id, slave_id,
-        FC_ReadInputStatus, read_offset, read_count);
-    if(!frame.Ok())
-        return std::unexpected(ToModbusError(frame.error));
-    if(IsTcp())
-        ++sequence_id;
-    const auto response = NotifyAndWaitForResponse(frame.frame);
-    if(response != ResponseStatus::Ok)
-    {
-        m_RecvData.clear();
-        return std::unexpected(response == ResponseStatus::ModbusException ? ModbusError::ExceptionResponse :
-            response == ResponseStatus::CrcError ? ModbusError::Crc : ModbusError::UnexpectedResponse);
-    }
+    const auto transaction = SendReadRequest(slave_id, FC_ReadInputStatus, read_offset, read_count);
+    if(!transaction)
+        return std::unexpected(transaction.error());
+
     const auto parsed = modbus::ParseReadBitsResponse(ToTransport(IsTcp()), m_RecvData, slave_id,
-        FC_ReadInputStatus, read_count, false, IsTcp() ? std::optional<uint16_t>(
-            static_cast<uint16_t>((frame.frame[0] << 8) | frame.frame[1])) : std::nullopt);
+        FC_ReadInputStatus, read_count, false, *transaction);
     m_RecvData.clear();
     if(!parsed.Ok())
         return std::unexpected(ToModbusError(parsed.error));
@@ -255,22 +238,12 @@ std::expected<std::vector<uint8_t>, ModbusError> ModbusMasterSerialPort::ReadInp
 std::expected<std::vector<uint16_t>, ModbusError> ModbusMasterSerialPort::ReadHoldingRegister(uint8_t slave_id, uint16_t read_offset, uint16_t read_count)
 {
     const std::scoped_lock request_lock(m_RequestMutex);
-    const auto frame = modbus::BuildReadRequest(ToTransport(IsTcp()), sequence_id, slave_id,
-        FC_ReadHoldingRegister, read_offset, read_count);
-    if(!frame.Ok())
-        return std::unexpected(ToModbusError(frame.error));
-    if(IsTcp())
-        ++sequence_id;
-    const auto response = NotifyAndWaitForResponse(frame.frame);
-    if(response != ResponseStatus::Ok)
-    {
-        m_RecvData.clear();
-        return std::unexpected(response == ResponseStatus::ModbusException ? ModbusError::ExceptionResponse :
-            response == ResponseStatus::CrcError ? ModbusError::Crc : ModbusError::UnexpectedResponse);
-    }
+    const auto transaction = SendReadRequest(slave_id, FC_ReadHoldingRegister, read_offset, read_count);
+    if(!transaction)
+        return std::unexpected(transaction.error());
+
     const auto parsed = modbus::ParseReadRegistersResponse(ToTransport(IsTcp()), m_RecvData, slave_id,
-        FC_ReadHoldingRegister, read_count, false, IsTcp() ? std::optional<uint16_t>(
-            static_cast<uint16_t>((frame.frame[0] << 8) | frame.frame[1])) : std::nullopt);
+        FC_ReadHoldingRegister, read_count, false, *transaction);
     m_RecvData.clear();
     if(!parsed.Ok())
         return std::unexpected(ToModbusError(parsed.error));
@@ -279,65 +252,34 @@ std::expected<std::vector<uint16_t>, ModbusError> ModbusMasterSerialPort::ReadHo
 
 std::expected<std::vector<uint16_t>, ModbusError> ModbusMasterSerialPort::ReadHoldingRegisters(uint8_t slave_id, uint16_t read_offset, uint16_t read_count)
 {
-    if(read_count == 0 || static_cast<uint32_t>(read_offset) + read_count > 0x10000)
-        return std::unexpected(ModbusError::InvalidRequest);
-    std::vector<uint16_t> result;
-    size_t remaining = read_count;
-    uint16_t offset = read_offset;
-    while (remaining > 0)
-    {
-        size_t step = std::min<size_t>(remaining, MAX_HOLDING_REG_ONCE);
-        auto tmp = ReadHoldingRegister(slave_id, offset, step);
-        if(!tmp.has_value())
-            return std::unexpected(tmp.error());
-        if(tmp->size() != step)
-            return std::unexpected(ModbusError::InvalidLength);
-
-        result.insert(result.end(), tmp->begin(), tmp->end());
-        offset    += step;
-        remaining -= step;
-    }
-    return result;
+    return ChunkedRead(read_offset, read_count,
+        [this, slave_id](uint16_t offset, uint16_t count)
+        {
+            return ReadHoldingRegister(slave_id, offset, count);
+        });
 }
 
 std::expected<std::vector<uint8_t>, ModbusError> ModbusMasterSerialPort::WriteHoldingRegister(uint8_t slave_id, uint16_t write_offset, uint16_t write_count, std::vector<uint16_t> buffer)
 {
     const std::scoped_lock request_lock(m_RequestMutex);
-    if(write_count == 0 || write_count != buffer.size() || write_count > 123 ||
-        static_cast<uint32_t>(write_offset) + write_count > 0x10000)
+    /* The count/size mismatch check stays here: it is about this API's two
+       parameters describing one buffer, not about the wire. */
+    if(write_count != buffer.size())
         return std::unexpected(ModbusError::InvalidRequest);
-    std::vector<uint8_t> vec;
-    if(write_count == 1)
-    {
-        SetupHeader(vec, slave_id, FC_WriteSingleRegister, 4);
-        vec.push_back(write_offset >> 8 & 0xFF);
-        vec.push_back(write_offset & 0xFF);
-        vec.push_back(buffer[0] >> 8 & 0xFF);
-        vec.push_back(buffer[0] & 0xFF);
-    }
-    else
-    {
-        size_t buffer_size = buffer.size() * 2;
-        SetupHeader(vec, slave_id, FC_WriteMultipleRegister, 5 + static_cast<uint16_t>(buffer_size));
-        WriteToByteBuffer(vec, write_offset);
-        WriteToByteBuffer(vec, write_count);
-        vec.push_back(buffer_size);
-        for(auto& reg : buffer) { vec.push_back(reg >> 8 & 0xFF); vec.push_back(reg & 0xFF); }
-    }
-    AddCrcToFrame(vec);
+    auto frame = modbus::BuildWriteRegistersRequest(ToTransport(IsTcp()), ConsumeSequenceId(),
+        slave_id, write_offset, buffer);
+    if(!frame.Ok())
+        return std::unexpected(ToModbusError(frame.error));
+    std::vector<uint8_t>& vec = frame.frame;
 
-    auto response = NotifyAndWaitForResponse(vec);
-    if(response != ResponseStatus::Ok)
-    {
-        m_RecvData.clear();
-        return std::unexpected(response == ResponseStatus::ModbusException ? ModbusError::ExceptionResponse :
-            response == ResponseStatus::CrcError ? ModbusError::Crc : ModbusError::UnexpectedResponse);
-    }
+    const auto transaction = SendAndAwait(vec);
+    if(!transaction)
+        return std::unexpected(transaction.error());
+
     const uint8_t function_code = write_count == 1 ? FC_WriteSingleRegister : FC_WriteMultipleRegister;
     const uint16_t echoed_value = write_count == 1 ? buffer[0] : write_count;
     const auto parsed = modbus::ParseWriteResponse(ToTransport(IsTcp()), m_RecvData, slave_id,
-        function_code, write_offset, echoed_value, false,
-        IsTcp() ? std::optional<uint16_t>(static_cast<uint16_t>((vec[0] << 8) | vec[1])) : std::nullopt);
+        function_code, write_offset, echoed_value, false, *transaction);
     m_RecvData.clear();
     if(!parsed.Ok())
         return std::unexpected(ToModbusError(parsed.error));
@@ -347,22 +289,12 @@ std::expected<std::vector<uint8_t>, ModbusError> ModbusMasterSerialPort::WriteHo
 std::expected<std::vector<uint16_t>, ModbusError> ModbusMasterSerialPort::ReadInputRegister(uint8_t slave_id, uint16_t read_offset, uint16_t read_count)
 {
     const std::scoped_lock request_lock(m_RequestMutex);
-    const auto frame = modbus::BuildReadRequest(ToTransport(IsTcp()), sequence_id, slave_id,
-        FC_ReadInputRegister, read_offset, read_count);
-    if(!frame.Ok())
-        return std::unexpected(ToModbusError(frame.error));
-    if(IsTcp())
-        ++sequence_id;
-    const auto response = NotifyAndWaitForResponse(frame.frame);
-    if(response != ResponseStatus::Ok)
-    {
-        m_RecvData.clear();
-        return std::unexpected(response == ResponseStatus::ModbusException ? ModbusError::ExceptionResponse :
-            response == ResponseStatus::CrcError ? ModbusError::Crc : ModbusError::UnexpectedResponse);
-    }
+    const auto transaction = SendReadRequest(slave_id, FC_ReadInputRegister, read_offset, read_count);
+    if(!transaction)
+        return std::unexpected(transaction.error());
+
     const auto parsed = modbus::ParseReadRegistersResponse(ToTransport(IsTcp()), m_RecvData, slave_id,
-        FC_ReadInputRegister, read_count, false, IsTcp() ? std::optional<uint16_t>(
-            static_cast<uint16_t>((frame.frame[0] << 8) | frame.frame[1])) : std::nullopt);
+        FC_ReadInputRegister, read_count, false, *transaction);
     m_RecvData.clear();
     if(!parsed.Ok())
         return std::unexpected(ToModbusError(parsed.error));
@@ -371,25 +303,11 @@ std::expected<std::vector<uint16_t>, ModbusError> ModbusMasterSerialPort::ReadIn
 
 std::expected<std::vector<uint16_t>, ModbusError> ModbusMasterSerialPort::ReadInputRegisters(uint8_t slave_id, uint16_t read_offset, uint16_t read_count)
 {
-    if(read_count == 0 || static_cast<uint32_t>(read_offset) + read_count > 0x10000)
-        return std::unexpected(ModbusError::InvalidRequest);
-    std::vector<uint16_t> result;
-    size_t remaining = read_count;
-    uint16_t offset = read_offset;
-    while(remaining > 0)
-    {
-        size_t step = std::min<size_t>(remaining, MAX_HOLDING_REG_ONCE);
-        auto tmp = ReadInputRegister(slave_id, offset, step);
-        if(!tmp.has_value())
-            return std::unexpected(tmp.error());
-        if(tmp->size() != step)
-            return std::unexpected(ModbusError::InvalidLength);
-
-        result.insert(result.end(), tmp->begin(), tmp->end());
-        offset    += step;
-        remaining -= step;
-    }
-    return result;
+    return ChunkedRead(read_offset, read_count,
+        [this, slave_id](uint16_t offset, uint16_t count)
+        {
+            return ReadInputRegister(slave_id, offset, count);
+        });
 }
 
 ModbusCustomCommandResult ModbusMasterSerialPort::SendCustomCommand(const std::vector<uint8_t>& frame)
@@ -412,13 +330,18 @@ void ModbusMasterSerialPort::Init()
 {
     if(is_enabled)
     {
-        auto recv_f = [this](const char* data, unsigned int len) { OnUartDataReceived(data, len); };
+        /* The transport hands out a size_t length; narrowing it is the caller's job. */
+        auto recv_f = [this](const char* data, std::size_t len) { OnUartDataReceived(data, static_cast<unsigned int>(len)); };
         auto send_f = [this](CallbackAsyncSerial& serial_port) { OnDataSent(serial_port); };
         InitInternal("ModbusMasterSerialPort", SERIAL_PORT_TIMEOUT, SERIAL_PORT_EXCEPTION_TIMEOUT, recv_f, send_f, 0, false);
     }
     else
     {
-        m_worker.reset();
+        /* The other two ports tear down through the base class. Resetting the
+           worker directly skipped DestroyWorkerThread, so the condition
+           variable was never notified and the pending-notification flag stayed
+           set from the previous session. */
+        DeInitInternal();
     }
 }
 
@@ -431,39 +354,10 @@ void ModbusMasterSerialPort::OnUartDataReceived(const char* data, unsigned int l
     m_RawRecvData.insert(m_RawRecvData.end(),
         reinterpret_cast<const uint8_t*>(data), reinterpret_cast<const uint8_t*>(data) + len);
 
-    size_t expected_size = 0;
-    if(IsTcp())
-    {
-        if(m_RawRecvData.size() >= 6)
-        {
-            const uint16_t mbap_length = static_cast<uint16_t>((m_RawRecvData[4] << 8) | m_RawRecvData[5]);
-            expected_size = 6 + mbap_length;
-            if(expected_size > 260)
-                expected_size = m_RawRecvData.size();
-        }
-    }
-    else if(m_RawRecvData.size() >= 2)
-    {
-        const uint8_t function_code = m_RawRecvData[1];
-        if((function_code & 0x80) != 0)
-            expected_size = 5;
-        else if(function_code >= FC_ReadCoilStatus && function_code <= FC_ReadInputRegister)
-        {
-            if(m_RawRecvData.size() >= 3)
-                expected_size = 5 + m_RawRecvData[2];
-        }
-        else if(function_code == FC_ForceSingleCoil || function_code == FC_WriteSingleRegister ||
-            function_code == FC_WriteMultipleRegister)
-        {
-            expected_size = 8;
-        }
-        else if(m_RawRecvData.size() >= 5)
-        {
-            // Custom function codes have no general length field. Deliver the
-            // first complete CRC-bearing callback and let the caller inspect it.
-            expected_size = m_RawRecvData.size();
-        }
-    }
+    /* Was a six-branch chain here, where the only way to exercise it was to
+       drive a port. The decisions are modbus::ExpectedResponseLength now,
+       tested next to the builders whose frames it measures. */
+    const size_t expected_size = modbus::ExpectedResponseLength(ToTransport(IsTcp()), m_RawRecvData);
 
     if(expected_size == 0 || m_RawRecvData.size() < expected_size)
         return;

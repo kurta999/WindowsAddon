@@ -1,17 +1,26 @@
 #pragma once
 
-#include "utils/CSingleton.hpp"
 #include <inttypes.h>
+#include "interface/ISettingsBinding.hpp"
+#include <iosfwd>
+#include <string_view>
 
 constexpr int64_t MAX_CPU_POWER_SAVER_QUEUE_SIZE = 50;
 
 static_assert((MAX_CPU_POWER_SAVER_QUEUE_SIZE & 1) == 0, "MAX_QUEUE_SIZE has to be even");
 
-class IdlePowerSaver : public CSingleton < IdlePowerSaver >
+// !\brief Drops the CPU's power ceiling while the machine sits idle.
+//
+// AntiLock drives it - the two share one idle-time measurement - and the debug
+// page shows and edits its percentages.
+class IdlePowerSaver : public ISettingsBinding
 {
-    friend class CSingleton < IdlePowerSaver >;
-
 public:
+    // ISettingsBinding - this subsystem owns its own block of settings.ini.
+    [[nodiscard]] std::string_view SettingsSection() const override { return "IdlePowerSaver"; }
+    void LoadSettings(SettingsReader& reader) override;
+    void SaveSettings(std::ostream& out) const override;
+
     IdlePowerSaver();
     ~IdlePowerSaver();
 
@@ -49,6 +58,21 @@ public:
     uint8_t GetCpuMaxPowerPercent();
 
 private:
+    // \brief Tick counts the CPU load is measured against.
+    //
+    // The load is a delta between two samples, so the previous sample is state.
+    // It belonged to the sampling function as a pair of static locals, where a
+    // second sampler silently consumed this one's deltas.
+    struct CpuLoadSample
+    {
+        unsigned long long total_ticks = 0;
+        unsigned long long idle_ticks = 0;
+    };
+    CpuLoadSample m_lastCpuSample;
+
+    // \brief CPU load since the previous sample [0.0 - 1.0], -1.0 on error
+    float GetCPULoad();
+
     // \brief Timeout hysteresis [ms]
     const int timeout_hystheresis = 2000;
 

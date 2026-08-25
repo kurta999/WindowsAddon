@@ -1,29 +1,24 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "CanEntryHandler.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
+#include "SettingsReader.hpp"
+#include "SettingsWriter.hpp"
+#include <ostream>
+#include "CanSerialPort.hpp"
+#include <bitfield/bitfield.h>
+
+using namespace std::chrono_literals;
 
 CanEntryHandler::CanEntryHandler(ICanEntryLoader& loader, ICanRxEntryLoader& rx_loader, ICanMappingLoader& mapping_loader,
     ICanTransport& transport, IClock& clock, ICanEventSink* event_sink) :
     m_CanEntryLoader(loader), m_CanRxEntryLoader(rx_loader), m_CanMappingLoader(mapping_loader),
-    m_CanTransport(transport), m_Clock(clock), m_EventSink(event_sink)
+    m_CanTransport(transport), m_Clock(clock), m_EventSink(event_sink),
+    m_IsoTp(transport, clock, m_DefaultEcuId)
 {
     m_StartTime = m_Clock.Now();
-    isotp_init_link(&m_IsoTpLink, m_DefaultEcuId, m_IsoTpSendBuf, sizeof(m_IsoTpSendBuf), m_IsoTpRecvBuf, sizeof(m_IsoTpRecvBuf));
-    isotp_set_callbacks(&m_IsoTpLink, this, &CanEntryHandler::IsoTpSendCan, &CanEntryHandler::IsoTpGetMilliseconds);
+    m_Log.SetStart(m_StartTime);
     m_CanTransport.SetListener(this);
-}
-
-int CanEntryHandler::IsoTpSendCan(void* context, uint32_t arbitration_id, const uint8_t* data, uint8_t size)
-{
-    auto& handler = *static_cast<CanEntryHandler*>(context);
-    handler.m_CanTransport.Send(arbitration_id, std::span<const uint8_t>{data, size});
-    return ISOTP_RET_OK;
-}
-
-uint32_t CanEntryHandler::IsoTpGetMilliseconds(void* context)
-{
-    const auto& handler = *static_cast<CanEntryHandler*>(context);
-    const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
-        handler.m_Clock.Now().time_since_epoch()).count();
-    return static_cast<uint32_t>(milliseconds);
 }
 
 CanEntryHandler::~CanEntryHandler()
@@ -39,9 +34,8 @@ CanEntryHandler::~CanEntryHandler()
 void CanEntryHandler::Init()
 {
     LoadFiles();
-    m_Worker = std::make_unique<std::jthread>(std::bind_front(&CanEntryHandler::WorkerThread, this));
-    if(m_Worker)
-        utils::SetThreadName(*m_Worker, "CanEntryHandler");
+    m_Worker = utils::StartNamedWorker("CanEntryHandler",
+        std::bind_front(&CanEntryHandler::WorkerThread, this));
 }
 
 void CanEntryHandler::LoadFiles()
@@ -54,33 +48,49 @@ void CanEntryHandler::LoadFiles()
 void CanEntryHandler::SetDefaultEcuId(uint32_t ecu_id)
 {
     m_DefaultEcuId = ecu_id;
-    m_IsoTpLink.send_arbitration_id = m_DefaultEcuId;
+    m_IsoTp.SetRequestId(ecu_id);
 }
 
 void CanEntryHandler::WorkerThread(std::stop_token token)
 {
+    /* Which frames are due is decided under the model lock; sending them is
+       not. Send hands the frame to the transport's own queue and Poll takes the
+       ISO-TP endpoint's lock and may send as well, so holding m across either
+       stalled the receive path and every GUI read for the duration. The 1 ms
+       wait already released m - condition_variable_any does that - but the
+       sends around it did not. */
+    std::vector<std::pair<uint32_t, std::vector<uint8_t>>> due;
+
     while(!token.stop_requested())
     {
+        due.clear();
         {
-            std::unique_lock lock{ m };
+            std::scoped_lock lock{ m };
             const auto time_now = m_Clock.Now();
             for(auto& i : entries | std::views::filter([](const auto& e) { return (e->period != 0 && e->send) || e->single_shot; }))
             {
                 if(i->single_shot)
                 {
-                    m_CanTransport.Send(i->id, i->data);
+                    due.emplace_back(i->id, i->data);
                     i->single_shot = false;
                 }
                 else if(time_now - i->last_execution > std::chrono::milliseconds(i->period))
                 {
                     i->last_execution = m_Clock.Now();
-                    m_CanTransport.Send(i->id, i->data);
+                    due.emplace_back(i->id, i->data);
                 }
             }
-
-            m_Cv.wait_for(lock, token, 1ms, []() { return false; });
-            isotp_poll(&m_IsoTpLink);
         }
+
+        for(const auto& [id, payload] : due)
+            m_CanTransport.Send(id, payload);
+
+        {
+            std::unique_lock lock{ m };
+            m_Cv.wait_for(lock, token, 1ms, []() { return false; });
+        }
+
+        m_IsoTp.Poll();
     }
     DBG("exit");
 }
@@ -95,18 +105,18 @@ void CanEntryHandler::OnFrameSent(uint32_t frame_id, uint8_t data_len, uint8_t* 
         i->count++;
         if(m_EventSink)
             m_EventSink->OnCanFrameTransmitted(frame_id, i->count);
-        if(m_IsRecording && i->log_level >= m_RecordingLogLevel)
+        if(m_Log.IsRecording() && i->log_level >= m_RecordingLogLevel)
         {
             if(i->period == 0 && !i->single_shot)
                 i->last_execution = m_Clock.Now();
-            m_LogEntries.push_back(std::make_unique<CanLogEntry>(CAN_LOG_DIR_TX, frame_id, data, data_len, i->last_execution));
+            m_Log.Append(std::make_unique<CanLogEntry>(CAN_LOG_DIR_TX, frame_id, data, data_len, i->last_execution));
         }
     }
 
-    if(it == entries.end() && m_IsRecording)
+    if(it == entries.end() && m_Log.IsRecording())
     {
         const auto time_now = m_Clock.Now();
-        m_LogEntries.push_back(std::make_unique<CanLogEntry>(CAN_LOG_DIR_TX, frame_id, data, data_len, time_now));
+        m_Log.Append(std::make_unique<CanLogEntry>(CAN_LOG_DIR_TX, frame_id, data, data_len, time_now));
     }
 
     NotifyFrameOnBus(frame_id, data, data_len);
@@ -118,42 +128,125 @@ void CanEntryHandler::OnFrameReceived(uint32_t frame_id, uint8_t data_len, uint8
     std::scoped_lock lock{ m };
     const auto time_now = m_Clock.Now();
 
-    if(!m_rxData.contains(frame_id))
+    /* One lookup. This was a contains() followed by eight operator[] calls on
+       the same key, on the path every received frame takes. */
+    const auto [entry, inserted] = m_rxData.try_emplace(frame_id);
+    if(inserted || !entry->second)
     {
-        m_rxData[frame_id] = std::make_unique<CanRxData>(data, data_len);
+        /* The null check is not reachable through this function - contains()
+           ruled it out before - but try_emplace can hand back an entry someone
+           else inserted empty, and dereferencing it would be undefined rather
+           than wrong. */
+        entry->second = std::make_unique<CanRxData>(data, data_len);
     }
     else
     {
-        m_rxData[frame_id]->data.assign(data, data + data_len);
-        uint32_t elapsed = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(time_now - m_rxData[frame_id]->last_execution).count());
-        m_rxData[frame_id]->period = elapsed;
-        m_rxData[frame_id]->count++;
+        CanRxData& rx = *entry->second;
+        rx.data.assign(data, data + data_len);
+        rx.period = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            time_now - rx.last_execution).count());
+        rx.count++;
     }
-    m_rxData[frame_id]->last_execution = time_now;
 
-    auto log_it = m_RxLogLevels.find(frame_id);
-    m_rxData[frame_id]->log_level = (log_it != m_RxLogLevels.end()) ? log_it->second : 1;
+    CanRxData& rx = *entry->second;
+    rx.last_execution = time_now;
+
+    const auto log_it = m_RxLogLevels.find(frame_id);
+    rx.log_level = (log_it != m_RxLogLevels.end()) ? log_it->second : 1;
     m_RxFrameCount++;
 
-    if(m_IsRecording && m_rxData[frame_id]->log_level >= m_RecordingLogLevel)
-        m_LogEntries.push_back(std::make_unique<CanLogEntry>(CAN_LOG_DIR_RX, frame_id, data, data_len, m_rxData[frame_id]->last_execution));
+    if(m_Log.IsRecording() && rx.log_level >= m_RecordingLogLevel)
+        m_Log.Append(std::make_unique<CanLogEntry>(CAN_LOG_DIR_RX, frame_id, data, data_len, rx.last_execution));
 
-    if(frame_id == m_IsoTpResponseId)
+    if(frame_id == m_IsoTp.ResponseId())
     {
-        isotp_on_can_message(&m_IsoTpLink, data, data_len);
-
-        uint16_t recv_size = 0;
-        if(isotp_receive(&m_IsoTpLink, m_UdsRecvData, sizeof(m_UdsRecvData), &recv_size) == ISOTP_RET_OK)
-        {
-            DBG("iso-tp recv: %d", recv_size);
-            m_UdsFrames.push_back(std::string(reinterpret_cast<const char*>(m_UdsRecvData), recv_size));
-            m_LastUdsFrameReceived = m_Clock.Now();
-            NotifyIsoTpData(frame_id, m_UdsRecvData, recv_size);
-        }
+        if(const auto message = m_IsoTp.OnCanFrame(data, data_len))
+            NotifyIsoTpData(frame_id, message->data(), static_cast<uint16_t>(message->size()));
     }
 
     NotifyFrameOnBus(frame_id, data, data_len);
     m_Cv.notify_all();
+}
+
+uint32_t CanEntryHandler::InsertDefaultTxEntryAfter(size_t index)
+{
+    std::unique_ptr<CanTxEntry> entry = std::make_unique<CanTxEntry>();
+    entry->data = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    entry->id = kNewTxEntryDefaultId;
+
+    std::scoped_lock lock{ m };
+    /* Choosing a free frame id and inserting under it is one critical
+       section: run apart, two frames could be handed the same id. */
+    while(std::ranges::any_of(entries,
+        [frame_id = entry->id](const auto& item) { return item && item->id == frame_id; }))
+    {
+        entry->id++;
+    }
+    const uint32_t chosen = entry->id;
+    const size_t position = std::min(index, entries.size());
+    entries.insert(entries.begin() + position, std::move(entry));
+    return chosen;
+}
+
+bool CanEntryHandler::DuplicateFirstTxEntry(uint32_t frame_id)
+{
+    std::scoped_lock lock{ m };
+    const auto it = std::ranges::find_if(entries,
+        [frame_id](const auto& item) { return item && item->id == frame_id; });
+    if(it == entries.end())
+        return false;
+
+    /* Duplicated under the lock: the page used to copy the entry through a
+       raw grid-row pointer with no lock at all, while the worker stamps
+       last_execution on the same entries. */
+    entries.push_back(std::make_unique<CanTxEntry>((*it)->Duplicate()));
+    return true;
+}
+
+void CanEntryHandler::RemoveTxEntries(uint32_t frame_id)
+{
+    std::scoped_lock lock{ m };
+    std::erase_if(entries, [frame_id](auto& item) { return item->id == frame_id; });
+}
+
+void CanEntryHandler::RotateTxFrontToBack()
+{
+    std::scoped_lock lock{ m };
+    if(!entries.empty())
+        std::rotate(entries.begin(), entries.begin() + 1, entries.end());
+}
+
+void CanEntryHandler::RotateTxBackToFront()
+{
+    std::scoped_lock lock{ m };
+    if(!entries.empty())
+        std::rotate(entries.rbegin(), entries.rbegin() + 1, entries.rend());
+}
+
+std::optional<size_t> CanEntryHandler::SwapTxEntriesById(uint32_t frame_id, uint32_t other_id)
+{
+    std::scoped_lock lock{ m };
+    const auto this_entry = std::ranges::find_if(entries,
+        [frame_id](const auto& item) { return item && item->id == frame_id; });
+    const auto other_entry = std::ranges::find_if(entries,
+        [other_id](const auto& item) { return item && item->id == other_id; });
+    if(this_entry == entries.end() || other_entry == entries.end())
+        return std::nullopt;
+
+    std::iter_swap(this_entry, other_entry);
+    return static_cast<size_t>(std::distance(entries.begin(), other_entry));
+}
+
+void CanEntryHandler::ClearRxData()
+{
+    std::scoped_lock lock{ m };
+    m_rxData.clear();
+}
+
+void CanEntryHandler::EraseRxData(uint32_t frame_id)
+{
+    std::scoped_lock lock{ m };
+    m_rxData.erase(frame_id);
 }
 
 void CanEntryHandler::ToggleAutoSend(bool toggle)
@@ -161,23 +254,31 @@ void CanEntryHandler::ToggleAutoSend(bool toggle)
     m_AutoSend = toggle;
 }
 
-void CanEntryHandler::ToggleRecording(bool toggle, bool is_pause)
+void CanEntryHandler::StartRecording()
 {
     std::scoped_lock lock{ m };
-    m_IsRecording = toggle;
+    m_Log.SetRecording(true);
+}
 
-    if(!is_pause && !toggle)
-    {
-        m_TxFrameCount = m_RxFrameCount = 0;
-        m_LogEntries.clear();
-    }
+void CanEntryHandler::PauseRecording()
+{
+    std::scoped_lock lock{ m };
+    m_Log.SetRecording(false);
+}
+
+void CanEntryHandler::StopRecording()
+{
+    std::scoped_lock lock{ m };
+    m_Log.SetRecording(false);
+    m_TxFrameCount = m_RxFrameCount = 0;
+    m_Log.Clear();
 }
 
 void CanEntryHandler::ClearRecording()
 {
     std::scoped_lock lock{ m };
     m_TxFrameCount = m_RxFrameCount = 0;
-    m_LogEntries.clear();
+    m_Log.Clear();
 }
 
 void CanEntryHandler::SendDataFrame(uint32_t frame_id, std::span<const uint8_t> data)
@@ -185,9 +286,9 @@ void CanEntryHandler::SendDataFrame(uint32_t frame_id, std::span<const uint8_t> 
     m_CanTransport.Send(frame_id, data);
 }
 
-void CanEntryHandler::SendIsoTpFrame(uint32_t frame_id, uint8_t* data, uint16_t size)
+void CanEntryHandler::SendIsoTpFrame(uint32_t frame_id, const uint8_t* data, uint16_t size)
 {
-    isotp_send_with_id(&m_IsoTpLink, frame_id, data, size);
+    m_IsoTp.Send(frame_id, data, size);
 }
 
 bool CanEntryHandler::LoadTxList(std::filesystem::path& path)
@@ -203,7 +304,7 @@ bool CanEntryHandler::LoadTxList(std::filesystem::path& path)
         if(m_AutoSend)
             std::ranges::for_each(entries, [](auto& i) { i->single_shot = false; i->send = true; });
 
-        m_IsRecording = m_AutoRecording;
+        m_Log.SetRecording(m_AutoRecording);
     }
     return ret;
 }
@@ -252,81 +353,71 @@ bool CanEntryHandler::SaveMapping(std::filesystem::path& path)
     return m_CanMappingLoader.Save(path, m_Mapping, m_FrameMetadata);
 }
 
+std::string CanEntryHandler::CommentForFrame(const CanLogEntry& entry)
+{
+    if(entry.direction == CAN_LOG_DIR_TX)
+    {
+        if(auto tx = FindTxCanEntryByFrame(entry.frame_id))
+            return tx->get().comment;
+
+        return {};
+    }
+
+    const auto it = rx_entry_comment.find(entry.frame_id);
+    return it != rx_entry_comment.end() ? it->second : std::string{};
+}
+
+std::string CanEntryHandler::FormatLogLine(const CanLogEntry& entry, CanFrameLog::LineStyle style)
+{
+    return m_Log.FormatLine(entry, CommentForFrame(entry), style);
+}
+
 bool CanEntryHandler::SaveRecordingToFile(std::filesystem::path& path)
 {
     const auto t1 = m_Clock.Now();
-    std::scoped_lock lock{ m };
-    bool ret = false;
-    if(!m_LogEntries.empty())
+
+    /* Rendered under the lock, written outside it. This used to hold the model
+       lock across the whole file write, so a recording of any size blocked the
+       transmit thread for as long as the disk took. */
+    std::vector<std::string> lines;
     {
-        std::ofstream out(path, std::ofstream::binary);
-        if(out.is_open())
-        {
-            out << "Time,Direction,FrameID,DataSize,Data,Comment\n";
-            for(auto& i : m_LogEntries)
-            {
-                std::string hex;
-                utils::ConvertHexBufferToString(i->data, hex);
-                uint64_t elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(i->last_execution - m_StartTime).count();
-                out << std::format("{:.3f},{},{:X},{},{}", static_cast<double>(elapsed) / 1000.0,
-                    i->direction == 0 ? "TX" : "RX", static_cast<uint32_t>(i->frame_id), i->data.size(), hex);
+        std::scoped_lock lock{ m };
+        if(m_Log.Empty())
+            return false;
 
-                std::string* comment = nullptr;
-                if(i->direction == CAN_LOG_DIR_TX)
-                {
-                    if(auto tx = FindTxCanEntryByFrame(i->frame_id))
-                        comment = &tx->get().comment;
-                }
-                else if(rx_entry_comment.contains(i->frame_id))
-                {
-                    comment = &rx_entry_comment[i->frame_id];
-                }
-
-                out << (comment && !comment->empty() ? "," + *comment : "") << "\n";
-            }
-            out.flush();
-            ret = true;
-        }
-        else
-        {
-            LOG(LogLevel::Error, "Failed to open file for saving CAN recording: {}", path.generic_string());
-        }
+        lines.reserve(m_Log.Entries().size());
+        for(const auto& entry : m_Log.Entries())
+            lines.push_back(FormatLogLine(*entry, CanFrameLog::LineStyle::Csv));
     }
 
-    if(ret)
+    std::ofstream out(path, std::ofstream::binary);
+    if(!out.is_open())
     {
-        const int64_t dif = std::chrono::duration_cast<std::chrono::nanoseconds>(m_Clock.Now() - t1).count();
-        if(m_EventSink)
-            m_EventSink->OnCanRecordingSaved(path, dif);
+        LOG(LogLevel::Error, "Failed to open file for saving CAN recording: {}", path.generic_string());
+        return false;
     }
-    return ret;
+
+    out << CanFrameLog::kCsvHeader << "\n";
+    for(const std::string& line : lines)
+        out << line << "\n";
+    out.flush();
+
+    const int64_t dif = std::chrono::duration_cast<std::chrono::nanoseconds>(m_Clock.Now() - t1).count();
+    if(m_EventSink)
+        m_EventSink->OnCanRecordingSaved(path, dif);
+    return true;
 }
 
 void CanEntryHandler::GenerateLogForFrame(uint32_t frame_id, bool is_rx, std::vector<std::string>& log)
 {
-    auto format_entry = [&](const auto& i) -> std::string
-    {
-        std::string hex;
-        utils::ConvertHexBufferToString(i->data, hex);
-        uint64_t elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(i->last_execution - m_StartTime).count();
-        std::string out = std::format("{:<6.03f}{:<6}{:<6X}{:<6}{:<6}", static_cast<double>(elapsed) / 1000.0,
-            i->direction == 0 ? "TX" : "RX", static_cast<uint32_t>(i->frame_id), i->data.size(), hex);
+    /* The receive thread appends to the log and to rx_entry_comment while
+       this walks them, and FindTxCanEntryByFrame reads the entry list without
+       locking on the assumption that its caller already has. */
+    std::scoped_lock lock(m);
 
-        std::string* comment = nullptr;
-        if(i->direction == CAN_LOG_DIR_TX)
-        {
-            if(auto tx = FindTxCanEntryByFrame(i->frame_id))
-                comment = &tx->get().comment;
-        }
-        else if(rx_entry_comment.contains(i->frame_id))
-            comment = &rx_entry_comment[i->frame_id];
+    auto format_entry = [this](const auto& i) { return FormatLogLine(*i, CanFrameLog::LineStyle::Columns); };
 
-        if(comment && !comment->empty())
-            out += std::format("   {:^6}", *comment);
-        return out;
-    };
-
-    auto filtered = m_LogEntries
+    auto filtered = m_Log.Entries()
         | std::views::filter([frame_id](const auto& i) { return i->frame_id == frame_id; })
         | std::views::transform(format_entry);
     std::ranges::copy(filtered, std::back_inserter(log));
@@ -353,7 +444,8 @@ template <typename T> void CanEntryHandler::HandleBitReading(uint32_t frame_id, 
         data_size = data_ptr->size();
     }
 
-    uint64_t value = get_bitfield(data_ptr->data(), data_size, offset, m->m_Size);
+    uint64_t value = get_bitfield(data_ptr->data(), static_cast<uint16_t>(data_size),
+        static_cast<uint16_t>(offset), m->m_Size);
     T extracted = static_cast<T>(value);
     info.push_back({
         std::format("{}         (offset: {}, size: {}, range: {} - {})", m->m_Name, offset, m->m_Size, m->m_MinVal, m->m_MaxVal),
@@ -364,15 +456,10 @@ template <typename T> void CanEntryHandler::HandleBitReading(uint32_t frame_id, 
 
 template <typename T> void CanEntryHandler::HandleBitWriting(uint32_t frame_id, uint8_t& pos, uint8_t offset, uint8_t size, uint8_t* byte_array, std::vector<std::string>& new_data)
 {
-    try
-    {
-        T raw_data = static_cast<T>(std::stoi(new_data[pos]));
-        set_bitfield(raw_data, offset, size, byte_array, 8);
-    }
-    catch(const std::exception& e)
-    {
-        LOG(LogLevel::Error, "Invalid input for pos {}. Exception: {}", pos, e.what());
-    }
+    if(const auto raw_data = utils::TryParse<int64_t>(new_data[pos]))
+        set_bitfield(static_cast<uint64_t>(static_cast<T>(*raw_data)), offset, size, byte_array, 8);
+    else
+        LOG(LogLevel::Error, "Invalid input for pos {}: '{}' is not a number", pos, new_data[pos]);
     pos++;
 }
 
@@ -438,33 +525,37 @@ uint32_t CanEntryHandler::FindFrameIdOnMapByName(const std::string& name)
 
 uint32_t CanEntryHandler::GetElapsedTimeSinceLastUdsFrame() const
 {
-    int64_t diff = std::chrono::duration_cast<std::chrono::milliseconds>(
-        m_Clock.Now() - m_LastUdsFrameReceived).count();
-    return static_cast<uint32_t>(std::clamp<int64_t>(diff, 0, std::numeric_limits<uint32_t>::max()));
+    return m_IsoTp.MillisecondsSinceLastFrame();
 }
 
-extern "C" void isotp_user_debug(const char* message, ...)
+void CanSenderSettings::LoadSettings(SettingsReader& reader)
 {
-    char buffer[256];
-    va_list args;
-    va_start(args, message);
-    vsnprintf(buffer, sizeof(buffer), message, args);
-    va_end(args);
-
-    LOG(LogLevel::Verbose, "IsoTP: {}", buffer);
-    DBG("%s", buffer);
+    m_Port.SetEnabled(utils::stob(reader.Required("CANSender", "Enable")));
+    m_Port.SetComPort(utils::stoi<uint16_t>(reader.Required("CANSender", "COM")));
+    m_Port.SetDeviceType(static_cast<CanDeviceType>(utils::stoi<uint8_t>(reader.Required("CANSender", "DeviceType"))));
+    m_Entries.ToggleAutoSend(utils::stob(reader.Required("CANSender", "AutoSend")));
+    m_Entries.ToggleAutoRecord(utils::stob(reader.Required("CANSender", "AutoRecord")));
+    m_Entries.SetRecordingLogLevel(utils::stoi<uint8_t>(reader.Required("CANSender", "DefaultRecordingLogLevel")));
+    m_Entries.SetFavouriteLevel(utils::stoi<uint8_t>(reader.Required("CANSender", "DefaultFavouriteLevel")));
+    m_Entries.SetDefaultEcuId(static_cast<uint32_t>(std::strtol(reader.Required("CANSender", "DefaultEcuId").c_str(), nullptr, 16)));
+    m_Entries.default_tx_list = reader.Required("CANSender", "DefaultTxList");
+    m_Entries.default_rx_list = reader.Required("CANSender", "DefaultRxList");
+    m_Entries.default_mapping = reader.Required("CANSender", "DefaultMapping");
 }
 
-extern "C" uint32_t isotp_user_get_ms(void)
+void CanSenderSettings::SaveSettings(std::ostream& out) const
 {
-    using namespace utils;
-    return GetTickCount();
-}
-
-extern "C" int isotp_user_send_can(const uint32_t arbitration_id, const uint8_t* data, const uint8_t size)
-{
-    (void)arbitration_id;
-    (void)data;
-    (void)size;
-    return ISOTP_RET_ERROR;
+    SettingsWriter(out, "CANSender")
+        .Key("Enable", m_Port.IsEnabled())
+        .Key("COM", m_Port.GetComPort(), "Com port for CAN UART where data is received/sent from/to STM32")
+        .Key("DeviceType", static_cast<int>(m_Port.GetDeviceType()), "0 = STM32, 1 = LAWICEL")
+        .Key("AutoSend", m_Entries.IsAutoSend())
+        .Key("AutoRecord", m_Entries.IsAutoRecord())
+        .Key("DefaultRecordingLogLevel", static_cast<int>(m_Entries.GetRecordingLogLevel()))
+        .Key("DefaultFavouriteLevel", static_cast<int>(m_Entries.GetFavouriteLevel()))
+        .Key("DefaultEcuId", std::format("{:X}", m_Entries.GetDefaultEcuId()))
+        .Key("DefaultTxList", m_Entries.default_tx_list.generic_string())
+        .Key("DefaultRxList", m_Entries.default_rx_list.generic_string())
+        .Key("DefaultMapping", m_Entries.default_mapping.generic_string())
+        .Blank();
 }

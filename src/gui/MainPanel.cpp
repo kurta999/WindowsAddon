@@ -1,10 +1,11 @@
 #include "pch.hpp"
+#include "StatusLabel.hpp"
 
 wxBEGIN_EVENT_TABLE(MainPanel, wxPanel)
 wxEND_EVENT_TABLE()
 
-MainPanel::MainPanel(wxFrame* parent)
-	: wxPanel(parent, wxID_ANY)
+MainPanel::MainPanel(wxFrame* parent, const MainPanelPorts& ports)
+	: wxPanel(parent, wxID_ANY), m_Ports(ports)
 {
 	wxBoxSizer* split_sizer = new wxBoxSizer(wxHORIZONTAL);
 	wxBoxSizer* bSizer1 = new wxBoxSizer(wxVERTICAL);
@@ -13,9 +14,9 @@ MainPanel::MainPanel(wxFrame* parent)
 	m_RefreshButton = new wxButton(this, wxID_ANY, wxT("Refresh"), wxDefaultPosition, wxDefaultSize, 0);
 	m_RefreshButton->SetToolTip("Request new measurements");
 	horizontal_sizer->Add(m_RefreshButton);
-	m_RefreshButton->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event)
+	m_RefreshButton->Bind(wxEVT_BUTTON, [this](wxCommandEvent&)
 		{
-			for(auto ip : Server::Get()->GetConnectedSensorAddresses())
+			for(auto ip : m_Ports.server.GetConnectedSensorAddresses())
 			{
 				std::string sensor_ip = boost::asio::ip::address_v4(ip).to_string();
 				utils::SendTcpBlocking(sensor_ip, 80, "SEND_SENSOR_DATA", 16);
@@ -25,9 +26,9 @@ MainPanel::MainPanel(wxFrame* parent)
 	m_ResetButton = new wxButton(this, wxID_ANY, wxT("Reset"), wxDefaultPosition, wxDefaultSize, 0);
 	m_ResetButton->SetToolTip("Restart device");
 	horizontal_sizer->Add(m_ResetButton);
-	m_ResetButton->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event)
+	m_ResetButton->Bind(wxEVT_BUTTON, [this](wxCommandEvent&)
 		{
-			for(auto ip : Server::Get()->GetConnectedSensorAddresses())
+			for(auto ip : m_Ports.server.GetConnectedSensorAddresses())
 			{
 				std::string sensor_ip = boost::asio::ip::address_v4(ip).to_string();
 				utils::SendTcpBlocking(sensor_ip, 80, "RESET", 5);
@@ -39,18 +40,18 @@ MainPanel::MainPanel(wxFrame* parent)
 	m_GenerateGraphs = new wxButton(this, wxID_ANY, wxT("Generate graphs"), wxDefaultPosition, wxDefaultSize, 0);
 	m_GenerateGraphs->SetToolTip("Generate graphs from SQLite database");
 	horizontal_sizer_2->Add(m_GenerateGraphs);
-	m_GenerateGraphs->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event)
+	m_GenerateGraphs->Bind(wxEVT_BUTTON, [this](wxCommandEvent&)
 		{
-			DatabaseLogic::Get()->SetGraphHours(0, (uint32_t)m_GraphStartHours1->GetValue());
-			DatabaseLogic::Get()->SetGraphHours(1, (uint32_t)m_GraphStartHours2->GetValue());
-			DatabaseLogic::Get()->GenerateGraphs(Sensors::Get()->GetGraphResolution());
+			m_Ports.database.SetGraphHours(0, (uint32_t)m_GraphStartHours1->GetValue());
+			m_Ports.database.SetGraphHours(1, (uint32_t)m_GraphStartHours2->GetValue());
+			m_Ports.database.GenerateGraphs(m_Ports.sensors.GetGraphResolution());
 		});
 	m_ClearMeasurements = new wxButton(this, wxID_ANY, wxT("Clear"), wxDefaultPosition, wxDefaultSize, 0);
 	m_ClearMeasurements->SetToolTip("Clear measurements");
 	horizontal_sizer_2->Add(m_ClearMeasurements);
-	m_ClearMeasurements->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event)
+	m_ClearMeasurements->Bind(wxEVT_BUTTON, [this](wxCommandEvent&)
 		{
-			Sensors::Get()->ResetMeasurements();
+			m_Ports.sensors.ResetMeasurements();
 		});
 
 	bSizer1->Add(horizontal_sizer_2);
@@ -95,7 +96,7 @@ MainPanel::MainPanel(wxFrame* parent)
 	m_OpenGraphs = new wxButton(this, wxID_ANY, wxT("Open graphs"), wxDefaultPosition, wxDefaultSize, 0);
 	m_OpenGraphs->SetToolTip("Open graphs file in browser");
 	bSizer1->Add(m_OpenGraphs, 0, wxALL, 5);
-	m_OpenGraphs->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event)
+	m_OpenGraphs->Bind(wxEVT_BUTTON, [this](wxCommandEvent&)
 		{
 #ifdef _WIN32
 			ShellExecute(NULL, L"open", L"Graphs\\Temperature.html", NULL, NULL, SW_SHOWNORMAL);
@@ -109,12 +110,12 @@ MainPanel::MainPanel(wxFrame* parent)
 	bSizer1->Add(graph_helper_1, 0, wxALL, 5);
 	m_GraphStartHours1 = new wxSpinCtrl(this, wxID_ANY, wxT(""), wxDefaultPosition, wxDefaultSize, 16384, 1, 10 * 24 * 365); 
 	m_GraphStartHours1->SetToolTip("Sets how many hours before the current time the first graph should be generated");
-	m_GraphStartHours1->SetValue(DatabaseLogic::Get()->GetGraphHours(0));
+	m_GraphStartHours1->SetValue(m_Ports.database.GetGraphHours(0));
 	bSizer1->Add(m_GraphStartHours1, 0, wxALL, 5);
 
 	m_GraphStartHours2 = new wxSpinCtrl(this, wxID_ANY, wxT(""), wxDefaultPosition, wxDefaultSize, 16384, 1, 10 * 24 * 365); 
 	m_GraphStartHours2->SetToolTip("Sets how many hours before the current time the second graph should be generated");
-	m_GraphStartHours2->SetValue(DatabaseLogic::Get()->GetGraphHours(1));
+	m_GraphStartHours2->SetValue(m_Ports.database.GetGraphHours(1));
 	bSizer1->Add(m_GraphStartHours2, 0, wxALL, 5);
 
 	m_EthPrice = new wxStaticText(this, wxID_ANY, "ETH: 0.0 - 0.0", wxDefaultPosition, wxSize(-1, -1), 0);
@@ -134,9 +135,9 @@ MainPanel::MainPanel(wxFrame* parent)
 	m_RefreshCrypto = new wxButton(this, wxID_ANY, wxT("Update"), wxDefaultPosition, wxDefaultSize, 0);
 	m_RefreshCrypto->SetToolTip("Refresh crypto prices");
 	bSizer1->Add(m_RefreshCrypto, 0, wxALL, 5);
-	m_RefreshCrypto->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event)
+	m_RefreshCrypto->Bind(wxEVT_BUTTON, [this](wxCommandEvent&)
 		{
-			CryptoPrice::Get()->UpdatePrices(true);
+			m_Ports.crypto_price.UpdatePrices(true);
 		});
 
 	split_sizer->Add(bSizer1, wxSizerFlags(0).Top());
@@ -152,14 +153,14 @@ MainPanel::MainPanel(wxFrame* parent)
 		button_num->SetToolTip("Click to execute binded macro"); \
 		num->Add(button_num, 0, wxALL, 5); \
 		num_lock_box_sizer->Add(num, 1, wxEXPAND, 5); \
-		button_num->Bind(wxEVT_LEFT_DOWN, [this, &button_num](wxMouseEvent& event) \
+		button_num->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event) \
 		{ \
 			wxButton* btn = dynamic_cast<wxButton*>(event.GetEventObject()); \
 			if(!btn) return; \
 			\
 			char* data = reinterpret_cast<char*>(btn->GetClientData()); \
 			if(!data) return; \
-			CustomMacro::Get()->SimulateKeypress(data); \
+			m_Ports.macros.SimulateKeypress(data); \
 		}); \
 	}
 
@@ -203,14 +204,14 @@ MainPanel::MainPanel(wxFrame* parent)
 		button_num->SetToolTip("Click to execute binded macro"); \
 		num->Add(button_num, 0, wxALL, 5); \
 		dest_sizer->Add(num, 1, wxEXPAND, 5); \
-		button_num->Bind(wxEVT_LEFT_DOWN, [this, &button_num](wxMouseEvent& event) \
+		button_num->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event) \
 		{ \
 			wxButton* btn = dynamic_cast<wxButton*>(event.GetEventObject()); \
 			if(!btn) return; \
 			\
 			char* data = reinterpret_cast<char*>(btn->GetClientData()); \
 			if(!data) return; \
-			CustomMacro::Get()->SimulateKeypress(data); \
+			m_Ports.macros.SimulateKeypress(data); \
 		}); \
 	}
 	
@@ -287,10 +288,10 @@ void MainPanel::UpdateKeybindings()
 {
 	for(auto& i : key_map)
 	{
-		auto it = CustomMacro::Get()->GetMacros()[0]->key_vec.find(i.first);
-		if(it != CustomMacro::Get()->GetMacros()[0]->key_vec.end())
+		auto it = m_Ports.macros.GetMacros()[0]->key_vec.find(i.first);
+		if(it != m_Ports.macros.GetMacros()[0]->key_vec.end())
 		{
-			i.second->SetLabelText(CustomMacro::Get()->GetMacros()[0]->bind_name[i.first]);
+			i.second->SetLabelText(m_Ports.macros.GetMacros()[0]->bind_name[i.first]);
 			i.second->SetFont(wxFont(wxNORMAL_FONT->GetPointSize(), wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD, false, wxEmptyString));
 			continue;
 		}
@@ -307,17 +308,17 @@ void MainPanel::UpdateKeybindings()
 		};
 
 	std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
-	auto it = key_map.find(PrintScreenSaver::Get()->screenshot_key);
+	auto it = key_map.find(m_Ports.screenshots.screenshot_key);
 	if(it != key_map.end())
 	{
 		MarkFunctionalKey(it->second, "SCREEN");
 	}
-	it = key_map.find(PathSeparator::Get()->replace_key);
+	it = key_map.find(m_Ports.path_separator.replace_key);
 	if(it != key_map.end())
 	{
 		MarkFunctionalKey(it->second, "PATH");
 	}
-	it = key_map.find(CustomMacro::Get()->bring_to_foreground_key);
+	it = key_map.find(m_Ports.macros.bring_to_foreground_key);
 	if(it != key_map.end())
 	{
 		MarkFunctionalKey(it->second, "TOGGLE");
@@ -333,7 +334,7 @@ void MainPanel::UpdateKeybindings()
 		MarkFunctionalKey(it->second, "SCRIPT");
 	}
 
-	if(CorsairHid::Get()->GetDeviceType() == CorsairDeviceType::NONE)
+	if(m_Ports.corsair_hid.GetDeviceType() == CorsairDeviceType::NONE)
 	{
 		if(key_map["G18"]->IsShown())
 		{
@@ -346,7 +347,7 @@ void MainPanel::UpdateKeybindings()
 		m_CorsairSeparatorLine_1->Hide();
 		m_CorsairSeparatorLine_2->Hide();
 	}
-	else if(CorsairHid::Get()->GetDeviceType() == CorsairDeviceType::K95_PLATINUM)
+	else if(m_Ports.corsair_hid.GetDeviceType() == CorsairDeviceType::K95_PLATINUM)
 	{
 		if(key_map["G18"]->IsShown())
 		{
@@ -359,7 +360,7 @@ void MainPanel::UpdateKeybindings()
 		m_CorsairSeparatorLine_1->Hide();
 		m_CorsairSeparatorLine_2->Hide();
 	}
-	else if(CorsairHid::Get()->GetDeviceType() == CorsairDeviceType::K95_18GKEY)
+	else if(m_Ports.corsair_hid.GetDeviceType() == CorsairDeviceType::K95_18GKEY)
 	{
 		if(!key_map["G18"]->IsShown())
 		{
@@ -373,88 +374,26 @@ void MainPanel::UpdateKeybindings()
 		m_CorsairSeparatorLine_2->Show();
 	}
 
-	m_CorsairDeviceName->SetLabelText(wxString::Format("%s - %s", CorsairHid::Get()->GetDeviceName(), CorsairHid::Get()->IsOk() ? "OK" : "ERROR"));
-	m_CorsairDeviceName->SetForegroundColour(CorsairHid::Get()->IsOk() ? *wxBLUE : *wxRED);
+	m_CorsairDeviceName->SetLabelText(wxString::Format("%s - %s", m_Ports.corsair_hid.GetDeviceName(), m_Ports.corsair_hid.IsOk() ? "OK" : "ERROR"));
+	m_CorsairDeviceName->SetForegroundColour(m_Ports.corsair_hid.IsOk() ? *wxBLUE : *wxRED);
+}
+
+void MainPanel::RefreshCryptoPrices()
+{
+	m_Ports.crypto_price.UpdatePrices();
+	if(!m_Ports.crypto_price.ConsumePending())
+		return;
+
+	UpdateCryptoPrices(m_Ports.crypto_price.GetEthBuy(), m_Ports.crypto_price.GetEthSell(),
+		m_Ports.crypto_price.GetBtcBuy(), m_Ports.crypto_price.GetBtcSell());
 }
 
 void MainPanel::UpdateStatuses()
 {
-	if(Server::Get()->IsEnabled())
-	{
-		if(Server::Get()->IsOk())
-		{
-			m_TcpBackendStatus->SetLabelText("TCP: OK");
-			m_TcpBackendStatus->SetForegroundColour(*wxGREEN);
-		}
-		else
-		{
-			m_TcpBackendStatus->SetLabelText("TCP: ERR");
-			m_TcpBackendStatus->SetForegroundColour(*wxRED);
-		}
-	}
-	else
-	{
-		m_TcpBackendStatus->SetLabelText("TCP: OFF");
-		m_TcpBackendStatus->SetForegroundColour(*wxBLUE);
-	}
-
-	if(SerialPort::Get()->IsEnabled())
-	{
-		if(SerialPort::Get()->IsOk())
-		{
-			m_KeyboardStatus->SetLabelText("Keyboard: OK");
-			m_KeyboardStatus->SetForegroundColour(*wxGREEN);
-		}
-		else
-		{
-			m_KeyboardStatus->SetLabelText("Keyboard: ERR");
-			m_KeyboardStatus->SetForegroundColour(*wxRED);
-		}
-	}
-	else
-	{
-		m_KeyboardStatus->SetLabelText("Keyboard: OFF");
-		m_KeyboardStatus->SetForegroundColour(*wxBLUE);
-	}
-
-	if(CanSerialPort::Get()->IsEnabled())
-	{
-		if(CanSerialPort::Get()->IsOk())
-		{
-			m_CanStatus->SetLabelText("CAN: OK");
-			m_CanStatus->SetForegroundColour(*wxGREEN);
-		}
-		else
-		{
-			m_CanStatus->SetLabelText("CAN: ERR");
-			m_CanStatus->SetForegroundColour(*wxRED);
-		}
-	}
-	else
-	{
-		m_CanStatus->SetLabelText("CAN: OFF");
-		m_CanStatus->SetForegroundColour(*wxBLUE);
-	}
-
-	std::unique_ptr<ModbusEntryHandler>& modbus_handler = wxGetApp().modbus_handler;
-	if(modbus_handler->GetSerial().IsEnabled())
-	{
-		if(CanSerialPort::Get()->IsOk())
-		{
-			m_ModbusStatus->SetLabelText("Modbus: OK");
-			m_ModbusStatus->SetForegroundColour(*wxGREEN);
-		}
-		else
-		{
-			m_ModbusStatus->SetLabelText("Modbus: ERR");
-			m_ModbusStatus->SetForegroundColour(*wxRED);
-		}
-	}
-	else
-	{
-		m_ModbusStatus->SetLabelText("Modbus: OFF");
-		m_ModbusStatus->SetForegroundColour(*wxBLUE);
-	}
+	gui::SetLinkStatus(m_TcpBackendStatus, "TCP", gui::LinkStatusOf(m_Ports.server));
+	gui::SetLinkStatus(m_KeyboardStatus, "Keyboard", gui::LinkStatusOf(m_Ports.keyboard_port));
+	gui::SetLinkStatus(m_CanStatus, "CAN", gui::LinkStatusOf(m_Ports.can_port));
+	gui::SetLinkStatus(m_ModbusStatus, "Modbus", gui::LinkStatusOf(wxGetApp().modbus_handler->GetSerial()));
 }
 
 void MainPanel::OnMeasurementUpdated(const Measurement& m, size_t recv_count)
@@ -468,7 +407,7 @@ void MainPanel::OnMeasurementUpdated(const Measurement& m, size_t recv_count)
 	m_textTemp->SetLabelText(wxString::Format(wxT("Temperature: %.1f"), m.temp));
 	m_textHum->SetLabelText(wxString::Format(wxT("Humidity: %.1f"), m.hum));
 	m_textCO2->SetLabelText(wxString::Format(wxT("CO2: %i"), m.co2));
-	m_textVOC->SetLabelText(wxString(std::format("IAQ: {:.1f}, Gas: {:.1f}%", m.voc, BsecHandler::Get()->GetGasPercentage())));
+	m_textVOC->SetLabelText(wxString(std::format("IAQ: {:.1f}, Gas: {:.1f}%", m.voc, m_Ports.bsec.GetGasPercentage())));
 	m_textCO->SetLabelText(wxString::Format(wxT("CO: %i"), m.co));
 	m_textPM25->SetLabelText(wxString::Format(wxT("PM2.5: %i"), m.pm25));
 	m_textPM10->SetLabelText(wxString::Format(wxT("PM10: %i"), m.pm10));
@@ -491,7 +430,7 @@ void MainPanel::OnMeasurementUpdated(const Measurement& m, size_t recv_count)
 
 void MainPanel::UpdateCryptoPrices(float eth_buy, float eth_sell, float btc_buy, float btc_sell)
 {
-	if(Settings::Get()->crypto_price_update != 0)
+	if(m_Ports.settings.crypto_price_update != 0)
 	{
 		m_EthPrice->SetLabelText(wxString::Format("ETH: %.1f - %.1f", eth_buy, eth_sell));
 		m_BtcPrice->SetLabelText(wxString::Format("BTC: %.1f - %.1f", btc_buy, btc_sell));

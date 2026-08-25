@@ -2,6 +2,9 @@
 
 #include <wx/wx.h>
 
+class CanEntryHandler;
+class DidHandler;
+
 enum DidGridCol : int
 {
     Did_ID,
@@ -35,7 +38,7 @@ public:
 class DidPanel : public wxPanel
 {
 public:
-	DidPanel(wxFrame* parent);
+	DidPanel(wxFrame* parent, CanEntryHandler& can_handler, DidHandler& did_handler);
 
     DidGrid* did_grid;
     wxStaticBoxSizer* static_box_grid = nullptr;
@@ -59,6 +62,12 @@ private:
     std::string search_pattern;
 
     uint16_t did_cnt = 0;
+
+    /* Handed in rather than fetched from wxGetApp() on every use.
+       docs/code-style.md: "A class gets its collaborators through its
+       constructor. It does not fetch them." */
+    CanEntryHandler& m_canHandler;
+    DidHandler& m_didHandler;
 
 	wxDECLARE_EVENT_TABLE();
 };

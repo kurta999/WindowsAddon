@@ -2,7 +2,6 @@
 
 #include "utils/CSingleton.hpp"
 #include <string>
-#include <thread>
 #include <memory>
 #include <variant>
 
@@ -115,8 +114,9 @@ public:
     bool Save(const std::filesystem::path& path, CommandStorage& e, CommandPageNames& names, CommandPageIcons& icons) const override;
 
 private:
-    uint8_t m_Cols = 0;
-    uint8_t m_Pages = 0;
+    /* The declared page and column counts used to be members here, written by
+       Load and read by nothing else - parse scratch given object lifetime, and
+       one of two members in this file called m_Cols. They are locals now. */
     ICmdHelper* m_Mediator = nullptr;
 };
 
@@ -129,14 +129,14 @@ public:
 
     void Init() override;
     void SetMediator(ICmdHelper* mediator) override;
-    void AddCommand(uint8_t page, uint8_t col, Command cmd) override;
+    void AddCommand(uint8_t page_number, uint8_t col_number, Command cmd) override;
     void RotateCommand(uint8_t page, uint8_t col, Command& cmd, uint8_t direction) override;
-    void AddSeparator(uint8_t page, uint8_t col, Separator sep) override;
-    void AddCol(uint8_t page, uint8_t dest_index) override;
-    void DeleteCol(uint8_t page, uint8_t dest_index) override;
-    void AddPage(uint8_t page, uint8_t dest_index) override;
-    void CopyPage(uint8_t page, uint8_t dest_index) override;
-    void DeletePage(uint8_t page) override;
+    void AddSeparator(uint8_t page_number, uint8_t col_number, Separator sep) override;
+    void AddCol(uint8_t page_index, uint8_t dest_index) override;
+    void DeleteCol(uint8_t page_index, uint8_t dest_index) override;
+    void AddPage(uint8_t page_index, uint8_t dest_index) override;
+    void CopyPage(uint8_t page_index, uint8_t dest_index) override;
+    void DeletePage(uint8_t page_index) override;
     bool ReloadCommandsFromFile(const char* path = COMMAND_FILE_PATH) override;
     bool Save(const char* path = COMMAND_FILE_PATH) override;
     bool SaveToTempAndReload() override;
@@ -145,12 +145,11 @@ public:
     CommandPageNames& GetPageNames() override;
     CommandPageIcons& GetPageIcons() override;
 
-    void ExecuteByName(const std::string& page_name, const std::string& cmd_name);
+    void ExecuteByName(const std::string& page_name, const std::string& cmd_name) override;
     void Execute(Command& command);
 
-    static void WriteDefaultCommandsFile();
 private:
-    bool AddItem(uint8_t page, uint8_t col, CommandTypes item);
+    bool AddItem(uint8_t page_number, uint8_t col_number, CommandTypes item);
 
     uint8_t m_Cols = 2;
     CommandStorage m_Commands;

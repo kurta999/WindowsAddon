@@ -1,5 +1,20 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "ModbusHandler.hpp"
+#include "utils/XmlDocument.hpp"
+#include "utils/TextStyleXml.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
+#include "utils/InterruptibleSleep.hpp"
+#include "ModbusJsonPersistence.hpp"
 #include "ModbusRegisterValueCodec.hpp"
+#include "ModbusValueIo.hpp"
+#include "SettingsReader.hpp"
+#include "SettingsWriter.hpp"
+#include <ostream>
+
+#include <bitfield/bitfield.h>
+
+using namespace std::chrono_literals;
 
 constexpr int NUM_EVENTLOG_ENTRIES = 8;
 constexpr int EVENTLOG_ENTRY_SIZE = 9;
@@ -7,389 +22,74 @@ constexpr int EVENTLOG_BUFFER_SIZE = NUM_EVENTLOG_ENTRIES * EVENTLOG_ENTRY_SIZE;
 
 constexpr int MAX_INLINE_TIMEOUT_PACKETS = 15;
 
-bool XmlModbusEntryLoader::Load(const std::filesystem::path& path, uint8_t& slave_id, ModbusItemType& coils, ModbusItemType& input_status,
-    ModbusItemType& holding, ModbusItemType& input, NumModbusEntries& num_entries, uint32_t branch)
+void ModbusEntryHandler::SetRegisterCount(Table table, size_t count)
 {
-    bool ret = true;
-    boost::property_tree::ptree pt;
-    try
+    std::scoped_lock lock(m);
+    switch(table)
     {
-        coils.clear();
-        input_status.clear();
-        holding.clear();
-        input.clear();
-        num_entries = {};
-        size_t register_offset_coils = 0;
-        size_t register_offset_input_status = 0;
-        size_t register_offset_holding = 0;
-        size_t register_offset_input = 0;
-
-        read_xml(path.generic_string(), pt);
-        for(const boost::property_tree::ptree::value_type& v : pt.get_child("Modbus"))
-        {
-            if(v.first == "NumCoils")           { num_entries.coils           = v.second.get_value<size_t>(0); continue; }
-            if(v.first == "NumInputStatus")     { num_entries.inputStatus     = v.second.get_value<size_t>(0); continue; }
-            if(v.first == "NumHoldingRegisters"){ num_entries.holdingRegisters = v.second.get_value<size_t>(0); continue; }
-            if(v.first == "NumInput" || v.first == "NumInputRegisters")
-                                                  { num_entries.inputRegisters  = v.second.get_value<size_t>(0); continue; }
-            if(v.first == "CoilsOffset")        { num_entries.coilsOffset     = v.second.get_value<uint16_t>(0); continue; }
-            if(v.first == "InputStatusOffset")  { num_entries.inputStatusOffset = v.second.get_value<uint16_t>(0); continue; }
-            if(v.first == "InputOffset")        { num_entries.inputOffset     = v.second.get_value<uint16_t>(0); continue; }
-            if(v.first == "HoldingOffset")      { num_entries.holdingOffset   = v.second.get_value<uint16_t>(0); continue; }
-            if(v.first == "SlaveAddress")       { slave_id = v.second.get_value<size_t>(0); continue; }
-
-            ModbusItemType* item = nullptr;
-            size_t* offset = nullptr;
-            ModbusBitfieldType register_value_type = ModbusBitfieldType::MBT_BOOL;
-
-            for(const boost::property_tree::ptree::value_type& m : v.second)
-            {
-                if(m.first == "Coil")
-                {
-                    item = &coils;  offset = &register_offset_coils;
-                    register_value_type = ModbusBitfieldType::MBT_BOOL;
-                }
-                else if(m.first == "InputStatus")
-                {
-                    item = &input_status;  offset = &register_offset_input_status;
-                    register_value_type = ModbusBitfieldType::MBT_BOOL;
-                }
-                else if(m.first == "Input")
-                {
-                    item = &input;  offset = &register_offset_input;
-                    register_value_type = ModbusBitfieldType::MBT_UI16;
-                }
-                else if(m.first == "Holding")
-                {
-                    item = &holding;  offset = &register_offset_holding;
-                    register_value_type = ModbusBitfieldType::MBT_UI16;
-                }
-                else
-                {
-                    LOG(LogLevel::Warning, "Invalid modbus register child in Modbus.xml: {}", m.first);
-                    continue;
-                }
-
-                std::string name = m.second.get_child("Name").get_value<std::string>();
-                boost::optional<uint8_t> fav_child_val = m.second.get_optional<uint8_t>("FavLevel");
-                uint8_t fav_level = fav_child_val ? *fav_child_val : 0;
-
-                uint64_t last_val = m.second.get<uint64_t>("LastVal", 0);
-                const size_t configured_offset = m.second.get<size_t>("Offset", *offset);
-
-                boost::optional<std::string> data_type = m.second.get_optional<std::string>("DataType");
-                if (data_type)
-                    register_value_type = GetTypeFromString(*data_type);
-
-                ModbusValueFormat val_format = ModbusValueFormat::MVF_DEC;
-                boost::optional<std::string> val_format_str = m.second.get_optional<std::string>("Format");
-                if (val_format_str)
-                {
-                    if      (*val_format_str == "hex") val_format = ModbusValueFormat::MVF_HEX;
-                    else if (*val_format_str == "bin") val_format = ModbusValueFormat::MVF_BIN;
-                }
-
-                boost::optional<int64_t> min_val_child = m.second.get_optional<int64_t>("Min");
-                boost::optional<int64_t> max_val_child = m.second.get_optional<int64_t>("Max");
-
-                std::string description;
-                boost::optional<std::string> description_child = m.second.get_optional<std::string>("Desc");
-                if (description_child)
-                {
-                    description = *description_child;
-                    boost::algorithm::replace_all(description, "\\n", "\n");
-                }
-
-                boost::optional<std::string> color;
-                boost::optional<std::string> bg_color;
-                boost::optional<bool> is_bold;
-                boost::optional<float> is_scale;
-                boost::optional<std::string> is_font_face;
-                boost::optional<std::string> branch_str;
-                utils::xml::ReadChildIfexists<std::string>(m, "Color", color);
-                utils::xml::ReadChildIfexists<std::string>(m, "BackgroundColor", bg_color);
-                utils::xml::ReadChildIfexists<float>(m, "Scale", is_scale);
-                utils::xml::ReadChildIfexists<bool>(m, "Bold", is_bold);
-                utils::xml::ReadChildIfexists<std::string>(m, "FontFace", is_font_face);
-                utils::xml::ReadChildIfexists<std::string>(m, "Branch", branch_str);
-
-                std::optional<uint32_t> color_;
-                std::optional<uint32_t> bg_color_;
-                std::optional<bool> is_bold_;
-                std::optional<float> is_scale_;
-                std::optional<std::string> is_font_face_;
-
-                if(color)       color_       = utils::ColorStringToInt(*color);
-                if(bg_color)    bg_color_    = utils::ColorStringToInt(*bg_color);
-                if(is_bold && *is_bold) is_bold_ = true;
-                if(is_scale)    is_scale_    = *is_scale;
-                if(is_font_face) is_font_face_ = *is_font_face;
-
-                ModbusMapping mapping;
-                for (const boost::property_tree::ptree::value_type& x : m.second)
-                {
-                    if (x.first != "Mapping") continue;
-
-                    uint8_t map_offset = x.second.get<uint8_t>("<xmlattr>.offset");
-                    uint8_t len        = x.second.get<uint8_t>("<xmlattr>.len");
-                    std::string type   = x.second.get<std::string>("<xmlattr>.type");
-                    std::string map_name = x.second.get_value<std::string>();
-
-                    ModbusBitfieldType bitfield_type = GetTypeFromString(type);
-                    if (bitfield_type == MBT_INVALID)
-                    {
-                        LOG(LogLevel::Warning, "Invalid type used for frame mapping. Type: {}", type);
-                        continue;
-                    }
-
-                    uint32_t color_val    = wxBLACK->GetRGB();
-                    uint32_t bg_color_val = DEFAULT_TXTCTRL_BACKGROUND;
-                    bool is_bold_val      = false;
-                    float scale_val       = 1.0f;
-
-                    boost::optional<std::string> color_child    = x.second.get_optional<std::string>("<xmlattr>.color");
-                    boost::optional<std::string> bg_color_child = x.second.get_optional<std::string>("<xmlattr>.bg_color");
-                    boost::optional<bool>  is_bold_child        = x.second.get_optional<bool>("<xmlattr>.bold");
-                    boost::optional<float> scale_child          = x.second.get_optional<float>("<xmlattr>.scale");
-
-                    if (color_child)    color_val    = utils::ColorStringToInt(*color_child);
-                    if (bg_color_child) bg_color_val = utils::ColorStringToInt(*bg_color_child);
-                    if (is_bold_child)  is_bold_val  = *is_bold_child;
-                    if (scale_child)    scale_val    = *scale_child;
-
-                    std::string map_desc;
-                    boost::optional<std::string> desc_child = x.second.get_optional<std::string>("<xmlattr>.desc");
-                    if (desc_child)
-                    {
-                        map_desc = *desc_child;
-                        boost::algorithm::replace_all(map_desc, "\\n", "\n");
-                    }
-
-                    auto ptr_map = std::make_unique<ModbusMap>(std::move(map_name), bitfield_type, len,
-                        std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::max(),
-                        std::move(map_desc), color_val, bg_color_val, is_bold_val, scale_val);
-
-                    mapping.try_emplace(map_offset, std::move(ptr_map));
-                }
-
-                auto ptr = std::make_unique<ModbusItem>(name, fav_level, configured_offset, register_value_type, val_format, description, mapping, 0, 0, last_val,
-                    color_, bg_color_, is_bold_, is_scale_, is_font_face_);
-
-                if (branch_str)
-                {
-                    std::vector<std::string> branch_list;
-                    boost::split(branch_list, *branch_str, [](char c) { return c == ','; }, boost::algorithm::token_compress_on);
-                    for (auto& b : branch_list)
-                        ptr->branches |= ModbusEntryHandler::getBranchIDByName(b);
-                }
-                else
-                {
-                    ptr->branches = branch ? branch : 0xFFFFFFFFu;
-                }
-
-                *offset = std::max(*offset, configured_offset + ptr->GetSize());
-                item->push_back(std::move(ptr));
-            }
-        }
-
-        if (num_entries.coils           == 0xFFFF) num_entries.coils           = register_offset_coils;
-        if (num_entries.inputStatus     == 0xFFFF) num_entries.inputStatus     = register_offset_input_status;
-        if (num_entries.holdingRegisters == 0xFFFF) num_entries.holdingRegisters = register_offset_holding;
-        if (num_entries.inputRegisters  == 0xFFFF) num_entries.inputRegisters  = register_offset_input;
+        case Table::Coils:       m_layout.counts.coils = count; break;
+        case Table::InputStatus: m_layout.counts.inputStatus = count; break;
+        case Table::Holding:     m_layout.counts.holdingRegisters = count; break;
+        case Table::Input:       m_layout.counts.inputRegisters = count; break;
     }
-    catch(const boost::property_tree::xml_parser_error& e)
-    {
-        LOG(LogLevel::Error, "Exception thrown: {}, {}", e.filename(), e.what());
-        ret = false;
-    }
-    catch(const std::exception& e)
-    {
-        LOG(LogLevel::Error, "Exception thrown: {}", e.what());
-        ret = false;
-    }
-    return ret;
-}
-
-bool XmlModbusEntryLoader::Save(const std::filesystem::path& path, uint8_t& slave_id, ModbusItemType& coils, ModbusItemType& input_status,
-    ModbusItemType& holding, ModbusItemType& input, NumModbusEntries& num_entries) const
-{
-    bool ret = true;
-    boost::property_tree::ptree pt;
-    auto& root_node = pt.add_child("Modbus", boost::property_tree::ptree{});
-    root_node.add("SlaveAddress", slave_id);
-    root_node.add("NumCoils", num_entries.coils);
-    root_node.add("NumInputStatus", num_entries.inputStatus);
-    root_node.add("NumHoldingRegisters", num_entries.holdingRegisters);
-    root_node.add("NumInputRegisters", num_entries.inputRegisters);
-    root_node.add("CoilsOffset", num_entries.coilsOffset);
-    root_node.add("InputStatusOffset", num_entries.inputStatusOffset);
-    root_node.add("HoldingOffset", num_entries.holdingOffset);
-    root_node.add("InputOffset", num_entries.inputOffset);
-
-    static const std::array<std::string, 4> child_names    = { "Coils", "InputStatuses", "HoldingRegisters", "InputRegisters" };
-    static const std::array<std::string, 4> subchild_names = { "Coil", "InputStatus", "Holding", "Input" };
-    static const std::array<std::string, 3> format_strs    = { "dec", "hex", "bin" };
-
-    ModbusItemType* items[] = { &coils, &input_status, &holding, &input };
-    for(int id = 0; id < 4; id++)
-    {
-        auto& register_node = root_node.add_child(child_names[id], boost::property_tree::ptree{});
-        for(auto& m : *items[id])
-        {
-            auto& sub_node = register_node.add_child(subchild_names[id], boost::property_tree::ptree{});
-            sub_node.add("Name", m->m_Name);
-            sub_node.add("Offset", m->m_Offset);
-            sub_node.add("FavLevel", m->m_FavLevel);
-            sub_node.add("DataType", GetStringFromType(m->m_Type));
-            sub_node.add("Format", format_strs[static_cast<size_t>(m->m_Format)]);
-            sub_node.add("Min", m->m_Min);
-            sub_node.add("Max", m->m_Max);
-            if (!m->m_Desc.empty())
-            {
-                std::string desc_str = m->m_Desc;
-                boost::algorithm::replace_all(desc_str, "\n", "\\n");
-                sub_node.add("Desc", desc_str);
-            }
-            sub_node.add("LastVal", m->m_Value);
-            if(m->m_color)   sub_node.add("Color", utils::ColorIntToString(*m->m_color));
-            if(m->m_bg_color) sub_node.add("BackgroundColor", utils::ColorIntToString(*m->m_bg_color));
-            if(m->m_is_bold) sub_node.add("Bold", "1");
-            if(m->m_scale != 1.0f) sub_node.add("Scale", std::format("{:.1f}", m->m_scale));
-            if(!m->m_font_face.empty()) sub_node.add("FontFace", m->m_font_face);
-        }
-    }
-
-    try
-    {
-        boost::property_tree::write_xml(path.generic_string(), pt, std::locale(),
-            boost::property_tree::xml_writer_make_settings<boost::property_tree::ptree::key_type>('\t', 1));
-    }
-    catch(const std::exception& e)
-    {
-        LOG(LogLevel::Error, "Exception thrown: {}", e.what());
-        ret = false;
-    }
-    return ret;
 }
 
 void ModbusEntryHandler::ClearValues()
 {
-    for (auto* items : { &m_coils, &m_inputStatus, &m_Holding, &m_Input })
-        for (auto& i : *items) { i->m_Value = 0; i->m_fValue = 0.0f; i->m_dValue = 0.0; }
+    std::scoped_lock lock(m);
+    modbus_values::Clear(m_layout);
 }
 
 void ModbusEntryHandler::ExportValues(std::filesystem::path& path)
 {
+    /* Rendering used to walk the four tables unlocked while the polling worker
+       wrote the same items. The lock is held for the render and released before
+       the file is touched. */
     std::string out;
-    out += "Coils\n";
-    for (auto& i : m_coils)
-        out += std::format("{}: {}\n", i->m_Name, i->m_Value != 0);
-    out += "Input Status\n";
-    for (auto& i : m_inputStatus)
-        out += std::format("{}: {}\n", i->m_Name, i->m_Value != 0);
-    out += "Holding Registers\n";
-    for (auto& i : m_Holding)
-        out += std::format("{}: {}\n", i->m_Name, i->m_Type == MBT_FLOAT ? i->m_fValue : i->m_Value);
-    out += "Input Registers\n";
-    for (auto& i : m_Input)
-        out += std::format("{}: {}\n", i->m_Name, i->m_Type == MBT_FLOAT ? i->m_fValue : i->m_Value);
+    {
+        std::scoped_lock lock(m);
+        out = modbus_values::Format(m_layout);
+    }
 
     std::ofstream file(path);
-    if (file)
-    {
-        file << out;
-        file.flush();
-    }
-    else
+    if(!file)
     {
         LOG(LogLevel::Error, "Failed to open file for saving modbus values: {}", path.generic_string());
+        return;
     }
+
+    file << out;
+    file.flush();
 }
 
 void ModbusEntryHandler::ImportValues(const std::filesystem::path& path)
 {
     std::ifstream file(path);
-    if (!file)
+    if(!file)
     {
         LOG(LogLevel::Error, "Failed to open file for loading modbus values: {}", path.generic_string());
         return;
     }
 
-    std::string line;
-    enum class Section { None, Coils, InputStatus, HoldingRegisters, InputRegisters };
-    Section currentSection = Section::None;
+    const std::string text{ std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>() };
 
-    while (std::getline(file, line))
+    /* Same again: the model is updated under the lock, and the writes it asks
+       for are queued afterwards - the write queue takes its own lock, and `m`
+       is not recursive. */
+    std::vector<ModbusWrite> writes;
     {
-        if      (line == "Coils")            { currentSection = Section::Coils;            continue; }
-        else if (line == "Input Status")     { currentSection = Section::InputStatus;      continue; }
-        else if (line == "Holding Registers"){ currentSection = Section::HoldingRegisters; continue; }
-        else if (line == "Input Registers")  { currentSection = Section::InputRegisters;   continue; }
-
-        std::istringstream iss(line);
-        std::string name, valueStr;
-        if (!std::getline(iss, name, ':') || !(iss >> valueStr)) continue;
-
-        name = boost::algorithm::trim_copy(name);
-        bool isFloat = valueStr.find('.') != std::string::npos;
-        bool isBool  = valueStr.find("true") != std::string::npos || valueStr.find("false") != std::string::npos;
-        uint64_t value  = (isFloat || isBool) ? 0 : std::stoull(valueStr);
-        float    fValue = (isFloat && !isBool) ? std::stof(valueStr) : 0.0f;
-        if (isBool) value = valueStr.find("true") != std::string::npos;
-
-        auto applyToCoils = [&]()
-        {
-            int id = 0;
-            for (auto& i : m_coils)
-            {
-                if (i->m_Name == name && i->m_Value != value) { i->m_Value = value; EditCoil(id, value); break; }
-                id++;
-            }
-        };
-
-        auto applyToHolding = [&]()
-        {
-            int id = 0;
-            for (auto& i : m_Holding)
-            {
-                if (i->m_Name == name)
-                {
-                    if (i->m_Type == ModbusBitfieldType::MBT_FLOAT && i->m_fValue != fValue)
-                        { i->m_fValue = fValue; EditHolding(id, fValue); }
-                    else if (i->m_Value != value)
-                        { i->m_Value = value; EditHolding(id, value); }
-                    break;
-                }
-                id++;
-            }
-        };
-
-        if      (currentSection == Section::Coils)            applyToCoils();
-        else if (currentSection == Section::HoldingRegisters) applyToHolding();
+        std::scoped_lock lock(m);
+        writes = modbus_values::Apply(m_layout, text);
     }
+
+    for(const ModbusWrite& write : writes)
+        m_WriteQueue.Push(write);
 
     {
         std::scoped_lock helper_lock(m_helperMutex);
         if(m_helper)
             m_helper->RefreshItems();
     }
-}
-
-ModbusBitfieldType XmlModbusEntryLoader::GetTypeFromString(const std::string_view& input)
-{
-    auto ret = std::find_if(m_ModbusBitfieldTypeMap.cbegin(), m_ModbusBitfieldTypeMap.cend(),
-        [&input](const auto& item) { return item.second == input; });
-    if (ret == m_ModbusBitfieldTypeMap.cend())
-        return ModbusBitfieldType::MBT_INVALID;
-    return ret->first;
-}
-
-const std::string_view XmlModbusEntryLoader::GetStringFromType(ModbusBitfieldType type)
-{
-    auto it = m_ModbusBitfieldTypeMap.find(type);
-    if (it != m_ModbusBitfieldTypeMap.end())
-        return it->second;
-    return m_ModbusBitfieldTypeMap[MBT_INVALID];
 }
 
 ModbusEntryHandler::ModbusEntryHandler(IModbusEntryLoader& loader, IModbusEventSink* event_sink)
@@ -408,8 +108,14 @@ ModbusEntryHandler::~ModbusEntryHandler()
 
 void ModbusEntryHandler::Init()
 {
-    m_ModbusEntryLoader.Load(m_DefaultConfigName, m_slaveId, m_coils, m_inputStatus, m_Holding, m_Input, m_numEntries, m_used_branch);
-    is_recording = auto_recording;
+    /* A failed load used to leave the four tables cleared but keep going, so a
+       missing configuration file looked like a device with no registers. */
+    if(auto layout = m_ModbusEntryLoader.Load(m_DefaultConfigName, m_used_branch, m_layout.slaveId))
+        m_layout = std::move(*layout);
+    else
+        LOG(LogLevel::Error, "Could not load Modbus configuration '{}'", m_DefaultConfigName);
+
+    m_Log.SetRecording(auto_recording);
 }
 
 void ModbusEntryHandler::Start()
@@ -418,8 +124,8 @@ void ModbusEntryHandler::Start()
         return;
     if(is_enabled)
         m_Serial->Init();
-    m_workerModbus = std::make_unique<std::jthread>(std::bind_front(&ModbusEntryHandler::ModbusWorker, this));
-    utils::SetThreadName(*m_workerModbus, "ModbusWorker");
+    m_workerModbus = utils::StartNamedWorker("ModbusWorker",
+        std::bind_front(&ModbusEntryHandler::ModbusWorker, this));
 }
 
 void ModbusEntryHandler::StopWorker()
@@ -447,59 +153,61 @@ void ModbusEntryHandler::Shutdown()
 
 void ModbusEntryHandler::Save()
 {
-    const std::filesystem::path save_path("Modbus2.xml");
-    m_ModbusEntryLoader.Save(save_path, m_slaveId, m_coils, m_inputStatus, m_Holding, m_Input, m_numEntries);
+    const std::filesystem::path configured_path(m_DefaultConfigName);
+    const std::filesystem::path save_path = configured_path.extension() == ".json"
+        ? configured_path : std::filesystem::path("Modbus2.xml");
+    m_ModbusEntryLoader.Save(save_path, m_layout);
 }
 
 std::vector<std::string> ModbusEntryHandler::GetAvailableDevices() const
 {
-    return m_ModbusEntryLoader.GetAvailableDevices(m_DefaultConfigName);
+    /* A single-device layout has no catalog at all, which is a different thing
+       from a catalog that happens to be empty. */
+    const IModbusDeviceCatalog* catalog = m_ModbusEntryLoader.DeviceCatalog();
+    return catalog ? catalog->GetAvailableDevices(m_DefaultConfigName) : std::vector<std::string>{};
 }
 
 std::string ModbusEntryHandler::GetSelectedDevice() const
 {
-    return m_ModbusEntryLoader.GetSelectedDevice();
+    const IModbusDeviceCatalog* catalog = m_ModbusEntryLoader.DeviceCatalog();
+    return catalog ? catalog->GetSelectedDevice() : std::string{};
 }
 
 bool ModbusEntryHandler::ChangeDevice(const std::string& device)
 {
+    IModbusDeviceCatalog* catalog = m_ModbusEntryLoader.DeviceCatalog();
+    if(!catalog)
+    {
+        LOG(LogLevel::Warning, "The configured Modbus layout holds a single device; cannot switch to {}", device);
+        return false;
+    }
+
     const bool was_running = !m_isMainThreadPaused.load(std::memory_order_acquire);
     StopWorker();
-    if(!m_ModbusEntryLoader.SelectDevice(device))
+    if(!catalog->SelectDevice(device))
     {
         if(was_running)
             Start();
         return false;
     }
 
-    ModbusItemType coils;
-    ModbusItemType input_status;
-    ModbusItemType holding;
-    ModbusItemType input;
-    NumModbusEntries entries;
-    uint8_t slave_id = m_slaveId;
-    const bool loaded = m_ModbusEntryLoader.Load(m_DefaultConfigName, slave_id, coils, input_status,
-        holding, input, entries, m_used_branch);
-    if(loaded)
+    /* Load into a scratch layout, then swap it in under the lock. Six separate
+       locals used to stand in for the value this now is. */
+    std::optional<ModbusDeviceLayout> layout = m_ModbusEntryLoader.Load(m_DefaultConfigName, m_used_branch,
+        GetSlaveId());
+    if(layout)
     {
         std::scoped_lock lock(m);
-        m_slaveId = slave_id;
-        m_coils = std::move(coils);
-        m_inputStatus = std::move(input_status);
-        m_Holding = std::move(holding);
-        m_Input = std::move(input);
-        m_numEntries = entries;
-        m_pendingCoilWrites.clear();
-        m_pendingHoldingWrites.clear();
-        m_pendingHoldingWritesFloat.clear();
-        m_pendingHoldingWritesDouble.clear();
+        m_layout = std::move(*layout);
+        /* The queued ids point into the model that is being replaced. */
+        m_WriteQueue.Clear();
     }
     if(was_running)
         Start();
-    return loaded;
+    return layout.has_value();
 }
 
-void ModbusEntryHandler::SetModbusHelper(IModbusHelper* helper)
+void ModbusEntryHandler::SetValueObserver(IModbusValueObserver* helper)
 {
     std::scoped_lock lock(m_helperMutex);
     m_helper = helper;
@@ -538,22 +246,27 @@ void ModbusEntryHandler::ToggleAutoSend(bool toggle)
     SetPollingStatus(toggle);
 }
 
-void ModbusEntryHandler::ToggleRecording(bool toggle, bool is_pause)
+void ModbusEntryHandler::StartRecording()
 {
-    std::scoped_lock lock{ m };
-    is_recording = toggle;
-    if(!is_pause && !toggle)
-    {
-        tx_frame_cnt = rx_frame_cnt = err_frame_cnt = 0;
-        m_LogEntries.clear();
-    }
+    m_Log.SetRecording(true);
+}
+
+void ModbusEntryHandler::PauseRecording()
+{
+    m_Log.SetRecording(false);
+}
+
+void ModbusEntryHandler::StopRecording()
+{
+    m_Log.SetRecording(false);
+    tx_frame_cnt = rx_frame_cnt = err_frame_cnt = 0;
+    m_Log.Clear();
 }
 
 void ModbusEntryHandler::ClearRecording()
 {
-    std::scoped_lock lock{ m };
     tx_frame_cnt = rx_frame_cnt = err_frame_cnt = 0;
-    m_LogEntries.clear();
+    m_Log.Clear();
 }
 
 void ModbusEntryHandler::NotifySaved(const std::filesystem::path& path, int64_t duration_ns)
@@ -564,108 +277,72 @@ void ModbusEntryHandler::NotifySaved(const std::filesystem::path& path, int64_t 
 
 bool ModbusEntryHandler::SaveRecordingToFile(std::filesystem::path& path)
 {
-    auto t1 = std::chrono::steady_clock::now();
-    std::scoped_lock lock{ m };
-    if(m_LogEntries.empty()) return false;
-
-    std::ofstream out(path, std::ofstream::binary);
-    if(!out.is_open())
-    {
-        LOG(LogLevel::Error, "Failed to open file for saving Modbus recording: {}", path.generic_string());
+    const auto t1 = std::chrono::steady_clock::now();
+    if(!m_Log.ExportFrames(path, start_time))
         return false;
-    }
 
-    out << "Time,Direction,FunctionCode,DataSize,Data\n";
-    for(auto& i : m_LogEntries)
-    {
-        std::string hex;
-        utils::ConvertHexBufferToString(i->data, hex);
-        double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(i->last_execution - start_time).count() / 1000.0;
-        out << std::format("{:.3f},{},{},{},{}\n", elapsed,
-            i->direction == MODBUS_LOG_DIR_TX ? "TX" : "RX",
-            static_cast<uint32_t>(i->fcode), i->data.size(), hex);
-    }
-    out.flush();
-
-    int64_t dif = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t1).count();
-    NotifySaved(path, dif);
+    NotifySaved(path, std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - t1).count());
     return true;
 }
 
 bool ModbusEntryHandler::SaveSpecialRecordingToFile(std::filesystem::path& path)
 {
-    auto t1 = std::chrono::steady_clock::now();
-    std::scoped_lock lock{ m };
-    if(m_EventLogEntries.empty()) return false;
-
-    std::ofstream out(path, std::ofstream::binary);
-    if(!out.is_open())
-    {
-        LOG(LogLevel::Error, "Failed to open file for saving Modbus recording: {}", path.generic_string());
+    const auto t1 = std::chrono::steady_clock::now();
+    if(!m_Log.ExportEvents(path, start_time))
         return false;
-    }
 
-    out << "Time,DataSize,Data\n";
-    for(auto& i : m_EventLogEntries)
-    {
-        std::string hex;
-        utils::ConvertHexBufferToString(i->data, hex);
-        double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(i->last_execution - start_time).count() / 1000.0;
-        out << std::format("{:.3f},{}\n", elapsed, hex);
-    }
-    out.flush();
-
-    int64_t dif = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t1).count();
-    NotifySaved(path, dif);
+    NotifySaved(path, std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - t1).count());
     return true;
 }
 
 // IModbusRecorder
 bool ModbusEntryHandler::IsReady() const
 {
-    return wxGetApp().is_init_finished;
+    return m_isReady.load(std::memory_order_relaxed);
 }
 
 void ModbusEntryHandler::RecordFrame(uint8_t direction, uint8_t fc, ModbusErrorType error, const uint8_t* data, size_t len)
 {
-    auto now = std::chrono::steady_clock::now();
-    std::scoped_lock lock{ m };
-    m_LogEntries.emplace_back(std::make_unique<ModbusLogEntry>(direction, fc, error, const_cast<uint8_t*>(data), len, now));
+    m_Log.Append(direction, fc, error, data, len);
 }
 
 void ModbusEntryHandler::CheckMaxEntries()
 {
-    std::scoped_lock lock{ m };
-    if (m_LogEntries.size() >= max_recorded_entries)
-        m_LogEntries.clear();
+    m_Log.TrimIfFull();
 }
 
 template <typename T> void ModbusEntryHandler::HandleBitReading(size_t id, bool is_holding, std::unique_ptr<ModbusMap>& m, size_t offset, ModbusBitfieldInfo& info)
 {
-    uint8_t* register_pointer = is_holding ? (uint8_t*)&m_Holding[id]->m_Value : (uint8_t*)&m_Input[id]->m_Value;
-    uint64_t value = get_bitfield(register_pointer, 8, offset, m->m_Size);
+    /* A copy, not a pointer into the item: get_bitfield wants raw bytes, and
+       aliasing the live register as uint8_t only ever worked because the value
+       happened to be stored as a bare uint64_t. */
+    uint64_t raw = (is_holding ? m_layout.holding[id] : m_layout.input[id])->m_Value.Integer();
+    uint64_t value = get_bitfield(reinterpret_cast<uint8_t*>(&raw), sizeof(raw),
+        static_cast<uint16_t>(offset), m->m_Size);
     T extracted_data = static_cast<T>(value);
     info.push_back({std::format("{}         (offset: {}, size: {}, range: {} - {})", m->m_Name, offset, m->m_Size, m->m_MinVal, m->m_MaxVal), std::to_string(extracted_data), m.get() });
 }
 
 template <typename T> void ModbusEntryHandler::HandleBitWriting(size_t id, uint8_t& pos, uint8_t offset, uint8_t size, uint8_t* byte_array, std::vector<std::string>& new_data)
 {
-    try
+    if(const auto raw_data = utils::TryParse<int64_t>(new_data[pos]))
     {
-        T raw_data = static_cast<T>(std::stoi(new_data[pos]));
-        set_bitfield(raw_data, offset, size, byte_array, sizeof(byte_array));
+        /* byte_array decays to a pointer here, so sizeof(byte_array) measured the
+           pointer and matched the real length only by coincidence. */
+        set_bitfield(static_cast<uint64_t>(static_cast<T>(*raw_data)), offset, size, byte_array, 8);
     }
-    catch (const std::exception& e)
-    {
-        LOG(LogLevel::Error, "Invalid input for pos {}. Exception: {}", pos, e.what());
-    }
+    else
+        LOG(LogLevel::Error, "Invalid input for pos {}: '{}' is not a number", pos, new_data[pos]);
+
     pos++;
 }
 
 ModbusBitfieldInfo ModbusEntryHandler::GetMapForHolding(size_t id, bool is_holding)
 {
     ModbusBitfieldInfo info;
-    const auto& src = is_holding ? m_Holding : m_Input;
+    const auto& src = is_holding ? m_layout.holding : m_layout.input;
     if (id >= src.size()) return info;
 
     for (auto& [offset, m] : src.at(id)->m_Mapping)
@@ -680,49 +357,30 @@ ModbusBitfieldInfo ModbusEntryHandler::GetMapForHolding(size_t id, bool is_holdi
 
 void ModbusEntryHandler::ApplyEditingOnHolding(size_t id, std::vector<std::string> new_data)
 {
-    if (id >= m_Holding.size()) return;
+    if (id >= m_layout.holding.size()) return;
 
     uint8_t cnt = 0;
-    uint8_t byte_array[8] = {};
-    memcpy(byte_array, &m_Holding.at(id)->m_Value, 8);
+    std::array<uint8_t, 8> byte_array{};
+    byte_array = std::bit_cast<std::array<uint8_t, 8>>(m_layout.holding.at(id)->m_Value.Integer());
 
-    for (auto& [offset, m] : m_Holding.at(id)->m_Mapping)
+    for (auto& [offset, m] : m_layout.holding.at(id)->m_Mapping)
     {
         DispatchModbusBitfieldType(m->m_Type, [&]<typename T>()
         {
-            HandleBitWriting<T>(id, cnt, offset, m->m_Size, byte_array, new_data);
+
+            HandleBitWriting<T>(id, cnt, offset, m->m_Size, byte_array.data(), new_data);
         });
     }
 
-    uint64_t value = m_Holding.at(id)->m_Value = *(uint64_t*)byte_array;
+    /* bit_cast instead of a reinterpreting pointer cast: the old form aliased a
+       uint8_t array as a uint64_t, which the optimiser is free to break. */
+    const uint64_t value = std::bit_cast<uint64_t>(byte_array);
+    m_layout.holding.at(id)->m_Value.SetInteger(value);
     EditHolding(id, value);
 }
 
-void ModbusEntryHandler::HandleBoolReading(std::vector<uint8_t>& reg, ModbusItemType& items, size_t num_items)
-{
-    std::scoped_lock state_lock(m);
-    bool done = false;
-    for(int cnt = 0; !done && cnt < (int)reg.size(); cnt++)
-    {
-        for(uint8_t x = 0; x != 8; x++)
-        {
-            size_t coil_pos = (cnt * 8) + x;
-            if(coil_pos >= num_items) { done = true; break; }
-            if(coil_pos < items.size())
-            {
-                bool bit_val = reg[cnt] & (1 << x);
-                if(items[coil_pos]->m_Value != (uint64_t)bit_val)
-                {
-                    items[coil_pos]->m_Value = bit_val;
-                }
-            }
-        }
-    }
-    rx_frame_cnt++;
-}
-
 void ModbusEntryHandler::HandleBoolReadingByOffset(const std::map<size_t, uint8_t>& reg,
-    ModbusItemType& items, IModbusHelper::Table table)
+    ModbusItemType& items, IModbusValueObserver::Table table)
 {
     std::vector<uint8_t> changed_rows;
     {
@@ -733,9 +391,8 @@ void ModbusEntryHandler::HandleBoolReadingByOffset(const std::map<size_t, uint8_
             if(!item || !(item->branches & m_used_branch))
                 continue;
             const auto value = reg.find(item->m_Offset);
-            if(value == reg.end() || item->m_Value == value->second)
+            if(value == reg.end() || !item->m_Value.SetInteger(value->second))
                 continue;
-            item->m_Value = value->second;
             if(index <= std::numeric_limits<uint8_t>::max())
                 changed_rows.push_back(static_cast<uint8_t>(index));
         }
@@ -748,51 +405,8 @@ void ModbusEntryHandler::HandleBoolReadingByOffset(const std::map<size_t, uint8_
     }
 }
 
-typedef union
-{
-    float asFloat;
-    uint16_t asShorts[2];
-} FloatUnion;
-
-void ModbusEntryHandler::HandleRegisterReading(std::vector<uint16_t>& reg, ModbusItemType& items, size_t num_items)
-{
-    std::scoped_lock state_lock(m);
-    int pos = 0;
-    for(auto i = reg.begin(); i != reg.end(); i++, pos++)
-    {
-        if(pos >= (int)num_items) break;
-        if(pos >= (int)items.size()) break;
-
-        if (!(items[pos]->branches & m_used_branch)) continue;
-
-        const auto type = items[pos]->m_Type;
-        if (type == ModbusBitfieldType::MBT_UI16 || type == ModbusBitfieldType::MBT_I16)
-        {
-            if(items[pos]->m_Value != *i)
-                items[pos]->m_Value = *i;
-        }
-        else if (type == ModbusBitfieldType::MBT_UI32 || type == ModbusBitfieldType::MBT_I32)
-        {
-            if (i + 1 == reg.end()) { LOG(LogLevel::Warning, "End reached!"); break; }
-            items[pos]->m_Value = (*(i + 1) << 16 | *i) & 0xFFFFFFFF;
-            ++i;
-        }
-        else if (type == ModbusBitfieldType::MBT_FLOAT)
-        {
-            if (i + 1 == reg.end()) { LOG(LogLevel::Warning, "End reached!"); break; }
-            FloatUnion un;
-            un.asShorts[0] = *i;
-            un.asShorts[1] = *(i + 1);
-            items[pos]->m_fValue = un.asFloat;
-            ++i;
-        }
-    }
-
-    rx_frame_cnt++;
-}
-
 void ModbusEntryHandler::HandleRegisterReadingByOffset(const std::map<size_t, uint16_t>& reg,
-    ModbusItemType& items, IModbusHelper::Table table)
+    ModbusItemType& items, IModbusValueObserver::Table table)
 {
     std::vector<uint8_t> changed_rows;
     auto word = [&](size_t offset) -> std::optional<uint16_t>
@@ -812,70 +426,51 @@ void ModbusEntryHandler::HandleRegisterReadingByOffset(const std::map<size_t, ui
             if(!w0)
                 continue;
 
-            bool changed = false;
-            switch(item->m_Type)
+            /* How wide a value is and whether it is floating point are two
+               columns of modbus_types::kTraits. This was a switch that grouped
+               the types by width and then asked m_Type a second time inside
+               two of its arms to pick float from integer. */
+            if(item->m_Type == MBT_STRING || item->m_Type == MBT_INVALID)
+                continue;
+
+            const ModbusTypeTraits& traits = modbus_types::Of(item->m_Type);
+
+            std::array<uint16_t, 4> words{ *w0, 0, 0, 0 };
+            bool complete = true;
+            for(uint8_t offset = 1; offset < traits.register_count && complete; ++offset)
             {
-                case MBT_UI8:
-                case MBT_I8:
-                case MBT_UI16:
-                case MBT_I16:
-                case MBT_BOOL:
-                {
-                    const uint64_t value = DecodeModbusRegister16(*w0, item->m_NetworkByteOrder);
-                    changed = item->m_Value != value;
-                    item->m_Value = value;
-                    break;
-                }
-                case MBT_UI32:
-                case MBT_I32:
-                case MBT_FLOAT:
-                {
-                    const auto w1 = word(item->m_Offset + 1);
-                    if(!w1)
-                        break;
-                    if(item->m_Type == MBT_FLOAT)
-                    {
-                        const float value = DecodeModbusRegisterFloat(*w0, *w1, item->m_NetworkByteOrder);
-                        changed = item->m_fValue != value;
-                        item->m_fValue = value;
-                    }
-                    else
-                    {
-                        const uint64_t value = DecodeModbusRegister32(*w0, *w1, item->m_NetworkByteOrder);
-                        changed = item->m_Value != value;
-                        item->m_Value = value;
-                    }
-                    break;
-                }
-                case MBT_UI64:
-                case MBT_I64:
-                case MBT_DOUBLE:
-                {
-                    const auto w1 = word(item->m_Offset + 1);
-                    const auto w2 = word(item->m_Offset + 2);
-                    const auto w3 = word(item->m_Offset + 3);
-                    if(!w1 || !w2 || !w3)
-                        break;
-                    if(item->m_Type == MBT_DOUBLE)
-                    {
-                        const double value = DecodeModbusRegisterDouble(*w0, *w1, *w2, *w3,
-                            item->m_NetworkByteOrder);
-                        changed = item->m_dValue != value;
-                        item->m_dValue = value;
-                    }
-                    else
-                    {
-                        const uint64_t value = DecodeModbusRegister64(*w0, *w1, *w2, *w3,
-                            item->m_NetworkByteOrder);
-                        changed = item->m_Value != value;
-                        item->m_Value = value;
-                    }
-                    break;
-                }
-                case MBT_STRING:
-                case MBT_INVALID:
-                    break;
+                if(const auto next = word(item->m_Offset + offset))
+                    words[offset] = *next;
+                else
+                    complete = false;
             }
+            if(!complete)
+                continue;
+
+            bool changed = false;
+            if(traits.is_floating)
+            {
+                changed = traits.register_count == 2
+                    ? item->m_Value.SetFloat(
+                        DecodeModbusRegisterFloat(words[0], words[1], item->m_NetworkByteOrder))
+                    : item->m_Value.SetDouble(
+                        DecodeModbusRegisterDouble(words[0], words[1], words[2], words[3],
+                            item->m_NetworkByteOrder));
+            }
+            else
+            {
+                uint64_t value = 0;
+                if(traits.register_count == 1)
+                    value = DecodeModbusRegister16(words[0], item->m_NetworkByteOrder);
+                else if(traits.register_count == 2)
+                    value = DecodeModbusRegister32(words[0], words[1], item->m_NetworkByteOrder);
+                else
+                    value = DecodeModbusRegister64(words[0], words[1], words[2], words[3],
+                        item->m_NetworkByteOrder);
+
+                changed = item->m_Value.SetInteger(value);
+            }
+
             if(changed && index <= std::numeric_limits<uint8_t>::max())
                 changed_rows.push_back(static_cast<uint8_t>(index));
         }
@@ -892,7 +487,7 @@ void ModbusEntryHandler::HandleRegisterReadingByOffset(const std::map<size_t, ui
 std::optional<GroupedModbusRegisterReadResult> ModbusEntryHandler::ReadRegisterGroups(
     const ModbusItemType& items, RegisterTable table)
 {
-    const uint16_t base = table == RegisterTable::Holding ? m_numEntries.holdingOffset : m_numEntries.inputOffset;
+    const uint16_t base = table == RegisterTable::Holding ? m_layout.counts.holdingOffset : m_layout.counts.inputOffset;
     return ReadGroupedModbusRegisters(items, m_used_branch,
         [&](uint16_t offset, uint16_t count) -> std::expected<std::vector<uint16_t>, ModbusError>
         {
@@ -905,13 +500,41 @@ std::optional<GroupedModbusRegisterReadResult> ModbusEntryHandler::ReadRegisterG
 std::optional<GroupedModbusBitReadResult> ModbusEntryHandler::ReadBitGroups(
     const ModbusItemType& items, bool input_status)
 {
-    const uint16_t base = input_status ? m_numEntries.inputStatusOffset : m_numEntries.coilsOffset;
+    const uint16_t base = input_status ? m_layout.counts.inputStatusOffset : m_layout.counts.coilsOffset;
     return ReadGroupedModbusBits(items, m_used_branch,
         [&](uint16_t offset, uint16_t count) -> std::expected<std::vector<uint8_t>, ModbusError>
         {
             return input_status ? m_Serial->ReadInputStatus(GetSlaveId(), offset, count)
                 : m_Serial->ReadCoilStatus(GetSlaveId(), offset, count);
         }, base);
+}
+
+void ModbusEntryHandler::CloseConnectionIfOpen()
+{
+    if(!GetSerial().IsOpen())
+        return;
+
+    try
+    {
+        GetSerial().Close();
+        LOG(LogLevel::Notification, "Closing modbus connection");
+    }
+    catch(boost::system::system_error&)
+    {
+        /* Swallowed, as it always was: the worker's next pass finds the port
+           shut or tries again. */
+    }
+}
+
+void ModbusEntryHandler::OpenConnection()
+{
+    /* Both waits are inherited. The first spaces out reopen attempts; the
+       second backs off after one that did not take. */
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    LOG(LogLevel::Notification, "Opening modbus connection");
+    GetSerial().Open();
+    if(!GetSerial().IsOpen())
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 }
 
 bool ModbusEntryHandler::WaitIfPaused(std::stop_token token)
@@ -921,140 +544,114 @@ bool ModbusEntryHandler::WaitIfPaused(std::stop_token token)
     return !token.stop_requested();
 }
 
+void ModbusEntryHandler::PollBitTable(ModbusItemType& items, bool input_status,
+    IModbusValueObserver::Table table)
+{
+    if(items.empty())
+        return;
+
+    const auto result = ReadBitGroups(items, input_status);
+    if(!result)
+        return;
+
+    CountPolledFrames(*result);
+    HandleBoolReadingByOffset(result->values, items, table);
+}
+
+void ModbusEntryHandler::PollRegisterTable(ModbusItemType& items, RegisterTable source,
+    IModbusValueObserver::Table table)
+{
+    if(items.empty())
+        return;
+
+    const auto result = ReadRegisterGroups(items, source);
+    if(!result)
+        return;
+
+    CountPolledFrames(*result);
+    HandleRegisterReadingByOffset(result->values, items, table);
+}
+
 void ModbusEntryHandler::HandlePolling()
 {
-    if(!m_coils.empty())
+    PollBitTable(m_layout.coils, false, IModbusValueObserver::Table::Coils);
+    PollBitTable(m_layout.inputStatus, true, IModbusValueObserver::Table::InputStatus);
+    PollRegisterTable(m_layout.holding, RegisterTable::Holding, IModbusValueObserver::Table::Holding);
+    PollRegisterTable(m_layout.input, RegisterTable::Input, IModbusValueObserver::Table::Input);
+}
+
+std::optional<uint16_t> ModbusEntryHandler::ResolveAddress(const ModbusItem& item, uint16_t table_offset) const
+{
+    const size_t offset = item.m_ManualAddress >= 0
+        ? static_cast<size_t>(item.m_ManualAddress) : item.m_Offset;
+    if(offset > static_cast<size_t>(std::numeric_limits<uint16_t>::max()) - table_offset)
+        return std::nullopt;
+    return static_cast<uint16_t>(table_offset + offset);
+}
+
+void ModbusEntryHandler::SendHoldingRegisters(const ModbusItem& item, const std::vector<uint16_t>& values)
+{
+    const auto address = ResolveAddress(item, m_layout.counts.holdingOffset);
+    if(!address)
     {
-        const auto result = ReadBitGroups(m_coils, false);
-        if(result)
-        {
-            tx_frame_cnt.fetch_add(result->read_count, std::memory_order_relaxed);
-            rx_frame_cnt.fetch_add(result->read_count - result->failed_read_count, std::memory_order_relaxed);
-            err_frame_cnt.fetch_add(result->failed_read_count, std::memory_order_relaxed);
-            HandleBoolReadingByOffset(result->values, m_coils, IModbusHelper::Table::Coils);
-        }
+        err_frame_cnt++;
+        return;
     }
 
-    if(!m_inputStatus.empty())
+    const auto reg = m_Serial->WriteHoldingRegister(GetSlaveId(), *address,
+        static_cast<uint16_t>(values.size()), values);
+    if(reg.has_value() && !reg->empty()) { tx_frame_cnt++; rx_frame_cnt++; }
+    else err_frame_cnt++;
+}
+
+void ModbusEntryHandler::ApplyWrite(const ModbusCoilWrite& write)
+{
+    if(write.id >= m_layout.coils.size())
+        return;
+
+    const auto address = ResolveAddress(*m_layout.coils[write.id], m_layout.counts.coilsOffset);
+    if(!address)
     {
-        const auto result = ReadBitGroups(m_inputStatus, true);
-        if(result)
-        {
-            tx_frame_cnt.fetch_add(result->read_count, std::memory_order_relaxed);
-            rx_frame_cnt.fetch_add(result->read_count - result->failed_read_count, std::memory_order_relaxed);
-            err_frame_cnt.fetch_add(result->failed_read_count, std::memory_order_relaxed);
-            HandleBoolReadingByOffset(result->values, m_inputStatus, IModbusHelper::Table::InputStatus);
-        }
+        err_frame_cnt++;
+        return;
     }
 
-    if(!m_Holding.empty())
-    {
-        const auto result = ReadRegisterGroups(m_Holding, RegisterTable::Holding);
-        if(result)
-        {
-            tx_frame_cnt.fetch_add(result->read_count, std::memory_order_relaxed);
-            rx_frame_cnt.fetch_add(result->read_count - result->failed_read_count, std::memory_order_relaxed);
-            err_frame_cnt.fetch_add(result->failed_read_count, std::memory_order_relaxed);
-            HandleRegisterReadingByOffset(result->values, m_Holding, IModbusHelper::Table::Holding);
-        }
-    }
+    const auto reg = m_Serial->ForceSingleCoil(GetSlaveId(), *address, write.value);
+    if(reg.has_value() && !reg->empty()) { tx_frame_cnt++; rx_frame_cnt++; }
+    else err_frame_cnt++;
+}
 
-    if(!m_Input.empty())
-    {
-        const auto result = ReadRegisterGroups(m_Input, RegisterTable::Input);
-        if(result)
-        {
-            tx_frame_cnt.fetch_add(result->read_count, std::memory_order_relaxed);
-            rx_frame_cnt.fetch_add(result->read_count - result->failed_read_count, std::memory_order_relaxed);
-            err_frame_cnt.fetch_add(result->failed_read_count, std::memory_order_relaxed);
-            HandleRegisterReadingByOffset(result->values, m_Input, IModbusHelper::Table::Input);
-        }
-    }
+void ModbusEntryHandler::ApplyWrite(const ModbusHoldingWrite& write)
+{
+    if(write.id >= m_layout.holding.size())
+        return;
+    const auto& item = *m_layout.holding[write.id];
+    SendHoldingRegisters(item, EncodeModbusRegisterValue(item, write.value));
+}
+
+void ModbusEntryHandler::ApplyWrite(const ModbusFloatWrite& write)
+{
+    if(write.id >= m_layout.holding.size())
+        return;
+    const auto& item = *m_layout.holding[write.id];
+    SendHoldingRegisters(item, EncodeModbusRegisterFloatValue(item, write.value));
+}
+
+void ModbusEntryHandler::ApplyWrite(const ModbusDoubleWrite& write)
+{
+    if(write.id >= m_layout.holding.size())
+        return;
+    const auto& item = *m_layout.holding[write.id];
+    SendHoldingRegisters(item, EncodeModbusRegisterDoubleValue(item, write.value));
 }
 
 void ModbusEntryHandler::HandleWrites()
 {
-    decltype(m_pendingCoilWrites) coil_writes;
-    decltype(m_pendingHoldingWrites) holding_writes;
-    decltype(m_pendingHoldingWritesFloat) float_writes;
-    decltype(m_pendingHoldingWritesDouble) double_writes;
-    {
-        std::scoped_lock lock(m);
-        coil_writes.swap(m_pendingCoilWrites);
-        holding_writes.swap(m_pendingHoldingWrites);
-        float_writes.swap(m_pendingHoldingWritesFloat);
-        double_writes.swap(m_pendingHoldingWritesDouble);
-    }
-
-    for(auto& c : coil_writes)
-    {
-        if(c.first >= m_coils.size())
-            continue;
-        const auto& item = *m_coils[c.first];
-        const size_t offset = item.m_ManualAddress >= 0
-            ? static_cast<size_t>(item.m_ManualAddress) : item.m_Offset;
-        if(offset > std::numeric_limits<uint16_t>::max() - m_numEntries.coilsOffset)
-        {
-            err_frame_cnt++;
-            continue;
-        }
-        auto reg = m_Serial->ForceSingleCoil(GetSlaveId(),
-            static_cast<uint16_t>(m_numEntries.coilsOffset + offset), c.second);
-        if(reg.has_value() && !reg->empty()) { tx_frame_cnt++; rx_frame_cnt++; }
-        else err_frame_cnt++;
-    }
-    for(auto& c : holding_writes)
-    {
-        if(c.first >= m_Holding.size())
-            continue;
-        const auto& item = *m_Holding[c.first];
-        const std::vector<uint16_t> vec = EncodeModbusRegisterValue(item, c.second);
-        const size_t reg_offset = item.m_ManualAddress >= 0
-            ? static_cast<size_t>(item.m_ManualAddress) : item.m_Offset;
-        if(reg_offset > std::numeric_limits<uint16_t>::max() - m_numEntries.holdingOffset)
-        {
-            err_frame_cnt++;
-            continue;
-        }
-        auto reg = m_Serial->WriteHoldingRegister(GetSlaveId(),
-            static_cast<uint16_t>(m_numEntries.holdingOffset + reg_offset), vec.size(), vec);
-        if(reg.has_value() && !reg->empty()) { tx_frame_cnt++; rx_frame_cnt++; }
-        else err_frame_cnt++;
-    }
-    for(auto& c : float_writes)
-    {
-        if(c.first >= m_Holding.size())
-            continue;
-        const auto& item = *m_Holding[c.first];
-        const auto vec = EncodeModbusRegisterFloatValue(item, c.second);
-        const size_t offset = item.m_ManualAddress >= 0 ? static_cast<size_t>(item.m_ManualAddress) : item.m_Offset;
-        if(offset > std::numeric_limits<uint16_t>::max() - m_numEntries.holdingOffset)
-        {
-            err_frame_cnt++;
-            continue;
-        }
-        auto reg = m_Serial->WriteHoldingRegister(GetSlaveId(),
-            static_cast<uint16_t>(m_numEntries.holdingOffset + offset), vec.size(), vec);
-        if(reg.has_value() && !reg->empty()) { tx_frame_cnt++; rx_frame_cnt++; }
-        else err_frame_cnt++;
-    }
-    for(auto& c : double_writes)
-    {
-        if(c.first >= m_Holding.size())
-            continue;
-        const auto& item = *m_Holding[c.first];
-        const auto vec = EncodeModbusRegisterDoubleValue(item, c.second);
-        const size_t offset = item.m_ManualAddress >= 0 ? static_cast<size_t>(item.m_ManualAddress) : item.m_Offset;
-        if(offset > std::numeric_limits<uint16_t>::max() - m_numEntries.holdingOffset)
-        {
-            err_frame_cnt++;
-            continue;
-        }
-        auto reg = m_Serial->WriteHoldingRegister(GetSlaveId(),
-            static_cast<uint16_t>(m_numEntries.holdingOffset + offset), vec.size(), vec);
-        if(reg.has_value() && !reg->empty()) { tx_frame_cnt++; rx_frame_cnt++; }
-        else err_frame_cnt++;
-    }
+    /* One queue, drained in the order the edits were made. It used to be four
+       vectors drained by type, so a coil edit always went out before a holding
+       edit made earlier. */
+    for(const ModbusWrite& write : m_WriteQueue.Drain())
+        std::visit([this](const auto& typed) { ApplyWrite(typed); }, write);
 }
 
 void ModbusEntryHandler::ModbusWorker(std::stop_token token)
@@ -1064,43 +661,28 @@ void ModbusEntryHandler::ModbusWorker(std::stop_token token)
     {
         while(!token.stop_requested() && !m_Serial->IsInstanceInited())
         {
-            std::unique_lock lock(m);
-            cv.wait_for(lock, token, 10ms, [] { return false; });
+            utils::InterruptibleSleep(cv, m, token, 10ms);
         }
         if(token.stop_requested())
             break;
 
-        if (m_isMainThreadPaused)
-        {
-            m_isOpenInProgress = false;
-            if (GetSerial().IsOpen() && !m_isCloseInProgress)
-            {
-                m_isCloseInProgress = true;
-                try
-                {
-                    GetSerial().Close();
-                    LOG(LogLevel::Notification, "Closing modbus connection");
-                }
-                catch (boost::system::system_error&) {}
-                m_isCloseInProgress = false;
-            }
-        }
+        /* m_isOpenInProgress and m_isCloseInProgress guarded these two blocks.
+           Both were plain bools written only here, on this thread, set true
+           immediately before a synchronous call and false immediately after -
+           so !m_isOpenInProgress and !m_isCloseInProgress were always true when
+           tested, and the assignment above the close was setting a flag that
+           was already false. Neither Open nor Close reaches back into this
+           handler, so there was no re-entrancy for them to guard either. */
+        if(m_isMainThreadPaused)
+            CloseConnectionIfOpen();
 
         if(!WaitIfPaused(token))
             break;
 
         if (is_enabled)
         {
-            if (!GetSerial().IsOpen() && !m_isOpenInProgress)
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(200));
-                LOG(LogLevel::Notification, "Opening modbus connection");
-                m_isOpenInProgress = true;
-                GetSerial().Open();
-                m_isOpenInProgress = false;
-                if (!GetSerial().IsOpen())
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-            }
+            if(!GetSerial().IsOpen())
+                OpenConnection();
 
             if (!token.stop_requested() && GetSerial().IsOpen())
             {
@@ -1115,14 +697,12 @@ void ModbusEntryHandler::ModbusWorker(std::stop_token token)
                 }
 
                 {
-                    std::unique_lock lock(m);
-                    cv.wait_for(lock, token, std::chrono::milliseconds(GetPollingRate()), []{ return false; });
+                    utils::InterruptibleSleep(cv, m, token, std::chrono::milliseconds(GetPollingRate()));
                 }
             }
             else if(!token.stop_requested())
             {
-                std::unique_lock lock(m);
-                cv.wait_for(lock, token, 100ms, [] { return false; });
+                utils::InterruptibleSleep(cv, m, token, 100ms);
             }
         }
     }
@@ -1146,4 +726,49 @@ uint32_t ModbusEntryHandler::getBranchIDByName(const std::string& name)
     for (const auto& pair : gModbusBranches)
         if (pair.second == name) return pair.first;
     return 0;
+}
+
+void ModbusEntryHandler::LoadSettings(SettingsReader& reader)
+{
+    SetEnabled(utils::stob(reader.Required("ModbusMaster", "Enable")));
+    GetSerial().SetTcp(reader.Required("ModbusMaster", "ConnectionType") == "TCP");
+    GetSerial().SetTcpIp(reader.Required("ModbusMaster", "TcpIp"));
+    GetSerial().SetTcpPort(utils::stoi<uint16_t>(reader.Required("ModbusMaster", "TcpPort")));
+    GetSerial().SetComPort(utils::stoi<uint16_t>(reader.Required("ModbusMaster", "COM")));
+    SetPollingRate(utils::stoi<uint16_t>(reader.Required("ModbusMaster", "PollingRate")));
+    GetSerial().m_ResponseTimeout = utils::stoi<uint16_t>(reader.Required("ModbusMaster", "ResponseTimeout"));
+    SetDefaultConfigName(reader.Required("ModbusMaster", "DefaultModbusConfig"));
+    ToggleAutoSend(utils::stob(reader.Required("ModbusMaster", "AutoSend")));
+    ToggleAutoRecord(utils::stob(reader.Required("ModbusMaster", "AutoRecord")));
+    SetMaxRecordedEntries(utils::stoi<size_t>(reader.Required("ModbusMaster", "MaxRecordedEntries")));
+    SetDefaultBranch(reader.Required("ModbusMaster", "Branch"));
+
+    /* Optional: a single-device layout has no Device key. */
+    if(const auto section = reader.OptionalSection("ModbusMaster"))
+        if(const auto device = section->get_optional<std::string>("Device"))
+            (void)ChangeDevice(*device);
+}
+
+void ModbusEntryHandler::SaveSettings(std::ostream& out) const
+{
+    SettingsWriter writer(out, "ModbusMaster");
+    writer.Key("Enable", IsEnabled())
+        .Key("ConnectionType", m_Serial->IsTcp() ? "TCP" : "RTU")
+        .Key("TcpIp", m_Serial->GetTcpIp())
+        .Key("TcpPort", m_Serial->GetTcpPort())
+        .Key("COM", m_Serial->GetComPort(), "Com port for Modbus Master UART where data is received/sent from/to Modbus")
+        .Key("PollingRate", GetPollingRate())
+        .Key("ResponseTimeout", m_Serial->m_ResponseTimeout)
+        .Key("DefaultModbusConfig", GetDefaultConfigName())
+        .Key("AutoSend", IsAutoSend())
+        .Key("AutoRecord", IsAutoRecord())
+        .Key("MaxRecordedEntries", GetMaxRecordedEntries())
+        .Key("Branch", GetDefaultBranch());
+
+    /* The only optional key in the file: an empty device is left out rather
+       than written blank, because the loader treats absent and empty alike. */
+    if(!GetSelectedDevice().empty())
+        writer.Key("Device", GetSelectedDevice());
+
+    writer.Blank();
 }

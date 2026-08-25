@@ -21,6 +21,11 @@ enum class SimpleNotificationKind
     TxListLoadError,
     RxListLoadError,
     FrameMappingLoadError,
+    /* The panel used to report "Saved" whatever the saver returned, so a save
+       that failed - a read-only file, a full disk - looked like it worked. */
+    TxListSaveError,
+    RxListSaveError,
+    FrameMappingSaveError,
     DidUpdated,
     EverythingSaved,
     SelectedLogsCopied

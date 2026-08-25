@@ -181,7 +181,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>false</SDLCheck>
-      <PreprocessorDefinitions>WXUSINGDLL=1;WIN32;_DEBUG;_WINDOWS;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WXUSINGDLL=1;WIN32;_DEBUG;_WINDOWS;WIN32_LEAN_AND_MEAN;NOMINMAX;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>Z:\libs\wxWidgets-3.2.4\lib\vc_dll\mswud;Z:\libs\wxWidgets-3.2.4\include;Z:\libs\wxWidgets-3.2.4\include\msvc;Z:\libs\wxWidgets-3.2.4\lib\vc_lib;Z:\libs\boost\boost_1_83_0;.\libs;.\src;.\src\interface;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
@@ -210,7 +210,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
-      <PreprocessorDefinitions>WXUSINGDLL=1;WIN32;NDEBUG;_WINDOWS;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WXUSINGDLL=1;WIN32;NDEBUG;_WINDOWS;WIN32_LEAN_AND_MEAN;NOMINMAX;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalIncludeDirectories>Z:\libs\wxWidgets-3.2.4\lib\vc_dll\mswu;Z:\libs\wxWidgets-3.2.4\include;Z:\libs\wxWidgets-3.2.4\include\msvc;Z:\libs\wxWidgets-3.2.4\lib\vc_dll;Z:\libs\boost\boost_1_83_0;.\libs;.\src;.\src\interface;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -241,7 +241,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
-      <PreprocessorDefinitions>WXUSINGDLL=1;WIN32;NDEBUG;_WINDOWS;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WXUSINGDLL=1;WIN32;NDEBUG;_WINDOWS;WIN32_LEAN_AND_MEAN;NOMINMAX;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalIncludeDirectories>Z:\libs\wxWidgets-3.2.4\lib\vc_dll\mswu;Z:\libs\wxWidgets-3.2.4\include;Z:\libs\wxWidgets-3.2.4\include\msvc;Z:\libs\wxWidgets-3.2.4\lib\vc_dll;Z:\libs\boost\boost_1_83_0;.\libs;.\src;.\src\interface;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -272,7 +272,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;__WXMSW__;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;WIN32_LEAN_AND_MEAN;NOMINMAX;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;__WXMSW__;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalIncludeDirectories>Z:\libs\wxWidgets-3.2.4\lib\vc_lib\mswud;Z:\libs\wxWidgets-3.2.4\include;Z:\libs\wxWidgets-3.2.4\include\msvc;Z:\libs\boost\boost_1_83_0;.\libs;.\src;.\src\interface;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -301,7 +301,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>false</SDLCheck>
-      <PreprocessorDefinitions>WXUSINGDLL=1;WIN32;_DEBUG;_WINDOWS;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;_SILENCE_CXX23_DENORM_DEPRECATION_WARNING;USE_HIDAPI;USE_BSEC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WXUSINGDLL=1;WIN32;_DEBUG;_WINDOWS;WIN32_LEAN_AND_MEAN;NOMINMAX;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;_SILENCE_CXX23_DENORM_DEPRECATION_WARNING;USE_HIDAPI;USE_BSEC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <AdditionalIncludeDirectories>.\libs;.\src;.\src\interface;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -316,7 +316,7 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>DebugFastLink</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(BSEC_LIBRARY_DIR);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>ShlwApi.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;Secur32.lib;PowrProf.lib;BSECLibrary64.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ShlwApi.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;Secur32.lib;PowrProf.lib;BSECLibrary64.lib;Wlanapi.lib;Urlmon.lib;Wtsapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>Z:\libs\wxWidgets-3.2.4\lib\vc_x64_dll\mswud;Z:\libs\wxWidgets-3.2.4\include;Z:\libs\wxWidgets-3.2.4\include\msvc;Z:\libs\wxWidgets-3.2.4\lib\vc_x64_lib</AdditionalIncludeDirectories>
@@ -332,7 +332,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
-      <PreprocessorDefinitions>WXUSINGDLL=1;WIN32;NDEBUG;_WINDOWS;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;_SILENCE_CXX23_DENORM_DEPRECATION_WARNING;USE_HIDAPI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WXUSINGDLL=1;WIN32;NDEBUG;_WINDOWS;WIN32_LEAN_AND_MEAN;NOMINMAX;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;_SILENCE_CXX23_DENORM_DEPRECATION_WARNING;USE_HIDAPI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <AdditionalIncludeDirectories>Z:\libs\wxWidgets-3.2.4\lib\vc_x64_dll\mswu;Z:\libs\wxWidgets-3.2.4\include;Z:\libs\wxWidgets-3.2.4\include\msvc;Z:\libs\wxWidgets-3.2.4\lib\vc_x64_dll;Z:\libs\boost\boost_1_83_0;.\libs;.\src;.\src\interface;C:\opencv\opencv\build\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -347,7 +347,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>wxbase$(WxLibraryVersion)u.lib;wxmsw$(WxLibraryVersion)u_core.lib;wxmsw$(WxLibraryVersion)u_aui.lib;wxmsw$(WxLibraryVersion)u_stc.lib;wxmsw$(WxLibraryVersion)u_propgrid.lib;ShlwApi.lib;hidapi.lib;PowrProf.lib;Dbghelp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wxbase$(WxLibraryVersion)u.lib;wxmsw$(WxLibraryVersion)u_core.lib;wxmsw$(WxLibraryVersion)u_aui.lib;wxmsw$(WxLibraryVersion)u_stc.lib;wxmsw$(WxLibraryVersion)u_propgrid.lib;ShlwApi.lib;hidapi.lib;PowrProf.lib;Dbghelp.lib;Wlanapi.lib;Urlmon.lib;Wtsapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>Z:\libs\wxWidgets-3.2.4\lib\vc_x64_dll;Z:\libs\wxWidgets-3.2.4\lib\vc_x64_lib;Z:\libs\boost\boost_1_83_0\stage\lib;C:\hidapi;C:\opencv\opencv\build\x64\vc15\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
@@ -366,7 +366,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
-      <PreprocessorDefinitions>WXUSINGDLL=1;WIN32;NDEBUG;_WINDOWS;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;_SILENCE_CXX23_DENORM_DEPRECATION_WARNING;USE_HIDAPI;USE_BSEC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WXUSINGDLL=1;WIN32;NDEBUG;_WINDOWS;WIN32_LEAN_AND_MEAN;NOMINMAX;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;_SILENCE_CXX23_DENORM_DEPRECATION_WARNING;USE_HIDAPI;USE_BSEC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <AdditionalIncludeDirectories>.\libs;.\src;.\src\interface;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -381,7 +381,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>ShlwApi.lib;PowrProf.lib;Dbghelp.lib;BSECLibrary64.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ShlwApi.lib;PowrProf.lib;Dbghelp.lib;BSECLibrary64.lib;Wlanapi.lib;Urlmon.lib;Wtsapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(BSEC_LIBRARY_DIR);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
@@ -400,7 +400,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;__WXMSW__;USE_HIDAPI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;WIN32_LEAN_AND_MEAN;NOMINMAX;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;__WXMSW__;USE_HIDAPI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <AdditionalIncludeDirectories>.\libs;.\src;.\src\interface;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -414,7 +414,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>comctl32.lib;Rpcrt4.lib;ShlwApi.lib;PowrProf.lib;hidapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>comctl32.lib;Rpcrt4.lib;ShlwApi.lib;PowrProf.lib;hidapi.lib;Wlanapi.lib;Urlmon.lib;Wtsapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <OutputFile>$(OutputPath)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
@@ -467,7 +467,6 @@
     <ClInclude Include="src\ExceptionHandler.hpp" />
     <ClInclude Include="src\framework.hpp" />
     <ClInclude Include="src\gui\AlarmPanel.hpp" />
-    <ClInclude Include="src\gui\CanPanel\BitEditorDialog.hpp" />
     <ClInclude Include="src\gui\CanPanel\CanLogPanel.hpp" />
     <ClInclude Include="src\gui\CanPanel\CanPanel.hpp" />
     <ClInclude Include="src\gui\CanPanel\CanScriptPanel.hpp" />
@@ -632,38 +631,79 @@
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">4244</DisableSpecificWarnings>
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release_Bsec|x64'">4244</DisableSpecificWarnings>
     </ClCompile>
-    <ClCompile Include="src\Alarms.cpp" />
-    <ClCompile Include="src\BsecHandler.cpp" />
-    <ClCompile Include="src\CanEntryHandler.cpp" />
-    <ClCompile Include="src\CanDeviceLawicel.cpp" />
-    <ClCompile Include="src\CanDeviceFactory.cpp" />
+    <ClCompile Include="src\Alarms.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\BsecHandler.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\CanEntryHandler.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\CanDeviceLawicel.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\CanDeviceFactory.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\automation\CommandTextResolver.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\CanScriptHandler.cpp" />
-    <ClCompile Include="src\CanSerialPort.cpp" />
-    <ClCompile Include="src\CanDeviceStm32.cpp" />
-    <ClCompile Include="src\CanXmlLoaders.cpp" />
-    <ClCompile Include="src\CmdExecutor.cpp" />
-    <ClCompile Include="src\CorsairHid.cpp" />
-    <ClCompile Include="src\CryptoPrice.cpp" />
-    <ClCompile Include="src\GraphGenerator.cpp" />
+    <ClCompile Include="src\CanScriptHandler.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\CanSerialPort.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\CanDeviceStm32.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\CanXmlLoaders.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\CmdExecutor.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\CorsairHid.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\CryptoPrice.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\GraphGenerator.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\gui\TimeTrackerPanel.cpp" />
-    <ClCompile Include="src\MeasurementRepository.cpp" />
-    <ClCompile Include="src\ScriptLauncher.cpp" />
+    <ClCompile Include="src\MeasurementRepository.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\ScriptLauncher.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\SensorDataParser.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\TimeTracker.cpp" />
+    <ClCompile Include="src\TimeTracker.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\WindowsAddon.cpp" />
-    <ClCompile Include="src\CustomMacro.cpp" />
-    <ClCompile Include="src\DatabaseImpl.cpp" />
-    <ClCompile Include="src\DatabaseLogic.cpp" />
-    <ClCompile Include="src\DidHandler.cpp" />
-    <ClCompile Include="src\DirectoryBackup.cpp" />
+    <ClCompile Include="src\CustomMacro.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\DatabaseImpl.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\DatabaseLogic.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\DidHandler.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\DirectoryBackup.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\ExceptionHandler.cpp" />
     <ClCompile Include="src\gui\AlarmPanel.cpp" />
-    <ClCompile Include="src\gui\CanPanel\BitEditorDialog.cpp" />
     <ClCompile Include="src\gui\CanPanel\CanLogPanel.cpp" />
     <ClCompile Include="src\gui\CanPanel\CanPanel.cpp" />
     <ClCompile Include="src\gui\CanPanel\CanScriptPanel.cpp" />
@@ -681,12 +721,24 @@
     <ClCompile Include="src\gui\SettingsDialog.cpp" />
     <ClCompile Include="src\gui\ModbusMasterPanel.cpp" />
     <ClCompile Include="src\gui\TrayIcon.cpp" />
-    <ClCompile Include="src\IdlePowerSaver.cpp" />
-    <ClCompile Include="src\ImageRecognition.cpp" />
-    <ClCompile Include="src\Logger.cpp" />
-    <ClCompile Include="src\ModbusHandler.cpp" />
-    <ClCompile Include="src\ModbusMasterSerialPort.cpp" />
-    <ClCompile Include="src\PathSeparator.cpp" />
+    <ClCompile Include="src\IdlePowerSaver.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\ImageRecognition.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\Logger.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\ModbusHandler.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\ModbusMasterSerialPort.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\PathSeparator.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
@@ -697,26 +749,48 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Static Release|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\PrintScreenSaver.cpp" />
-    <ClCompile Include="src\Sensors.cpp" />
-    <ClCompile Include="src\SerialPortBase.cpp" />
-    <ClCompile Include="src\SerialTcpBackend.cpp" />
-    <ClCompile Include="src\SerialPort.cpp" />
-    <ClCompile Include="src\Server.cpp" />
-    <ClCompile Include="src\Session.cpp" />
-    <ClCompile Include="src\Settings.cpp" />
+    <ClCompile Include="src\PrintScreenSaver.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\Sensors.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\SerialPortBase.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\SerialTcpBackend.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\SerialPort.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\Server.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\Session.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\Settings.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\SettingsIniDocument.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="src\StringToCEscaper.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\TcpMessageExecutor.cpp" />
+    <ClCompile Include="src\TcpMessageExecutor.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\TcpMessageParser.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\TerminalHotkey.cpp" />
-    <ClCompile Include="src\Utils.cpp" />
+    <ClCompile Include="src\TerminalHotkey.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\Utils.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\utils\AsyncSerial.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
@@ -727,7 +801,9 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release_Bsec|x64'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Static Release|x64'">NotUsing</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\WorkingDays.cpp" />
+    <ClCompile Include="src\WorkingDays.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="WindowsAddon.rc" />
@@ -837,6 +913,159 @@
     <Xml Include="TxList.xml">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Static Release|x64'">true</ExcludedFromBuild>
     </Xml>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\BackupSettings.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\CanFrameLog.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\CanIsoTpEndpoint.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\CryptoPriceParser.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\DefaultCommandsFile.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\DirectoryUsage.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\HotkeyRegistry.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\KeyScanCodes.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\MacroActions.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\MacroKeyFrame.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\MacroSettings.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\ModbusFrameLog.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\ModbusItemRender.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\ModbusJsonPersistence.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\ModbusValueIo.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\ModbusXmlLoaders.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\SettingsSchema.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\WorkingDaysCalendar.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\gui\BackupProgressDialog.cpp" />
+    <ClCompile Include="src\gui\BitFieldEditorDialog.cpp" />
+    <ClCompile Include="src\gui\CanPanel\CanGrids.cpp" />
+    <ClCompile Include="src\gui\GridBuilder.cpp" />
+    <ClCompile Include="src\gui\LogRecordingBar.cpp" />
+    <ClCompile Include="src\gui\MainFrameAccess.cpp" />
+    <ClCompile Include="src\gui\MenuCommand.cpp" />
+    <ClCompile Include="src\gui\ModbusDataPanel.cpp" />
+    <ClCompile Include="src\gui\ModbusDialogs.cpp" />
+    <ClCompile Include="src\gui\ModbusGraphView.cpp" />
+    <ClCompile Include="src\gui\NotificationPresenter.cpp" />
+    <ClCompile Include="src\gui\Prompts.cpp" />
+    <ClCompile Include="src\gui\StatusLabel.cpp" />
+    <ClCompile Include="src\gui\TextStylePanel.cpp" />
+    <ClCompile Include="src\gui\WxClipboard.cpp" />
+    <ClCompile Include="src\platform\KeyboardInput.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\platform\ScreenAutomation.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\platform\StandardBackupFileSystem.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\utils\TextStyleXml.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\utils\WindowsCommand.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\utils\XmlDocument.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\BackupSettings.hpp" />
+    <ClInclude Include="src\CanFrameLog.hpp" />
+    <ClInclude Include="src\CanIsoTpEndpoint.hpp" />
+    <ClInclude Include="src\CommandParams.hpp" />
+    <ClInclude Include="src\CryptoPriceParser.hpp" />
+    <ClInclude Include="src\DefaultCommandsFile.hpp" />
+    <ClInclude Include="src\DirectoryUsage.hpp" />
+    <ClInclude Include="src\HotkeyRegistry.hpp" />
+    <ClInclude Include="src\LogFileSearch.hpp" />
+    <ClInclude Include="src\MacroKeyFrame.hpp" />
+    <ClInclude Include="src\ModbusFrameLog.hpp" />
+    <ClInclude Include="src\ModbusItemRender.hpp" />
+    <ClInclude Include="src\ModbusJsonPersistence.hpp" />
+    <ClInclude Include="src\ModbusSpecialRegisters.hpp" />
+    <ClInclude Include="src\ModbusTypeTraits.hpp" />
+    <ClInclude Include="src\ModbusValueIo.hpp" />
+    <ClInclude Include="src\ModbusWriteQueue.hpp" />
+    <ClInclude Include="src\SettingsReader.hpp" />
+    <ClInclude Include="src\SettingsSchema.hpp" />
+    <ClInclude Include="src\SettingsWriter.hpp" />
+    <ClInclude Include="src\UdsCodes.hpp" />
+    <ClInclude Include="src\UdsRawScript.hpp" />
+    <ClInclude Include="src\WorkingDaysCalendar.hpp" />
+    <ClInclude Include="src\gui\BackupProgressDialog.hpp" />
+    <ClInclude Include="src\gui\BitFieldEditorDialog.hpp" />
+    <ClInclude Include="src\gui\GridBuilder.hpp" />
+    <ClInclude Include="src\gui\LogRecordingBar.hpp" />
+    <ClInclude Include="src\gui\MainFrameAccess.hpp" />
+    <ClInclude Include="src\gui\MenuCommand.hpp" />
+    <ClInclude Include="src\gui\ModbusDialogs.hpp" />
+    <ClInclude Include="src\gui\ModbusGraphView.hpp" />
+    <ClInclude Include="src\gui\NotificationPresenter.hpp" />
+    <ClInclude Include="src\gui\Prompts.hpp" />
+    <ClInclude Include="src\gui\StatusLabel.hpp" />
+    <ClInclude Include="src\gui\TextStylePanel.hpp" />
+    <ClInclude Include="src\gui\TickRegistry.hpp" />
+    <ClInclude Include="src\gui\WxClipboard.hpp" />
+    <ClInclude Include="src\interface\IAlarmEventSink.hpp" />
+    <ClInclude Include="src\interface\IAlarmPrompt.hpp" />
+    <ClInclude Include="src\interface\IBackupFileSystem.hpp" />
+    <ClInclude Include="src\interface\IClipboard.hpp" />
+    <ClInclude Include="src\interface\IHotkeyHandler.hpp" />
+    <ClInclude Include="src\interface\IKeySink.hpp" />
+    <ClInclude Include="src\interface\IMeasurementSink.hpp" />
+    <ClInclude Include="src\interface\INotificationSink.hpp" />
+    <ClInclude Include="src\interface\IScreenAutomation.hpp" />
+    <ClInclude Include="src\interface\ISettingsBinding.hpp" />
+    <ClInclude Include="src\pch_core.hpp" />
+    <ClInclude Include="src\platform\KeyboardInput.hpp" />
+    <ClInclude Include="src\platform\ScreenAutomation.hpp" />
+    <ClInclude Include="src\platform\StandardBackupFileSystem.hpp" />
+    <ClInclude Include="src\utils\ColorCode.hpp" />
+    <ClInclude Include="src\utils\Crc16Modbus.hpp" />
+    <ClInclude Include="src\utils\EnumNameTable.hpp" />
+    <ClInclude Include="src\utils\HexBytes.hpp" />
+    <ClInclude Include="src\utils\InterruptibleSleep.hpp" />
+    <ClInclude Include="src\utils\NumberParsing.hpp" />
+    <ClInclude Include="src\utils\ScalarTypeDispatch.hpp" />
+    <ClInclude Include="src\utils\SourceFileName.hpp" />
+    <ClInclude Include="src\utils\TextStyleXml.hpp" />
+    <ClInclude Include="src\utils\WindowsCommand.hpp" />
+    <ClInclude Include="src\utils\XmlDocument.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

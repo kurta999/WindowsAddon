@@ -15,8 +15,6 @@ public:
 
     void InitInternal(const std::string& serial_name, std::chrono::milliseconds main_timeout, std::chrono::milliseconds exception_timeout,
         SerialRecvFunction recv_function, SerialSendFunction send_function, uint32_t baudrate = 921600, bool auto_open = true) override;
-    void InitInternal(const std::string& ip, uint16_t port, bool auto_open, std::chrono::milliseconds main_timeout, std::chrono::milliseconds exception_timeout,
-        SerialRecvFunction recv_function, SerialSendFunction send_function) override;
     void DeInitInternal() override;
     void SetEnabled(bool enable) override;
     bool IsEnabled() const override;

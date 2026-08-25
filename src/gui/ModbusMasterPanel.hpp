@@ -2,7 +2,12 @@
 
 #include "IModbusEntry.hpp"
 #include "PendingModbusRowUpdates.hpp"
+#include "BitFieldEditorDialog.hpp"
+#include "ModbusDialogs.hpp"
+#include "ModbusGraphView.hpp"
 #include "ModbusRegisterEditor.hpp"
+#include "gui/LogRecordingBar.hpp"
+#include <memory>
 #include <deque>
 #include <wx/tipwin.h>
 
@@ -38,116 +43,43 @@ class ModbusScalingDialog;
 class ModbusGraphFrame;
 using ModbusBitfieldInfo = std::vector<std::tuple<std::string, std::string, ModbusMap*>>;
 
-class ModbusBitEditorDialog : public wxDialog
-{
-public:
-	ModbusBitEditorDialog(wxWindow* parent);
-
-	// [label] = value
-	void ShowDialog(ModbusBitfieldInfo& values);
-	std::vector<std::string> GetOutput();
-
-	enum class BitSelection
-	{
-		Decimal,
-		Hex,
-		Binary,
-	};
-
-	enum class ClickType
-	{
-		None,
-		Ok,
-		Close,
-		Apply,
-	};
-
-	ClickType GetClickType() { return m_ClickType; }
-
-protected:
-	void OnApply(wxCommandEvent& event);
-	void OnOk(wxCommandEvent& event);
-	void OnCancel(wxCommandEvent& event);
-	void OnClose(wxCloseEvent& event);
-	void OnRadioButtonClicked(wxCommandEvent& event);
-private:
-	int m_Id = 0;
-	uint8_t m_DataFormat = 0;
-	wxRadioButton* m_IsDecimal = {};
-	wxRadioButton* m_IsHex = {};
-	wxRadioButton* m_IsBinary = {};
-	wxStaticText* m_InputLabel[MAX_BITEDITOR_FIELDS] = {};
-	wxTextCtrl* m_Input[MAX_BITEDITOR_FIELDS] = {};
-	wxRadioButton* m_InputBit[MAX_BITEDITOR_FIELDS] = {};
-	wxSizer* sizerTop = {};
-	wxSizer* sizerMsgs = {};
-
-	ClickType m_ClickType = ClickType::None;
-
-	ModbusBitfieldInfo m_BitfieldInfo;
-	BitSelection bit_sel = BitSelection::Decimal;
-
-	wxDECLARE_EVENT_TABLE();
-	wxDECLARE_NO_COPY_CLASS(ModbusBitEditorDialog);
-};
-
-class ModbusDataEditDialog : public wxDialog
-{
-public:
-	ModbusDataEditDialog(wxWindow* parent);
-
-	void ShowDialog(std::optional<uint32_t> color, std::optional<uint32_t> bg_color, bool is_bold,
-		const wxString& font_face, float scale, ModbusBitfieldType type, uint8_t float_precision);
-
-	std::optional<uint32_t> GetTextColor();
-	std::optional<uint32_t> GetBgColor();
-
-	bool IsBold() { return m_isBold->GetValue(); }
-	wxString GetFontFace() { return m_fontFace->GetSelectedFont().GetFaceName(); }
-	float GetScale() { return static_cast<float>(m_scale->GetValue()); }
-	uint8_t GetFloatPrecision() const { return static_cast<uint8_t>(m_floatPrecision->GetValue()); }
-
-	bool IsApplyClicked() { return m_IsApplyClicked; }
-protected:
-	void OnApply(wxCommandEvent& event);
-	//void OnTimer(wxTimerEvent& event);
-private:
-	wxCheckBox* m_useCustomColor = nullptr;
-	wxColourPickerCtrl* m_color = nullptr;
-	wxCheckBox* m_useCustomBackgroundColor = nullptr;
-	wxColourPickerCtrl* m_backgroundColor = nullptr;
-	wxCheckBox* m_isBold = nullptr;
-	wxFontPickerCtrl* m_fontFace = nullptr;
-	wxSpinCtrlDouble* m_scale = nullptr;
-	wxStaticText* m_floatPrecisionLabel = nullptr;
-	wxSpinCtrl* m_floatPrecision = nullptr;
-
-	wxStaticText* m_labelResult = nullptr;
-	bool m_IsApplyClicked = false;
-	wxTimer* m_timer = nullptr;
-
-	wxDECLARE_EVENT_TABLE();
-	wxDECLARE_NO_COPY_CLASS(ModbusDataEditDialog);
-};
-
 class ModbusItemPanel
 {
 public:
-	ModbusItemPanel(wxWindow* parent, const wxString& header_name, ModbusItemType& items, bool is_read_only);
+	ModbusItemPanel(wxWindow* parent, ModbusEntryHandler& handler, const wxString& header_name,
+		ModbusEntryHandler::Table table, bool is_read_only);
 
-	void AddItem(std::unique_ptr<ModbusItem>& e);
+	void AddItem(size_t item_index, const ModbusItem& item);
 	void UpdatePanel();
 	void QueueChanges(const std::vector<uint8_t>& changed_rows) { m_pendingChanges.Add(changed_rows); }
 	void ApplyPendingChanges();
 	void RefreshItemValues(bool is_clear);
-	void UpdateItem(int has_value, int num_row, ModbusItem* item);
+
+	// !\brief Paint one row from an already-rendered cell.
+	void ShowRender(int num_row, const ModbusCellRender& render);
+
+	// !\brief Blank one row, for when polling is stopped.
+	void ClearRow(int num_row);
+
+	// !\brief Which register table this panel shows.
+	[[nodiscard]] ModbusEntryHandler::Table TableId() const { return m_table; }
+
+	// !\brief The item index shown in a grid row, if that row holds one.
+	[[nodiscard]] std::optional<size_t> ItemIndexForRow(int row) const;
 
 	wxGrid* m_grid = nullptr;
 	wxStaticBoxSizer* static_box = nullptr;
-	ModbusItemType& m_items;
-	std::map<uint16_t, ModbusItem*> grid_to_entry;  /* Helper map for storing an additional ID to CanRxData */
+
+	/* Grid row -> index into the handler's table.
+	   This was a map to ModbusItem*, which meant every lookup was a linear
+	   scan comparing pointers, and every entry dangled the moment the handler
+	   reloaded its tables for a different device. An index survives that. */
+	std::map<uint16_t, size_t> grid_to_entry;
 	std::string search_pattern;
 private:
+	/* Handed in rather than fetched from wxGetApp() on every use. */
+	ModbusEntryHandler& m_handler;
+	ModbusEntryHandler::Table m_table;
 	bool m_isReadOnly;
 	PendingModbusRowUpdates m_pendingChanges;
 
@@ -157,10 +89,30 @@ private:
 	//wxDECLARE_EVENT_TABLE();
 };
 
-class ModbusDataPanel : public wxPanel
+// !\brief What the log panel asks of the data panel: forward freshly changed
+// rows, and re-render the writable grids after a write goes out.
+//
+// The log panel used to reach its sibling through
+// dynamic_cast<ModbusMasterPanel*>(GetParent())->data_panel->m_coil... - and
+// since the pages moved into a wxAuiNotebook, which reparents them (AddPage
+// calls page->Reparent(this)), that cast has been null every time: the
+// guarded blocks behind it were unreachable, so queued value changes never
+// reached the grids from here and the after-write refresh never ran.
+class IModbusRowSink
 {
 public:
-	ModbusDataPanel(wxWindow* parent);
+    virtual ~IModbusRowSink() = default;
+    virtual void QueueRowChanges(IModbusValueObserver::Table table, std::vector<uint8_t> rows) = 0;
+    virtual void RefreshWriteTargets() = 0;
+};
+
+class ModbusDataPanel : public wxPanel, public IModbusRowSink
+{
+public:
+	void QueueRowChanges(IModbusValueObserver::Table table, std::vector<uint8_t> rows) override;
+	void RefreshWriteTargets() override;
+
+	ModbusDataPanel(wxWindow* parent, ModbusEntryHandler& handler);
 	void On10MsTimer();
 	bool ChangeDevice(const std::string& device);
 	void RefreshDevicePanels();
@@ -170,7 +122,7 @@ public:
 	ModbusDataEditDialog* m_StyleEditDialog = nullptr;
 	ModbusConditionalColorsDialog* m_ConditionalColorsDialog = nullptr;
 	ModbusScalingDialog* m_ScalingDialog = nullptr;
-	ModbusBitEditorDialog* m_BitfieldEditor = nullptr;
+	gui::BitFieldEditorDialog* m_BitfieldEditor = nullptr;
 
 	ModbusItemPanel* m_coil = nullptr;
 	ModbusItemPanel* m_input = nullptr;
@@ -180,6 +132,31 @@ public:
 private:
 	void OnCellValueChanged(wxGridEvent& ev);
 	void OnCellRightClick(wxGridEvent& ev);
+
+	/* The constructor was 249 lines. Each of these is one row of the layout it
+	   already had, so the constructor now reads as the layout. */
+	void CreateDialogs();
+	void BuildTablePanels(wxSizer& parent);
+	void BuildConnectionToolbar(wxSizer& parent);
+	void BuildPollingToolbar(wxSizer& parent);
+	void BuildActionToolbar(wxSizer& parent);
+	void BuildStatusBar(wxSizer& parent);
+
+	/* OnCellValueChanged was four near-identical per-grid blocks; these are the
+	   two halves that actually differed. */
+	[[nodiscard]] ModbusItemPanel* PanelForGrid(const wxObject* grid) const;
+	void ApplyCoilEdit(ModbusItemPanel& panel, int row, size_t index, const wxString& text);
+	void ApplyHoldingEdit(ModbusItemPanel& panel, int row, size_t index, const wxString& text);
+
+	/* One named action per context-menu entry. These were the bodies of a
+	   203-line switch inside OnCellRightClick. */
+	void ShowItemBits(ModbusItemPanel* item_panel, size_t item_index);
+	void EditItemStyle(ModbusItemPanel* item_panel, size_t item_index);
+	void EditConditionalColors(ModbusItemPanel* item_panel, size_t item_index);
+	void ChangeItemType(ModbusItemPanel* item_panel, size_t item_index, ModbusBitfieldType new_type);
+	void EditItemScaling(ModbusItemPanel* item_panel, size_t item_index);
+	void WatchItemInGraph(ModbusItemPanel* item_panel, size_t item_index);
+	void SetItemFormat(ModbusItemPanel* item_panel, size_t item_index, ModbusValueFormat format);
 	void OnGridLabelLeftClick(wxGridEvent& ev);
 	void OnGridLabelRightClick(wxGridEvent& ev);
 	void OnKeyDown(wxKeyEvent& evt);
@@ -211,21 +188,29 @@ private:
 	wxStaticText* m_LastErrorText = nullptr;
 	wxTipWindow* tip = nullptr;
 	ModbusGraphFrame* m_GraphFrame = nullptr;
+	/* Was a function-local static, so its epoch belonged to the first tick
+	   of the first instance ever, not to this panel. */
+	std::chrono::steady_clock::time_point m_LastGraphSample = std::chrono::steady_clock::now();
 
+
+	/* The handler is handed in rather than fetched from wxGetApp() on every
+	   use. docs/code-style.md: "A class gets its collaborators through its
+	   constructor. It does not fetch them." */
+	ModbusEntryHandler& m_handler;
 
 	wxDECLARE_EVENT_TABLE();
 };
 
-class ModbusLogPanel : public wxPanel, public IModbusHelper
+class ModbusLogPanel : public wxPanel, public IModbusValueObserver, public IModbusLogView
 {
 public:
-	ModbusLogPanel(wxWindow* parent);
+	ModbusLogPanel(wxWindow* parent, ModbusEntryHandler& handler, IModbusRowSink& row_sink);
 	~ModbusLogPanel() override;
 
 	void AppendLog(std::chrono::steady_clock::time_point& t1, uint8_t direction, uint8_t fcode, uint8_t error, const std::vector<uint8_t>& data) override;
 	void OnMaxEntriesReached() override;
 	void RefreshItems() override;
-	void QueueValueChanges(IModbusHelper::Table table, const std::vector<uint8_t>& rows) override;
+	void QueueValueChanges(IModbusValueObserver::Table table, const std::vector<uint8_t>& rows) override;
 	void ClearRecordingsFromGrid();
 	void On10MsTimer();
 	void OnKeyDown(wxKeyEvent& evt);
@@ -237,18 +222,27 @@ public:
 private:
 	void OnSize(wxSizeEvent& event);
 
-	wxButton* m_RecordingStart = nullptr;
-	wxButton* m_RecordingPause = nullptr;
-	wxButton* m_RecordingStop = nullptr;
-	wxButton* m_RecordingClear = nullptr;
-	wxButton* m_AutoScrollBtn = nullptr;
-	wxButton* m_RecordingSave = nullptr;
+	std::unique_ptr<gui::LogRecordingBar> m_RecordingBar;
 
-	bool m_AutoScroll = false;
+	/* Change detectors for the counter label. Were function-local statics
+	   in the tick - state shared by every instance of this panel. */
+	uint64_t m_LastShownTxCount = 0;
+	uint64_t m_LastShownRxCount = 0;
+	uint64_t m_LastShownErrCount = 0;
+
 	size_t cnt = 0;
-	bool is_something_inserted = false;
-	std::size_t inserted_until = 0;
+
+	/* How far this grid has consumed the recording. The worker thread owns the
+	   buffer, so the panel takes the new entries by value instead of walking
+	   it. */
+	IModbusRowSink& m_RowSink;
+	ModbusLogCursor m_LogCursor;
 	std::array<PendingModbusRowUpdates, 4> m_pendingValueChanges;
+
+	/* The handler is handed in rather than fetched from wxGetApp() on every
+	   use. docs/code-style.md: "A class gets its collaborators through its
+	   constructor. It does not fetch them." */
+	ModbusEntryHandler& m_handler;
 
 	wxDECLARE_EVENT_TABLE();
 };
@@ -256,7 +250,7 @@ private:
 class ModbusSpecialRegisterPanel : public wxPanel
 {
 public:
-	ModbusSpecialRegisterPanel(wxWindow* parent);
+	ModbusSpecialRegisterPanel(wxWindow* parent, ModbusEntryHandler& handler);
 	~ModbusSpecialRegisterPanel() = default;
 
 	void On10MsTimer();
@@ -271,17 +265,17 @@ public:
 private:
 	void OnSize(wxSizeEvent& event);
 
-	wxButton* m_RecordingStart = nullptr;
-	wxButton* m_RecordingPause = nullptr;
-	wxButton* m_RecordingStop = nullptr;
-	wxButton* m_RecordingClear = nullptr;
-	wxButton* m_AutoScrollBtn = nullptr;
-	wxButton* m_RecordingSave = nullptr;
+	std::unique_ptr<gui::LogRecordingBar> m_RecordingBar;
 
-	bool m_AutoScroll = true;
 	size_t cnt = 0;
-	bool is_something_inserted = false;
-	std::size_t inserted_until = 0;
+
+	/* See ModbusLogPanel::m_LogCursor. */
+	ModbusLogCursor m_LogCursor;
+
+	/* The handler is handed in rather than fetched from wxGetApp() on every
+	   use. docs/code-style.md: "A class gets its collaborators through its
+	   constructor. It does not fetch them." */
+	ModbusEntryHandler& m_handler;
 
 	wxDECLARE_EVENT_TABLE();
 };
@@ -289,11 +283,14 @@ private:
 class ModbusMasterPanel : public wxPanel
 {
 public:
-	ModbusMasterPanel(wxWindow* parent);
+	ModbusMasterPanel(wxWindow* parent, ModbusEntryHandler& handler, const wxSize& notebook_size);
 	~ModbusMasterPanel();
 
 	void UpdateSubpanels();
 	void On10MsTimer();
+
+	// !\brief Size this page and its notebook to the frame's new size.
+	void OnFrameResized(const wxSize& size);
 
 	wxAuiNotebook* m_notebook = nullptr;
 	ModbusDataPanel* data_panel = nullptr;
@@ -306,92 +303,12 @@ private:
 
 	wxAuiManager m_mgr;
 
+	/* The handler is handed in rather than fetched from wxGetApp() on every
+	   use. docs/code-style.md: "A class gets its collaborators through its
+	   constructor. It does not fetch them." */
+	ModbusEntryHandler& m_handler;
+
 	wxDECLARE_EVENT_TABLE();
 };
 
-class ModbusConditionalColorsDialog : public wxDialog
-{
-public:
-	explicit ModbusConditionalColorsDialog(wxWindow* parent);
-	void ShowDialog(const std::array<ModbusConditionalColorRule, 2>& rules);
-	const std::array<ModbusConditionalColorRule, 2>& GetRules() const { return m_rules; }
-	bool IsApplyClicked() const { return m_IsApplyClicked; }
-private:
-	struct RuleControls
-	{
-		wxChoice* comparison = nullptr;
-		wxSpinCtrlDouble* value = nullptr;
-		wxCheckBox* useColor = nullptr;
-		wxColourPickerCtrl* color = nullptr;
-		wxCheckBox* useBackgroundColor = nullptr;
-		wxColourPickerCtrl* backgroundColor = nullptr;
-	};
-	void OnApply(wxCommandEvent& event);
-	void CreateRuleControls(wxSizer* parent, size_t index);
-	std::array<RuleControls, 2> m_controls;
-	std::array<ModbusConditionalColorRule, 2> m_rules;
-	bool m_IsApplyClicked = false;
-	wxDECLARE_EVENT_TABLE();
-};
 
-class ModbusScalingDialog : public wxDialog
-{
-public:
-	explicit ModbusScalingDialog(wxWindow* parent);
-	void ShowDialog(const ModbusValueScaling& scaling, ModbusBitfieldType type, ModbusValueFormat format);
-	const ModbusValueScaling& GetScaling() const { return m_scaling; }
-	bool IsApplyClicked() const { return m_IsApplyClicked; }
-private:
-	void OnApply(wxCommandEvent& event);
-	void UpdateEnableState();
-	wxSpinCtrlDouble* m_x1 = nullptr;
-	wxSpinCtrlDouble* m_y1 = nullptr;
-	wxSpinCtrlDouble* m_x2 = nullptr;
-	wxSpinCtrlDouble* m_y2 = nullptr;
-	wxSpinCtrl* m_precision = nullptr;
-	wxCheckBox* m_enable = nullptr;
-	wxStaticText* m_notice = nullptr;
-	ModbusValueScaling m_scaling;
-	ModbusBitfieldType m_type = MBT_INVALID;
-	ModbusValueFormat m_format = MVF_DEC;
-	bool m_IsApplyClicked = false;
-	wxDECLARE_EVENT_TABLE();
-};
-
-struct ModbusGraphPoint { double seconds = 0.0; double value = 0.0; };
-struct ModbusGraphSeries
-{
-	ModbusItem* item = nullptr;
-	wxString name;
-	wxColour color;
-	std::deque<ModbusGraphPoint> points;
-};
-class ModbusGraphCanvas : public wxPanel
-{
-public:
-	explicit ModbusGraphCanvas(ModbusGraphFrame* parent);
-private:
-	void OnPaint(wxPaintEvent& event);
-	ModbusGraphFrame* m_owner = nullptr;
-};
-class ModbusGraphFrame : public wxFrame
-{
-public:
-	static constexpr size_t MaxItems = 10;
-	static constexpr size_t MaxSamplesPerItem = 300;
-	explicit ModbusGraphFrame(wxWindow* parent);
-	bool AddItem(ModbusItem* item);
-	void RemoveItem(ModbusItem* item);
-	void RecordSamples(const ModbusItemType& items);
-	std::vector<ModbusGraphSeries> GetSeriesSnapshot() const;
-private:
-	void OnRemoveSelected(wxCommandEvent& event);
-	void OnClose(wxCloseEvent& event);
-	void RefreshWatchedItems();
-	ModbusGraphCanvas* m_canvas = nullptr;
-	wxListBox* m_items = nullptr;
-	wxButton* m_removeButton = nullptr;
-	std::vector<ModbusGraphSeries> m_series;
-	std::chrono::steady_clock::time_point m_startTime;
-	mutable std::mutex m_seriesMutex;
-};

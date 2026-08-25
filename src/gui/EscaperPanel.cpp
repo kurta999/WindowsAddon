@@ -1,4 +1,6 @@
 #include "pch.hpp"
+#include "WxClipboard.hpp"
+#include "MainFrameAccess.hpp"
 
 wxBEGIN_EVENT_TABLE(EscaperPanel, wxPanel)
 wxEND_EVENT_TABLE()
@@ -73,13 +75,8 @@ EscaperPanel::EscaperPanel(wxFrame* parent)
 			StringEscaper escaper;
 			escaper.EscapeString(str, m_IsEscapePercent->IsChecked(), m_IsBackslashAtEnd->IsChecked());
 
-			if(wxTheClipboard->Open())
-			{
-				wxTheClipboard->SetData(new wxTextDataObject(str));
-				wxTheClipboard->Close();
-				MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-				frame->PostNotification(SimpleNotification{SimpleNotificationKind::StringEscaped});
-			}
+			if(gui::CopyTextToClipboard(str))
+				PostAppNotification(SimpleNotification{SimpleNotificationKind::StringEscaped});
 		});
 	h_sizer->Add(m_OkButton);
 	
@@ -89,13 +86,8 @@ EscaperPanel::EscaperPanel(wxFrame* parent)
 			std::string str = m_StyledTextCtrl->GetText().ToStdString();
 			str = utils::encode64(str);
 
-			if(wxTheClipboard->Open())
-			{
-				wxTheClipboard->SetData(new wxTextDataObject(str));
-				wxTheClipboard->Close();
-				MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-				frame->PostNotification(SimpleNotification{SimpleNotificationKind::StringEscaped});
-			}
+			if(gui::CopyTextToClipboard(str))
+				PostAppNotification(SimpleNotification{SimpleNotificationKind::StringEscaped});
 		});
 	h_sizer->Add(m_Base64EncodeButton);
 
@@ -105,13 +97,8 @@ EscaperPanel::EscaperPanel(wxFrame* parent)
 			std::string str = m_StyledTextCtrl->GetText().ToStdString();
 			str = utils::decode64(str);
 
-			if(wxTheClipboard->Open())
-			{
-				wxTheClipboard->SetData(new wxTextDataObject(str));
-				wxTheClipboard->Close();
-				MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-				frame->PostNotification(SimpleNotification{SimpleNotificationKind::StringEscaped});
-			}
+			if(gui::CopyTextToClipboard(str))
+				PostAppNotification(SimpleNotification{SimpleNotificationKind::StringEscaped});
 		});
 	h_sizer->Add(m_Base64DecodeButton);
 

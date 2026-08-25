@@ -1,4 +1,7 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "GraphGenerator.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
 
 GraphGenerator::GraphGenerator(const char* db_name, IDatabase& db)
     : m_db_name(db_name), m_db(db)

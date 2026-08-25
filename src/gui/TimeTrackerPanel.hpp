@@ -9,6 +9,9 @@
 
 #include "../TimeTracker.hpp"
 
+class WorkingDays;
+class TimeTracker;
+
 enum TimeTrackerCol : int
 {
     TimeTracker_Date,
@@ -25,11 +28,21 @@ class TimeTrackerGrid
 public:
     TimeTrackerGrid(wxWindow* parent);
 
-    void AddRow(TimeEntry* entry);
+    /* The rate is passed in: the grid needs one number for its column
+       label, not the whole tracker. */
+    void AddRow(TimeEntry* entry, int hourly_rate);
     void AddRowSerialized(TimeEntrySerialized* entry);
     void ClearRows();
 
     wxGrid* m_grid = nullptr;
+
+    /* Were function-local statics inside AddRow: state that survived
+       ClearRows and belonged to every grid instance at once. Reset with
+       the rows they describe. */
+    boost::gregorian::date m_LastSetDate;
+    boost::posix_time::time_duration m_TotalDurationForDay{0, 0, 0};
+    boost::posix_time::time_duration m_TotalDuration{0, 0, 0};
+    bool m_RowIsGray = true;
 
     // Rows are ephemeral during refreshes; durable SQL IDs are safe to retain
     // across model reloads, while TimeEntry pointers are not.
@@ -41,7 +54,7 @@ public:
 class TimeTrackerPanel : public wxPanel
 {
 public:
-	TimeTrackerPanel(wxFrame* parent);
+	TimeTrackerPanel(wxFrame* parent, TimeTracker& tracker, WorkingDays& working_days);
     TimeTrackerGrid* tracker_grid;
 
     wxStaticBoxSizer* static_box_grid = nullptr;
@@ -86,12 +99,14 @@ private:
     void OnCellRightClick(wxGridEvent& ev);
     void OnKeyDown(wxKeyEvent& evt);
 
-    std::vector<double> m_columnRatios;
 
-    void AutoSizeGrid(bool initialFit);
-    void StoreColumnRatios();
-    void ApplyColumnRatios();
     void AdjustColumns();
+
+	/* Handed in rather than fetched from wxGetApp() on every use.
+	   docs/code-style.md: "A class gets its collaborators through its
+	   constructor. It does not fetch them." */
+	TimeTracker& m_tracker;
+	WorkingDays& m_WorkingDays;
 
 	wxDECLARE_EVENT_TABLE();
 };

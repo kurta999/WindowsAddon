@@ -1,5 +1,7 @@
 #pragma once
 
+#include <boost/date_time/gregorian/gregorian.hpp>
+
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -10,6 +12,9 @@
 
 #include "interface/ITimeTrackerStorage.hpp"
 #include "TimeTrackerLogic.hpp"
+#include "interface/ISettingsBinding.hpp"
+#include <iosfwd>
+#include <string_view>
 
 class TimeEntry
 {
@@ -74,9 +79,14 @@ public:
     std::map<int, std::vector<std::unique_ptr<TimeEntrySerialized>>> serialized_entries;  /* [day] = TimeEntrySerialized */
 };
 
-class TimeTracker
+class TimeTracker : public ISettingsBinding
 {
 public:
+    // ISettingsBinding - this subsystem owns its own block of settings.ini.
+    [[nodiscard]] std::string_view SettingsSection() const override { return "TimeTracker"; }
+    void LoadSettings(SettingsReader& reader) override;
+    void SaveSettings(std::ostream& out) const override;
+
     using ErrorHandler = std::function<void(const std::string&)>;
 
     explicit TimeTracker(std::unique_ptr<ITimeTrackerStorage> storage, ErrorHandler error_handler = {});

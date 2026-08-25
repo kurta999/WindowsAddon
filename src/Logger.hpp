@@ -1,18 +1,28 @@
 #pragma once
 
 #include "utils/CSingleton.hpp"
+#include "utils/SourceFileName.hpp"
 
 #include <stdarg.h>
 
-#include <wx/wx.h>
-#include "gui/MainFrame.hpp"
-#include "WindowsAddon.hpp"
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cstring>
 #include <ctime>
+#include <deque>
+#include <format>
 #include <fstream>
 #include <filesystem>
+#include <mutex>
 #include <source_location>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
-#include "ILogHelper.hpp"
+#include "interface/ILogHelper.hpp"
 
 #ifndef _WIN32
 #include <fmt/format.h>
@@ -21,8 +31,25 @@
 
 template<class> inline constexpr bool always_false_v = false;
 
-DECLARE_APP(MyApp);
+// !\brief Narrow a log line for the byte-oriented sinks (log file, log panel).
+// Log text is ASCII in practice; this makes the conversion explicit rather than
+// relying on an implicit wchar_t -> char truncation.
+template<class StringT>
+[[nodiscard]] inline std::string NarrowLogText(const StringT& in)
+{
+    if constexpr(std::is_same_v<StringT, std::string>)
+        return in;
+    else
+    {
+        std::string out;
+        out.reserve(in.size());
+        for(const auto ch : in)
+            out.push_back(static_cast<char>(ch));
+        return out;
+    }
+}
 
+#ifdef _WIN32
 #define DBG(str, ...) \
     {\
         char __debug_format_str[64]; \
@@ -36,6 +63,17 @@ DECLARE_APP(MyApp);
         wsprintfW(__debug_format_str, str, __VA_ARGS__); \
         OutputDebugStringW(__debug_format_str); \
     }
+#else
+#define DBG(str, ...) \
+    { \
+        fprintf(stderr, str, ##__VA_ARGS__); \
+    }
+
+#define DBGW(str, ...) \
+    { \
+        fwprintf(stderr, str, ##__VA_ARGS__); \
+    }
+#endif
 
 enum LogLevel
 {
@@ -48,21 +86,54 @@ enum LogLevel
     Critical
 };
 
-#define WIDEN(quote) WIDEN2(quote)
-#define WIDEN2(quote) L##quote
-
 class LogEntry
 {
 public:
-    LogEntry(wxString file_, wxString message_) :
-        file(file_), message(message_)
+    LogEntry(std::string file_, std::string message_) :
+        file(std::move(file_)), message(std::move(message_))
     {
 
-    }    
+    }
 
-    wxString file;
-    wxString message;
+    std::string file;
+    std::string message;
 };
+
+#define LOG_GUI_FORMAT "{:%Y.%m.%d %H:%M:%S} [{}] {}"
+#define LOG_FILE_FORMAT "{:%Y.%m.%d %H:%M:%S} [{}] [{}:{} - {}] {}\n"
+
+// !\brief The severity names as they appear in a log line.
+//
+// Was HelperTraits<std::string>::serverities, with a wide twin that existed
+// only so that the whole of Emit could be instantiated for wchar_t.
+inline constexpr std::string_view kLogSeverityNames[] = {
+    "Debug", "Verbose", "Normal", "Notification", "Warning", "Error", "Critical" };
+
+/* HelperTraits held the severity names, the two format strings and a pair of
+   separator characters, once per character type, so that the whole of Emit
+   could be instantiated wide as well as narrow. Only the vformat call actually
+   needs the caller's character type; everything downstream of it writes bytes.
+   The narrow copies of the severity names and the format strings live in
+   Logger.cpp now, and the wide ones are gone with the wide instantiation. */
+
+template <typename T> struct get_fmt_mkarg_type;
+template <> struct get_fmt_mkarg_type<const wchar_t*> { using type = std::wformat_context; };
+template <> struct get_fmt_mkarg_type<const wchar_t> { using type = std::wformat_context; };
+template <> struct get_fmt_mkarg_type<wchar_t> { using type = std::wformat_context; };
+template <> struct get_fmt_mkarg_type<const char*> { using type = std::format_context; };
+template <> struct get_fmt_mkarg_type<const char> { using type = std::format_context; };
+template <> struct get_fmt_mkarg_type<char> { using type = std::format_context; };
+
+template <typename T> struct get_fmt_ret_string_type;
+template <> struct get_fmt_ret_string_type<const wchar_t*> { using type = std::wstring; };
+template <> struct get_fmt_ret_string_type<const wchar_t> { using type = std::wstring; };
+template <> struct get_fmt_ret_string_type<wchar_t> { using type = std::wstring; };
+template <> struct get_fmt_ret_string_type<const char*> { using type = std::string; };
+template <> struct get_fmt_ret_string_type<const char> { using type = std::string; };
+template <> struct get_fmt_ret_string_type<char> { using type = std::string; };
+
+class SettingsReader;
+class SettingsWriter;
 
 class Logger : public CSingleton < Logger >
 {
@@ -87,91 +158,44 @@ public:
     void SetLogLevelAsString(const std::string& level);
 
     // !\brief Get default log level as string
-    const std::string GetLogLevelAsString();
+    const std::string GetLogLevelAsString() const;
 
     // !\brief Set log filters as string separated by | character
+    // !\brief Read and write the two keys this logger owns.
+    //
+    // They live in the [App] block, where every settings.ini has them, so
+    // Settings' binding calls these rather than spelling the logger's field
+    // names itself - which was the other half of the Settings <-> Logger pair.
+    void LoadSettingsFrom(SettingsReader& reader, std::string_view section);
+    void WriteSettingsTo(SettingsWriter& writer) const;
+
     void SetLogFilters(const std::string& filter_list);
 
     // !\brief Get log filters as string separated by | character
-    std::string GetLogFilters();
+    std::string GetLogFilters() const;
 
     // !\brief Execute search for a specific string in the log file
     // !\brief log_level Log level name in string format
     bool SearchInLogFile(std::string_view filter, std::string_view log_level);
 
-#ifdef _WIN32  /* std::format version with both std::string & std::wstring support - GCC's std::format and std::chrono::current_zone implementation is still missing - 2022.10.28 */
-#define LOG_GUI_FORMAT "{:%Y.%m.%d %H:%M:%S} [{}] {}"
-#define LOG_FILE_FORMAT "{:%Y.%m.%d %H:%M:%S} [{}] [{}:{} - {}] {}\n"
-
-    template <class T>
-    struct HelperTraits
-    {
-        static_assert(always_false_v<T>, "Invalid type. Only std::string and std::wstring are accepted!");
-    };
-
-    template <>
-    struct HelperTraits<std::string>
-    {
-        static constexpr std::string_view serverities[] = { "Debug", "Verbose", "Normal", "Notification", "Warning", "Error", "Critical" };
-        static constexpr char slash = '/';
-        static constexpr char backslash = '\\';
-        static constexpr std::string_view gui_str = LOG_GUI_FORMAT;
-        static constexpr std::string_view log_str = LOG_FILE_FORMAT;
-    };
-
-    template <>
-    struct HelperTraits<std::wstring>
-    {
-        static constexpr std::wstring_view serverities[] = { L"Debug", L"Verbose", L"Normal", L"Notification", L"Warning", L"Error", L"Critical"};
-        static constexpr wchar_t slash = L'/';
-        static constexpr wchar_t backslash = L'\\';
-        static constexpr std::wstring_view gui_str = WIDEN(LOG_GUI_FORMAT);
-        static constexpr std::wstring_view log_str = WIDEN(LOG_FILE_FORMAT);
-    };
-
-    template<typename T>
-    size_t strlen_helper(T input)
-    {
-        using X = std::decay_t<decltype(input)>;
-        if constexpr(std::is_same_v<X, const char*>)
-        {
-            return strlen(input);
-        }
-        else if constexpr(std::is_same_v<X, const wchar_t*>)
-        {
-            return std::wstring(input).length();
-        }
-        else
-        {
-            static_assert(always_false_v<X>, "Invalid type. Only const char* and const wchar_t* are accepted!");
-        }
-    }
-
-    template <typename T> struct get_fmt_mkarg_type;
-    template <> struct get_fmt_mkarg_type<const wchar_t*> { using type = std::wformat_context; };
-    template <> struct get_fmt_mkarg_type<const wchar_t> { using type = std::wformat_context; };
-    template <> struct get_fmt_mkarg_type<wchar_t> { using type = std::wformat_context; };
-    template <> struct get_fmt_mkarg_type<const char*> { using type = std::format_context; };
-    template <> struct get_fmt_mkarg_type<const char> { using type = std::format_context; };
-    template <> struct get_fmt_mkarg_type<char> { using type = std::format_context; };
-
-    template <typename T> struct get_fmt_ret_string_type;
-    template <> struct get_fmt_ret_string_type<const wchar_t*> { using type = std::wstring; };
-    template <> struct get_fmt_ret_string_type<const wchar_t> { using type = std::wstring; };
-    template <> struct get_fmt_ret_string_type<wchar_t> { using type = std::wstring; };
-    template <> struct get_fmt_ret_string_type<const char*> { using type = std::string; };
-    template <> struct get_fmt_ret_string_type<const char> { using type = std::string; };
-    template <> struct get_fmt_ret_string_type<char> { using type = std::string; };
-
+    // !\brief Write one line, to the log file and to the pending queue.
+    //
+    // Was called LogInternal, which said where it sat rather than what it
+    // does; LogM and LogW both forward here and there is nothing else it
+    // could have meant.
+    // !\brief Narrow the caller's message and hand it to EmitLine.
+    //
+    // Formatting the caller's arguments is the only part of writing a log
+    // line that depends on their character type, so it is the only part that
+    // stays a template. Everything after it writes bytes.
     template<class T, typename... Args>
-    void LogInternal(LogLevel lvl, const std::source_location& location, std::basic_string_view<T> msg, Args &&...args)
+    void Emit(LogLevel lvl, const std::source_location& location, std::basic_string_view<T> msg, Args &&...args)
     {
-        using string_type = get_fmt_ret_string_type<T>::type;
-        typename get_fmt_ret_string_type<T>::type formatted_msg = (sizeof...(args) != 0) ? std::vformat(msg, std::make_format_args<typename get_fmt_mkarg_type<T>::type>(args...)) : msg.data();
-        const auto now = std::chrono::current_zone()->to_local(std::chrono::system_clock::now());
-        const auto now_truncated_to_ms = std::chrono::floor<std::chrono::milliseconds>(now);
-        typename get_fmt_ret_string_type<T>::type str = std::vformat(HelperTraits<string_type>::gui_str, std::make_format_args<typename get_fmt_mkarg_type<T>::type>(now_truncated_to_ms, HelperTraits<string_type>::serverities[lvl], formatted_msg));
+        using string_type = typename get_fmt_ret_string_type<T>::type;
 
+        /* Both rejection tests read only the caller's arguments, so they run
+           before any formatting: a suppressed line must not pay for vformat
+           twice plus a time-zone lookup. */
         if(lvl < m_DefaultLogLevel)
             return;
 
@@ -184,53 +208,65 @@ public:
             }
         }
 
+        /* string_type(msg) rather than msg.data(): the message is a view, and
+           the old spelling read from its pointer as though it were a C string. */
+        const string_type formatted = (sizeof...(args) != 0)
+            ? std::vformat(msg, std::make_format_args<typename get_fmt_mkarg_type<T>::type>(args...))
+            : string_type(msg);
+
+        EmitLine(lvl, location, NarrowLogText(formatted));
+    }
+
+    // !\brief Write one already-narrowed line to the log file and the
+    // pending queue. Not a template: nothing below the vformat depends on the
+    // character type the caller used, so this exists once instead of once per
+    // character type.
+    //
+    // Still in the header rather than in Logger.cpp, deliberately. Logger.cpp
+    // is linked into one target; the test targets substitute
+    // tests/e2e/support/HeadlessLogger.cpp, and they get real formatting and
+    // real file output precisely because that part is header-only. Moving this
+    // body to Logger.cpp means a second copy of it in HeadlessLogger, which is
+    // worse than what it would fix.
+    void EmitLine(LogLevel lvl, const std::source_location& location,
+        std::string_view formatted_msg)
+    {
+        const auto now = std::chrono::current_zone()->to_local(std::chrono::system_clock::now());
+        const auto now_truncated_to_ms = std::chrono::floor<std::chrono::milliseconds>(now);
+        std::string str = std::format(LOG_GUI_FORMAT, now_truncated_to_ms,
+            kLogSeverityNames[lvl], formatted_msg);
+
         std::unique_lock lock(m_mutex);
 
-        const char* file_name_only = nullptr;
-        const char* filename = location.file_name();  /* get filename from file path - __FILE__ macro gives abosulte path for filename */
-        for(int i = strlen_helper(location.file_name()); i > 0; i--)
-        {
-            if(filename[i] == HelperTraits<string_type>::slash || filename[i] == HelperTraits<string_type>::backslash)
-            {
-                file_name_only = &filename[i + 1];
-                break;
-            }
-        }
-        
+        const std::string_view short_name = utils::BareFileName(location.file_name());
+
         if(lvl >= LogLevel::Verbose && lvl <= LogLevel::Critical)
         {
-            /* if we're using wide strings */
-            if constexpr(std::is_same_v<string_type, std::wstring>)
-            {
-                std::string str_filename = std::string(file_name_only);
-                std::string str_function = std::string(location.function_name());
-
-                std::wstring wfilename_only = std::wstring(str_filename.begin(), str_filename.end());
-                std::wstring wfunction_name = std::wstring(str_function.begin(), str_function.end());
-                std::wstring out_log = std::format(HelperTraits<string_type>::log_str, now_truncated_to_ms, HelperTraits<string_type>::serverities[lvl], wfilename_only, location.line(), wfunction_name, formatted_msg);
-                fLog << std::string(out_log.begin(), out_log.end());
-            }
-            else
-            {
-                fLog << std::format(HelperTraits<string_type>::log_str, now_truncated_to_ms, HelperTraits<string_type>::serverities[lvl], file_name_only, location.line(), location.function_name(), formatted_msg);
-            }
-
+            fLog << std::format(LOG_FILE_FORMAT, now_truncated_to_ms,
+                kLogSeverityNames[lvl], short_name, location.line(),
+                location.function_name(), formatted_msg);
             fLog.flush();  /* File operation is handled directly here (at least for now - no time for fully async logger), it's not an expensive operation on modern SSDs */
         }
 
-        preinit_entries.push_back({ wxString(file_name_only), wxString(str) });
+        /* Drained by AppendPreinitedEntries once a log view registers itself. A
+           run without one - tests, CI, any headless service - never drains, so
+           the queue keeps the most recent entries and drops the oldest instead
+           of growing for the lifetime of the process. */
+        if(preinit_entries.size() >= kMaxPendingEntries)
+            preinit_entries.pop_front();
+        preinit_entries.push_back({ std::string(short_name), std::move(str) });
     }
 
     template<typename... Args>
     void LogM(LogLevel lvl, const std::source_location& location, std::string_view msg, Args &&...args)
     {
-        LogInternal(lvl, location, msg, std::forward<Args>(args)...);
+        Emit(lvl, location, msg, std::forward<Args>(args)...);
     }
 
     template<typename... Args>
     void LogW(LogLevel lvl, const std::source_location& location, std::wstring_view msg, Args &&...args)
     {
-        LogInternal(lvl, location, msg, std::forward<Args>(args)...);
+        Emit(lvl, location, msg, std::forward<Args>(args)...);
     }
 
     // !\brief Write given log message to logfile.txt & LogPanel
@@ -257,48 +293,6 @@ public:
             static_assert(always_false_v<X>, "Invalid type. Only const char* and const wchar_t* are accepted!");
         }
     }
-#else
-static constexpr std::string_view severity_str[] = { "Verbose", "Normal", "Notification", "Warning", "Error", "Critical" };
-
-template<typename... Args>
-void Log(LogLevel lvl, const char* file, long line, const char* function, const char* msg, Args &&...args)
-{
-    std::string str;
-    std::string formatted_msg = (sizeof...(args) != 0) ? fmt::format(msg, std::forward<Args>(args)...) : msg;
-    time_t current_time;
-    tm* current_tm;
-    time(&current_time);
-    current_tm = localtime(&current_time);
-    str = fmt::format("{:%Y.%m.%d %H:%M:%S} [{}] {}", *current_tm, severity_str[lvl], formatted_msg);
-#if DEBUG
-    OutputDebugStringA(str.c_str());
-    OutputDebugStringA("\n");
-#endif
-    const char* filename = file;  /* get filename from file path - __FILE__ macro gives abosulte path for filename */
-    for(int i = strlen(file); i > 0; i--)
-    {
-        if(file[i] == '/' || file[i] == '\\')
-        {
-            filename = &file[i + 1];
-            break;
-        }
-    }
-    if(lvl > LogLevel::Debug && lvl <= LogLevel::Critical)
-    {
-        fLog << fmt::format("{:%Y.%m.%d %H:%M:%S} [{}] [{}:{} - {}] {}\n", *current_tm, severity_str[lvl], filename, line, function, formatted_msg);
-        fLog.flush();
-    }
-    MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-    if(wxGetApp().is_init_finished && frame && frame->log_panel && frame->log_panel->m_Log)
-    {
-        frame->log_panel->m_Log->Append(wxString(str));
-        frame->log_panel->m_Log->ScrollLines(frame->log_panel->m_Log->GetCount());
-    }
-    else
-        preinit_entries.push_back({ wxString(file), wxString(str) });
-}
-
-#endif
     // !\brief Append log messages to log panel which were logged before log panel was constructor
     void AppendPreinitedEntries();
 
@@ -308,7 +302,7 @@ void Log(LogLevel lvl, const char* file, long line, const char* function, const 
 private:
     LogLevel StringToLogLevel(const std::string& level);
 
-    std::string LogLevelToString(LogLevel level);
+    std::string LogLevelToString(LogLevel level) const;
 
     // !\brief Default log level
     LogLevel m_DefaultLogLevel = LogLevel::Verbose;
@@ -316,15 +310,18 @@ private:
     // !\brief File handle for log 
     std::ofstream fLog;
 
-    // !\brief Preinited log messages
-    std::vector<LogEntry> preinit_entries;
+    // !\brief Upper bound on undrained entries, see Emit.
+    static constexpr std::size_t kMaxPendingEntries = 1000;
+
+    // !\brief Log messages waiting to be published to the log view
+    std::deque<LogEntry> preinit_entries;
 
     // !\brief Pointer to LogPanel
     ILogHelper* m_helper = nullptr;
     std::mutex m_helperMutex;
 
     // !\brief Log filters
-    std::vector<wxString> m_LogFilters;
+    std::vector<std::string> m_LogFilters;
 
     // !\brief Logger's mutex
     std::mutex m_mutex;

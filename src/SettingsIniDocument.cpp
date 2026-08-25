@@ -2,7 +2,19 @@
 
 #include <algorithm>
 #include <cctype>
+#include <fstream>
 #include <limits>
+
+#ifdef _WIN32
+/* MoveFileExW: std::filesystem::rename maps to it, but without
+   MOVEFILE_WRITE_THROUGH, which is the half that makes the replace durable.
+   NOMINMAX because this target does not define it globally and this file
+   uses std::numeric_limits<...>::max(). */
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
 
 namespace
 {
@@ -174,4 +186,64 @@ std::string SettingsIniDocument::Render() const
         rendered += line.ending;
     }
     return rendered;
+}
+
+bool SettingsIniDocument::LoadFromFile(const std::filesystem::path& path, std::string& error)
+{
+    std::ifstream input(path, std::ios::binary);
+    if(!input.is_open())
+    {
+        error = "Unable to open " + path.generic_string();
+        return false;
+    }
+    std::string content{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    return Parse(std::move(content), error);
+}
+
+bool SettingsIniDocument::SaveToFileAtomically(const std::filesystem::path& path, std::string& error) const
+{
+    const std::filesystem::path settings_path = std::filesystem::absolute(path).lexically_normal();
+    std::filesystem::path temporary_path = settings_path;
+    temporary_path += ".tmp";
+
+    std::ofstream output(temporary_path, std::ios::binary | std::ios::trunc);
+    if(!output.is_open())
+    {
+        error = "Unable to open the temporary settings file for writing";
+        return false;
+    }
+    output << Render();
+    output.flush();
+    if(!output)
+    {
+        error = "Failed while writing the temporary settings file";
+        output.close();
+        std::error_code remove_error;
+        std::filesystem::remove(temporary_path, remove_error);
+        return false;
+    }
+    output.close();
+
+#ifdef _WIN32
+    if(!MoveFileExW(temporary_path.c_str(), settings_path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    {
+        error = "Unable to replace " + settings_path.filename().generic_string()
+            + " (Windows error " + std::to_string(GetLastError()) + ")";
+        std::error_code remove_error;
+        std::filesystem::remove(temporary_path, remove_error);
+        return false;
+    }
+#else
+    std::error_code rename_error;
+    std::filesystem::rename(temporary_path, settings_path, rename_error);
+    if(rename_error)
+    {
+        error = "Unable to replace " + settings_path.filename().generic_string()
+            + ": " + rename_error.message();
+        std::error_code remove_error;
+        std::filesystem::remove(temporary_path, remove_error);
+        return false;
+    }
+#endif
+    return true;
 }

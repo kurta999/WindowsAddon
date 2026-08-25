@@ -1,4 +1,6 @@
 #include "pch.hpp"
+#include "MenuCommand.hpp"
+#include "Prompts.hpp"
 
 namespace
 {
@@ -50,35 +52,10 @@ CmdExecutorEditDialog::CmdExecutorEditDialog(wxWindow* parent)
         sizerMsgs->Add(m_isHidden);
     }
 
-    {
-        sizerMsgs->Add(new wxStaticText(this, wxID_ANY, "&Color:"));
-        m_color = new wxColourPickerCtrl(this, wxID_ANY);
-        sizerMsgs->Add(m_color);
-    }
-
-    {
-        sizerMsgs->Add(new wxStaticText(this, wxID_ANY, "&Background color:"));
-        m_backgroundColor = new wxColourPickerCtrl(this, wxID_ANY);
-        sizerMsgs->Add(m_backgroundColor);
-    }
-
-    {
-        sizerMsgs->Add(new wxStaticText(this, wxID_ANY, "&Bold?"));
-        m_isBold = new wxCheckBox(this, wxID_ANY, "");
-        sizerMsgs->Add(m_isBold);
-    }
-
-    {
-        sizerMsgs->Add(new wxStaticText(this, wxID_ANY, "&Font Type:"));
-        m_fontFace = new wxFontPickerCtrl(this, wxID_ANY);
-        sizerMsgs->Add(m_fontFace);
-    }
-
-    {
-        sizerMsgs->Add(new wxStaticText(this, wxID_ANY, "&Scale:"));
-        m_scale = new wxSpinCtrlDouble(this, wxID_ANY, "0.0", wxDefaultPosition, wxDefaultSize, 16384, 0.0, 10.0, 1.0, 0.2);
-        sizerMsgs->Add(m_scale);
-    }
+    /* A command's colours have no "unset" state, so the panel is built without
+       its per-colour checkboxes and always reports a value. */
+    m_style = new gui::TextStylePanel(this, { .optional_colors = false });
+    sizerMsgs->Add(m_style, wxSizerFlags(1).Expand());
 
     {
         sizerMsgs->Add(new wxStaticText(this, wxID_ANY, "&Min Size:"));
@@ -113,20 +90,10 @@ void CmdExecutorEditDialog::ShowDialog(const wxString& cmd_name, const wxString&
     m_commandName->SetLabel(cmd_name);
     m_cmdToExecute->SetLabel(cmd_to_execute);
     m_isHidden->SetValue(hide_console);
-    m_color->SetColour(RGB_TO_WXCOLOR(color));
-    m_backgroundColor->SetColour(RGB_TO_WXCOLOR(bg_color));
-    m_isBold->SetValue(is_bold);
+    m_style->SetValue({ color, bg_color, is_bold, font_face.ToStdString(), scale });
     m_minSize->SetLabelText(wxString::Format("%d,%d", size.x, size.y));
     m_isSizerBase->SetValue(is_sizer_base);
     m_isAddToPrevSizer->SetValue(add_to_prev_sizer);
-
-    if(!font_face.empty())
-    {
-        wxFont f;
-        f.SetFaceName(font_face);
-        m_fontFace->SetSelectedFont(f);
-    }
-    m_scale->SetValue(static_cast<double>(scale));
 
     m_IsApplyClicked = false;
     ShowModal();
@@ -143,10 +110,10 @@ wxBEGIN_EVENT_TABLE(CmdExecutorEditDialog, wxDialog)
 EVT_BUTTON(wxID_APPLY, CmdExecutorEditDialog::OnApply)
 wxEND_EVENT_TABLE()
 
-CmdExecutorPanelBase::CmdExecutorPanelBase(wxFrame* parent, CmdExecutor& executor)
+CmdExecutorPanelBase::CmdExecutorPanelBase(wxFrame* parent, CmdExecutor& executor, const wxSize& notebook_size)
     : wxPanel(parent, wxID_ANY), m_executor(executor)
 {
-    m_notebook = new wxAuiNotebook(this, wxID_ANY, wxPoint(0, 0), wxSize(Settings::Get()->window_size.x - 50, Settings::Get()->window_size.y - 50), wxAUI_NB_TOP | wxAUI_NB_TAB_SPLIT | wxAUI_NB_TAB_MOVE | wxAUI_NB_SCROLL_BUTTONS | wxAUI_NB_MIDDLE_CLICK_CLOSE | wxAUI_NB_TAB_EXTERNAL_MOVE | wxNO_BORDER);
+    m_notebook = new wxAuiNotebook(this, wxID_ANY, wxPoint(0, 0), notebook_size, wxAUI_NB_TOP | wxAUI_NB_TAB_SPLIT | wxAUI_NB_TAB_MOVE | wxAUI_NB_SCROLL_BUTTONS | wxAUI_NB_MIDDLE_CLICK_CLOSE | wxAUI_NB_TAB_EXTERNAL_MOVE | wxNO_BORDER);
     m_notebook->Connect(wxEVT_COMMAND_AUINOTEBOOK_TAB_RIGHT_DOWN, wxAuiNotebookEventHandler(CmdExecutorPanelBase::OnAuiRightClick), NULL, this);
 
     m_executor.SetMediator(this);
@@ -182,89 +149,72 @@ void CmdExecutorPanelBase::OnSize(wxSizeEvent& evt)
     evt.Skip(true);
 }
 
+void CmdExecutorPanelBase::RenamePage(int page_id)
+{
+    CommandPageNames& page_names = m_executor.GetPageNames();
+
+    wxTextEntryDialog d(this, "Type new page name here", "Rename");
+    d.SetValue(page_names[page_id]);
+    if(d.ShowModal() != wxID_OK)
+        return;
+
+    m_notebook->Freeze();
+    m_notebook->SetPageText(page_id, d.GetValue());
+    m_notebook->Thaw();
+
+    page_names[page_id] = d.GetValue().ToStdString();
+}
+
+void CmdExecutorPanelBase::ChangePageIcon(int page_id)
+{
+    CommandPageIcons& page_icons = m_executor.GetPageIcons();
+
+    IconSelectionDialog d(this);
+    d.SelectIconByName(page_icons[page_id]);
+    if(d.ShowModal() != wxID_OK)
+        return;
+
+    const wxString icon_name = d.GetSelectedIcon();
+    m_notebook->Freeze();
+    m_notebook->SetPageBitmap(page_id, wxArtProvider::GetBitmap(icon_name, wxART_OTHER, FromDIP(wxSize(16, 16))));
+    m_notebook->Thaw();
+
+    page_icons[page_id] = icon_name.ToStdString();
+}
+
 void CmdExecutorPanelBase::OnAuiRightClick(wxAuiNotebookEvent& evt)
 {
-    int page_id = m_CurrentPage = evt.GetSelection();
+    const int page_id = static_cast<uint8_t>(evt.GetSelection());
 
-    wxMenu menu;
-    menu.Append(ID_CmdExecutorEditPageName, "&Rename")->SetBitmap(wxArtProvider::GetBitmap(wxART_CDROM, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    menu.Append(ID_CmdExecutorChangeIcon, "&Change icon")->SetBitmap(wxArtProvider::GetBitmap(wxART_FIND, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    menu.Append(ID_CmdExecutorAddPage, "&Add")->SetBitmap(wxArtProvider::GetBitmap(wxART_ADD_BOOKMARK, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    menu.Append(ID_CmdExecutorDeletePage, "&Delete")->SetBitmap(wxArtProvider::GetBitmap(wxART_DELETE, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    menu.Append(ID_CmdExecutorDuplicatePageBefore, "&Duplicate Before")->SetBitmap(wxArtProvider::GetBitmap(wxART_COPY, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    menu.Append(ID_CmdExecutorDuplicatePageAfter, "&Duplicate After")->SetBitmap(wxArtProvider::GetBitmap(wxART_COPY, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    int ret = GetPopupMenuSelectionFromUser(menu);
-
-    switch(ret)
-    {
-        case ID_CmdExecutorEditPageName:
-        {
-            CommandPageNames& page_names = m_executor.GetPageNames();
-
-            wxTextEntryDialog d(this, "Type new page name here", "Rename");
-            d.SetValue(page_names[page_id]);
-            int ret = d.ShowModal();
-            if(ret == wxID_OK)
+    const gui::MenuEntry entries[]{
+        gui::MenuCommand{ "&Rename", [this, page_id] { RenamePage(page_id); }, wxART_CDROM },
+        gui::MenuCommand{ "&Change icon", [this, page_id] { ChangePageIcon(page_id); }, wxART_FIND },
+        gui::MenuCommand{ "&Add", [this, page_id]
             {
-                m_notebook->Freeze();
-                m_notebook->SetPageText(page_id, d.GetValue());
-                m_notebook->Thaw();
-
-                page_names[page_id] = d.GetValue().ToStdString();
-            }
-            break;
-        }
-        case ID_CmdExecutorChangeIcon:
-        {
-            CommandPageIcons& page_icons = m_executor.GetPageIcons();
-
-            IconSelectionDialog d(this);
-            d.SelectIconByName(page_icons[page_id]);
-            if(d.ShowModal() == wxID_OK)
+                m_executor.AddPage(page_id, page_id + 1);
+                m_executor.SaveToTempAndReload();
+            }, wxART_ADD_BOOKMARK },
+        gui::MenuCommand{ "&Delete", [this, page_id]
             {
-                wxString icon_name = d.GetSelectedIcon();
-                m_notebook->Freeze();
-                m_notebook->SetPageBitmap(page_id, wxArtProvider::GetBitmap(icon_name, wxART_OTHER, FromDIP(wxSize(16, 16))));
-                m_notebook->Thaw();
+                wxMessageDialog d(this, "Are you sure want to delete this page?", "Deleting", wxOK | wxCANCEL);
+                if(d.ShowModal() != wxID_OK)
+                    return;
 
-                page_icons[page_id] = icon_name.ToStdString();
-            }
-            break;
-        }
-        case ID_CmdExecutorAddPage:
-        {
-            m_executor.AddPage(page_id, page_id + 1);
-
-            m_executor.SaveToTempAndReload();
-            break;
-        }        
-        case ID_CmdExecutorDeletePage:
-        {
-            wxMessageDialog d(this, "Are you sure want to delete this page?", "Deleting", wxOK | wxCANCEL);
-            int ret_code = d.ShowModal();
-            if(ret_code == wxID_OK)  /* OK */
-            {
                 m_executor.DeletePage(page_id);
                 m_executor.SaveToTempAndReload();
-            }
-            break;
-        }
-        case ID_CmdExecutorDuplicatePageBefore:
-        {
-            m_executor.CopyPage(page_id, page_id);
-
-            m_executor.SaveToTempAndReload();
-            break;
-        }
-        case ID_CmdExecutorDuplicatePageAfter:
-        {
-            m_executor.CopyPage(page_id, page_id + 1);
-
-            m_executor.SaveToTempAndReload();
-            break;
-        }
-    }
-    return;
+            }, wxART_DELETE },
+        gui::MenuCommand{ "&Duplicate Before", [this, page_id]
+            {
+                m_executor.CopyPage(page_id, page_id);
+                m_executor.SaveToTempAndReload();
+            }, wxART_COPY },
+        gui::MenuCommand{ "&Duplicate After", [this, page_id]
+            {
+                m_executor.CopyPage(page_id, page_id + 1);
+                m_executor.SaveToTempAndReload();
+            }, wxART_COPY },
+    };
+    gui::RunContextMenu(this, entries);
 }
 
 void CmdExecutorPanelBase::OnPreReload(uint8_t page)
@@ -310,7 +260,12 @@ CmdExecutorPanelPage::CmdExecutorPanelPage(wxWindow* parent, uint8_t id, uint8_t
     : wxPanel(parent, wxID_ANY), m_Id(id), m_executor(executor)
 {
     edit_dlg = new CmdExecutorEditDialog(this);
-    param_dlg = new CmdExecutorParamDialog(this);
+
+    /* Parameters are free text: re-reading them as hex or binary would destroy
+       them, which is why this dialog's base radio buttons had been commented
+       out rather than removed. */
+    param_dlg = new gui::BitFieldEditorDialog(this,
+        { .title = "Param editor", .group_label = "&Params", .allow_base_change = false });
 
     //DBG("CmdExecutorPanelPage constructor %d, %d\n", id, cols);
     Bind(wxEVT_RIGHT_DOWN, &CmdExecutorPanelPage::OnPanelRightClick, this);
@@ -344,31 +299,22 @@ void CmdExecutorPanelPage::ToggleAllButtonClickability(bool toggle)
 
 void CmdExecutorPanelPage::OnPanelRightClick(wxMouseEvent& event)
 {
-    wxMenu menu;
-    menu.Append(ID_CmdExecutorAdd, "&Add", "Add command to selected column")->SetBitmap(wxArtProvider::GetBitmap(wxART_CDROM, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    menu.Append(ID_CmdExecutorAddSeparator, "&Add separator", "Add separator")->SetBitmap(wxArtProvider::GetBitmap(wxART_CDROM, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    menu.Append(ID_CmdExecutorAddCol, "&Add col")->SetBitmap(wxArtProvider::GetBitmap(wxART_REMOVABLE, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    menu.Append(ID_CmdExecutorDeleteCol, "&Delete col")->SetBitmap(wxArtProvider::GetBitmap(wxART_DELETE, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    menu.Append(ID_CmdExecutorSave, "&Save")->SetBitmap(wxArtProvider::GetBitmap(wxART_FLOPPY, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    menu.Append(ID_CmdExecutorReload, "&Reload")->SetBitmap(wxArtProvider::GetBitmap(wxART_GO_UP, wxART_OTHER, FromDIP(wxSize(14, 14))));
-
+    /* Which column the pointer is over decides what every item below acts on,
+       so it is worked out before the menu is described rather than after it
+       was built - the menu used to be assembled and then thrown away on a
+       right-click that landed outside every column. */
     const wxPoint pt = wxGetMousePosition();
-    int mouseX = pt.x - this->GetScreenPosition().x;
-    int mouseY = pt.y - this->GetScreenPosition().y;
+    const int mouseX = pt.x - this->GetScreenPosition().x;
 
-    std::vector<wxSize> pos;
     uint8_t col = 1;
-    uint8_t curr_sizer = 0xFF;
     for(auto& i : m_VertialBoxes)
     {
-        wxPoint sizer_pos = i->GetPosition();
-        wxSize sizer_size = i->GetSize();
+        const wxPoint sizer_pos = i->GetPosition();
+        const wxSize sizer_size = i->GetSize();
 
         if(mouseX > sizer_pos.x && mouseX < (sizer_pos.x + sizer_size.x))
-        {
-            curr_sizer = col - 1;
-                break;
-        }
+            break;
+
         col++;
     }
 
@@ -378,71 +324,52 @@ void CmdExecutorPanelPage::OnPanelRightClick(wxMouseEvent& event)
         return;
     }
 
-    int ret = GetPopupMenuSelectionFromUser(menu);
-    switch(ret)
-    {
-        case ID_CmdExecutorAdd:
-        {           
-            m_executor.AddCommand(m_Id, col,
-                Command(std::format("New cmd {}", utils::random_mt(1, 1000)), "& ping 127.0.0.1 -n 3 > nul", "", false, utils::random_mt(0x0, 0xFFFFFF), 0xFFFFFF, false, "", 1.0f));
-
-            OnPostReloadUpdate();
-            break;
-        }
-        case ID_CmdExecutorAddSeparator:
-        {           
-            wxTextEntryDialog d(this, "Specify separator width", "Add separator");
-            //d.SetValidator(wxIntegerValidator<uint8_t>());
-            d.SetValue("10");
-            int ret = d.ShowModal();
-            if(ret == wxID_OK)
+    const gui::MenuEntry entries[]{
+        gui::MenuCommand{ "&Add", [this, col]
             {
-                try
-                {
-                    uint8_t separator_width = static_cast<uint8_t>(std::stoi(d.GetValue().ToStdString()));
+                m_executor.AddCommand(m_Id, col,
+                    Command(std::format("New cmd {}", utils::random_mt(1, 1000)), "& ping 127.0.0.1 -n 3 > nul", "", false, utils::random_mt(0x0, 0xFFFFFF), 0xFFFFFF, false, "", 1.0f));
 
-                    m_executor.AddSeparator(m_Id, col, Separator(separator_width));
-                }
-                catch(const std::exception& e)
-                {
-                    LOG(LogLevel::Error, "stoi exception: {}", e.what());
-                }
-            }
-
-            OnPostReloadUpdate();
-            break;
-        }
-        case ID_CmdExecutorAddCol:
-        {           
-            m_executor.AddCol(CmdExecutorPanelBase::m_CurrentPage, col);
-
-            m_executor.SaveToTempAndReload();
-            break;
-        }
-        case ID_CmdExecutorDeleteCol:
-        {           
-            wxMessageDialog d(this, "Are you sure want to delete this page?", wxString::Format("Deleting col %d", col), wxOK | wxCANCEL);
-            int ret_code = d.ShowModal();
-            if(ret_code == wxID_OK)  /* OK */
+                OnPostReloadUpdate();
+            }, wxART_CDROM },
+        gui::MenuCommand{ "&Add separator", [this, col]
             {
-                m_executor.DeleteCol(CmdExecutorPanelBase::m_CurrentPage, col - 1);
+                if(const auto separator_width = gui::PromptForByte(this, "Specify separator width",
+                       "Add separator", 10, "separator width"))
+                    m_executor.AddSeparator(m_Id, col, Separator(*separator_width));
+
+                OnPostReloadUpdate();
+            }, wxART_CDROM },
+        gui::MenuCommand{ "&Add col", [this, col]
+            {
+                /* This page's own 0-based index. The static this replaced defaulted
+                   to 0 until a tab event fired, so a right-click before any tab
+                   switch edited the wrong page. m_Id is 1-based. */
+                m_executor.AddCol(static_cast<uint8_t>(m_Id - 1), col);
                 m_executor.SaveToTempAndReload();
-            }
-            break;
-        }
-        case ID_CmdExecutorSave:
-        {           
-            m_executor.Save();
-            LOG(LogLevel::Notification, "Commands has been saved");
-            break;
-        }        
-        case ID_CmdExecutorReload:
-        {           
-            m_executor.ReloadCommandsFromFile();
-            LOG(LogLevel::Notification, "Commands has been reloaded");
-            break;
-        }
-    }
+            }, wxART_REMOVABLE },
+        gui::MenuCommand{ "&Delete col", [this, col]
+            {
+                wxMessageDialog d(this, "Are you sure want to delete this page?",
+                    wxString::Format("Deleting col %d", col), wxOK | wxCANCEL);
+                if(d.ShowModal() != wxID_OK)
+                    return;
+
+                m_executor.DeleteCol(static_cast<uint8_t>(m_Id - 1), col - 1);
+                m_executor.SaveToTempAndReload();
+            }, wxART_DELETE },
+        gui::MenuCommand{ "&Save", [this]
+            {
+                m_executor.Save();
+                LOG(LogLevel::Notification, "Commands has been saved");
+            }, wxART_FLOPPY },
+        gui::MenuCommand{ "&Reload", [this]
+            {
+                m_executor.ReloadCommandsFromFile();
+                LOG(LogLevel::Notification, "Commands has been reloaded");
+            }, wxART_GO_UP },
+    };
+    gui::RunContextMenu(this, entries);
 }
 
 void CmdExecutorPanelPage::OnClick(wxCommandEvent& event)
@@ -467,11 +394,50 @@ void CmdExecutorPanelPage::OnClick(wxCommandEvent& event)
     Execute(c);
 }
 
+uint8_t CmdExecutorPanelPage::ColumnOfButton(wxButton* btn)
+{
+    for(auto& [column, element] : m_ButtonMap)
+    {
+        const bool is_this_button = std::visit([btn](auto& mapped)
+            {
+                using T = std::decay_t<decltype(mapped)>;
+                if constexpr(std::is_same_v<T, wxButton*>)
+                    return mapped == btn;
+                else
+                    return false;
+            }, element);
+
+        if(is_this_button)
+            return column;
+    }
+
+    return 0xFF;
+}
+
+void CmdExecutorPanelPage::EditCommand(Command* c, wxButton* btn)
+{
+    edit_dlg->ShowDialog(c->GetName(), c->GetCmd(), c->IsConsoleHidden(), c->GetColor(), c->GetBackgroundColor(), c->IsBold(), c->GetFontFace(), c->GetScale(),
+        ToWxSize(c->GetMinSize()), c->IsUsingSizer(), c->IsAddToPrevSizer());
+    if(!edit_dlg->IsApplyClicked())
+        return;
+
+    /* The panel was built with optional_colors off, so both colours are
+       always present; a command has no "unset colour" state. */
+    const gui::TextStyleEdit style = edit_dlg->GetStyle();
+
+    c->SetName(edit_dlg->GetCmdName().ToStdString()).SetCmd(edit_dlg->GetCmd().ToStdString()).
+        SetConsoleHidden(edit_dlg->IsHidden()).
+        SetColor(style.color.value_or(0)).SetBackgroundColor(style.background_color.value_or(0xFFFFFF)).
+        SetBold(style.is_bold).SetFontFace(style.font_face).SetScale(style.scale).
+        SetMinSize(ToLogicalSize(edit_dlg->GetMinSize())).SetUseSizer(edit_dlg->IsUsingSizer()).
+        SetAddToPrevSizer(edit_dlg->IsAddToPrevSizer());
+
+    UpdateCommandButon(c, btn, true);
+}
+
 void CmdExecutorPanelPage::OnRightClick(wxMouseEvent& event)
 {
-    auto obj = event.GetEventObject();
-
-    wxButton* btn = dynamic_cast<wxButton*>(obj);
+    wxButton* btn = dynamic_cast<wxButton*>(event.GetEventObject());
     if(btn == nullptr)
     {
         LOG(LogLevel::Error, "btn is nullptr");
@@ -486,132 +452,36 @@ void CmdExecutorPanelPage::OnRightClick(wxMouseEvent& event)
     }
 
     Command* c = reinterpret_cast<Command*>(clientdata);
-    DBG("rightclick");
 
-    wxMenu menu;
-    menu.Append(ID_CmdExecutorEdit, "&Edit")->SetBitmap(wxArtProvider::GetBitmap(wxART_EDIT, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    menu.Append(ID_CmdExecutorChangeCommandIcon, "&Change icon")->SetBitmap(wxArtProvider::GetBitmap(wxART_CDROM, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    menu.Append(ID_CmdExecutorDuplicate, "&Duplicate")->SetBitmap(wxArtProvider::GetBitmap(wxART_COPY, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    //menu.Append(ID_CmdExecutorMoveUp, "&Move Up")->SetBitmap(wxArtProvider::GetBitmap(wxART_GO_UP, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    //menu.Append(ID_CmdExecutorMoveDown, "&Move Down")->SetBitmap(wxArtProvider::GetBitmap(wxART_GO_DOWN, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    menu.Append(ID_CmdExecutorDelete, "&Delete")->SetBitmap(wxArtProvider::GetBitmap(wxART_DELETE, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    int ret = GetPopupMenuSelectionFromUser(menu);
-    
-    switch(ret)
-    {
-        case ID_CmdExecutorEdit:
-        {
-            edit_dlg->ShowDialog(c->GetName(), c->GetCmd(), c->IsConsoleHidden(), c->GetColor(), c->GetBackgroundColor(), c->IsBold(), c->GetFontFace(), c->GetScale(), 
-                ToWxSize(c->GetMinSize()), c->IsUsingSizer(), c->IsAddToPrevSizer());
-            if(!edit_dlg->IsApplyClicked()) return;
-
-            const std::string cmd_name = edit_dlg->GetCmdName().ToStdString();
-            const std::string cmd = edit_dlg->GetCmd().ToStdString();
-            bool is_hidden = edit_dlg->IsHidden();
-            wxColor color = edit_dlg->GetTextColor();
-            wxColor bg_color = edit_dlg->GetBgColor();
-            bool is_bold = edit_dlg->IsBold();
-            const std::string font_face = edit_dlg->GetFontFace().ToStdString();
-            float scale = edit_dlg->GetScale();
-            wxSize min_size = edit_dlg->GetMinSize();
-            bool is_base_sizer = edit_dlg->IsUsingSizer();
-            bool is_add_to_prev_sizer = edit_dlg->IsAddToPrevSizer();
-
-            c->SetName(cmd_name).SetCmd(cmd).SetConsoleHidden(is_hidden).SetColor(WXCOLOR_TO_RGB(color.GetRGB())).SetBackgroundColor(WXCOLOR_TO_RGB(bg_color.GetRGB())).
-                SetBold(is_bold).SetFontFace(font_face).SetScale(scale).SetMinSize(ToLogicalSize(min_size)).SetUseSizer(is_base_sizer).SetAddToPrevSizer(is_add_to_prev_sizer);
-
-            UpdateCommandButon(c, btn, true);
-            break;
-        }
-        case ID_CmdExecutorChangeCommandIcon:
-        {
-            IconSelectionDialog d(this);
-            d.SelectIconByName(c->GetIcon());
-            if(d.ShowModal() == wxID_OK)
+    const gui::MenuEntry entries[]{
+        gui::MenuCommand{ "&Edit", [this, c, btn] { EditCommand(c, btn); }, wxART_EDIT },
+        gui::MenuCommand{ "&Change icon", [this, c, btn]
             {
-                wxString icon_name = d.GetSelectedIcon();
-                if(c->GetIcon() != icon_name.ToStdString())
-                {
-                    c->SetIcon(icon_name.ToStdString());
-                    UpdateCommandButon(c, btn, true);
-                }
-            }
-            break;
-        }
-        case ID_CmdExecutorDuplicate:
-        {
-            uint8_t col = 0xFF;
-            auto it = m_ButtonMap.begin();
-            while(it != m_ButtonMap.end())
+                IconSelectionDialog d(this);
+                d.SelectIconByName(c->GetIcon());
+                if(d.ShowModal() != wxID_OK)
+                    return;
+
+                const std::string icon_name = d.GetSelectedIcon().ToStdString();
+                if(c->GetIcon() == icon_name)
+                    return;
+
+                c->SetIcon(icon_name);
+                UpdateCommandButon(c, btn, true);
+            }, wxART_CDROM },
+        gui::MenuCommand{ "&Duplicate", [this, c, btn]
             {
-                bool ret = std::visit([btn, &it, this](auto& it_button)
-                    {
-                        using T = std::decay_t<decltype(it_button)>;
-                        if constexpr(std::is_same_v<T, wxButton*>)
-                        {
-                            if(it_button == btn)
-                            {
-                                return true;
-                            }
-                        }
-                        return false;
-                    }, it->second);
-
-                if(ret)
-                {
-                    col = it->first;
-                    break;
-                }
-                else
-                    ++it;
-            }
-
-            m_executor.AddCommand(m_Id, col + 1, Command(*c));
-            m_BaseGrid->Layout();
-            break;
-        }
-        case ID_CmdExecutorMoveUp:
-        {
-            uint8_t col = 0xFF;
-            auto it = m_ButtonMap.begin();
-            while(it != m_ButtonMap.end())
+                m_executor.AddCommand(m_Id, ColumnOfButton(btn) + 1, Command(*c));
+                m_BaseGrid->Layout();
+            }, wxART_COPY },
+        gui::MenuCommand{ "&Delete", [this, btn]
             {
-                bool ret = std::visit([btn, &it, this](auto& it_button)
-                    {
-                        using T = std::decay_t<decltype(it_button)>;
-                        if constexpr(std::is_same_v<T, wxButton*>)
-                        {
-                            if(it_button == btn)
-                            {
-                                return true;
-                            }
-                        }
-                        return false;
-                    }, it->second);
-
-                if(ret)
-                {
-                    col = it->first;
-                    break;
-                }
-                else
-                    ++it;
-            }
-
-            m_executor.RotateCommand(m_Id, col + 1, *c, 1);
-            break;
-        }
-        case ID_CmdExecutorDelete:
-        {
-            wxMessageDialog d(this, "Are you sure want to delete this item?", "Error", wxOK | wxCANCEL);
-            int ret_code = d.ShowModal();
-            if(ret_code == wxID_OK)  /* OK */
-            {
-                DeleteCommandButton(nullptr, btn);
-            }
-            break;
-        }
-    }
+                wxMessageDialog d(this, "Are you sure want to delete this item?", "Error", wxOK | wxCANCEL);
+                if(d.ShowModal() == wxID_OK)
+                    DeleteCommandButton(nullptr, btn);
+            }, wxART_DELETE },
+    };
+    gui::RunContextMenu(this, entries);
 }
 
 void CmdExecutorPanelPage::OnMiddleClick(wxMouseEvent& event)
@@ -640,8 +510,15 @@ void CmdExecutorPanelPage::OnMiddleClick(wxMouseEvent& event)
         return;
     }
 
-    param_dlg->ShowDialog(c->m_params);
-    if(param_dlg->GetClickType() == CmdExecutorParamDialog::ClickType::Ok)
+    /* A command's parameters are free text with no presentation of their own,
+       so the rows carry a generated label and nothing else. */
+    std::vector<gui::BitFieldRow> rows;
+    rows.reserve(c->m_params.size());
+    for(std::size_t i = 0; i != c->m_params.size(); i++)
+        rows.push_back({ std::format("Param: {}", i + 1), c->m_params[i], {}, {} });
+
+    param_dlg->ShowDialog(std::move(rows));
+    if(param_dlg->GetResult() == gui::BitFieldEditorResult::Ok)
     {
         c->m_params = param_dlg->GetOutput();
         Execute(c);
@@ -874,170 +751,4 @@ wxString IconSelectionDialog::GetSelectedIcon()
     return icon_combo_box->GetStringSelection();
 }
 
-wxBEGIN_EVENT_TABLE(CmdExecutorParamDialog, wxDialog)
-EVT_BUTTON(wxID_APPLY, CmdExecutorParamDialog::OnApply)
-EVT_BUTTON(wxID_OK, CmdExecutorParamDialog::OnOk)
-EVT_BUTTON(wxID_CLOSE, CmdExecutorParamDialog::OnCancel)
-EVT_CLOSE(CmdExecutorParamDialog::OnClose)
-wxEND_EVENT_TABLE()
 
-CmdExecutorParamDialog::CmdExecutorParamDialog(wxWindow* parent)
-    : wxDialog(parent, wxID_ANY, "Param editor", wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
-{
-    sizerTop = new wxBoxSizer(wxVERTICAL);
-    sizerMsgs = new wxStaticBoxSizer(wxVERTICAL, this, "&Params");
-
-    wxBoxSizer* h_sizer = new wxBoxSizer(wxHORIZONTAL);
-    /*
-    m_IsDecimal = new wxRadioButton(this, wxID_ANY, "Decimal");
-    m_IsDecimal->Bind(wxEVT_RADIOBUTTON, &CmdExecutorParamDialog::OnRadioButtonClicked, this);
-    h_sizer->Add(m_IsDecimal);
-    m_IsHex = new wxRadioButton(this, wxID_ANY, "Hex");
-    m_IsHex->Bind(wxEVT_RADIOBUTTON, &CmdExecutorParamDialog::OnRadioButtonClicked, this);
-    h_sizer->Add(m_IsHex);
-    m_IsBinary = new wxRadioButton(this, wxID_ANY, "Binary");
-    m_IsBinary->Bind(wxEVT_RADIOBUTTON, &CmdExecutorParamDialog::OnRadioButtonClicked, this);
-    h_sizer->Add(m_IsBinary);
-    */
-    sizerMsgs->Add(h_sizer);
-    sizerMsgs->AddSpacer(20);
-
-    for(int i = 0; i != MAX_BITEDITOR_FIELDS; i++)
-    {
-        m_InputLabel[i] = new wxStaticText(this, wxID_ANY, "_");
-        sizerMsgs->Add(m_InputLabel[i], 1, wxLEFT | wxEXPAND, 0);
-        m_Input[i] = new wxTextCtrl(this, wxID_ANY, "_", wxDefaultPosition, wxSize(250, 25), 0);
-        sizerMsgs->Add(m_Input[i], 1, wxLEFT | wxEXPAND, 0);
-    }
-
-    sizerTop->Add(sizerMsgs, wxSizerFlags(1).Expand().Border());
-
-    // finally buttons to show the resulting message box and close this dialog
-    sizerTop->Add(CreateStdDialogButtonSizer(wxAPPLY | wxCLOSE | wxOK), wxSizerFlags().Right().Border()); /* wxOK */
-
-    sizerTop->SetMinSize(wxSize(200, 200));
-    SetAutoLayout(true);
-    SetSizer(sizerTop);
-    sizerTop->Fit(this);
-    //sizerTop->SetSizeHints(this);
-    CentreOnScreen();
-}
-
-void CmdExecutorParamDialog::ShowDialog(std::vector<std::string>& params)
-{
-    if(params.size() > MAX_BITEDITOR_FIELDS)
-    {
-        params.resize(MAX_BITEDITOR_FIELDS);
-        //LOG(LogLevel::Warning, "Too much bitfields used for can frame mapping. FrameID: {:X}, Used: {}, Maximum supported: {}", frame_id, values.size(), MAX_BITEDITOR_FIELDS);
-    }
-
-    m_Id = 0;
-    m_DataFormat = 0;
-
-    int cnt = 1;
-    for(const auto& p : params)
-    {
-        m_InputLabel[m_Id]->SetLabelText(wxString::Format("Param: %d", cnt++));
-        m_InputLabel[m_Id]->Show();
-
-        m_Input[m_Id]->SetValue(p);
-        m_Input[m_Id]->Show();
-        m_Id++;
-    }
-
-    for(int i = m_Id; i != MAX_BITEDITOR_FIELDS; i++)
-    {
-        m_InputLabel[i]->Hide();
-        m_InputLabel[i]->SetToolTip("");
-        m_Input[i]->Hide();
-    }
-
-    //SetTitle(wxString::Format("Bit editor - %X (%s)", frame_id, is_rx ? "RX" : "TX"));
-    bit_sel = BitSelection::Decimal;
-    /*
-    m_IsDecimal->SetValue(true);
-    m_IsHex->SetValue(false);
-    m_IsBinary->SetValue(false);
-    */
-
-    sizerTop->Layout();
-    sizerTop->Fit(this);
-
-    m_ClickType = ClickType::None;
-    int ret = ShowModal();
-    DBG("ShowModal ret: %d\n", ret);
-}
-
-std::vector<std::string> CmdExecutorParamDialog::GetOutput()
-{
-    std::vector<std::string> ret;
-    for(int i = 0; i != m_Id; i++)
-    {
-        std::string input_ret = m_Input[i]->GetValue().ToStdString();
-        switch(bit_sel)
-        {
-            case BitSelection::Hex:
-            {
-                try
-                {
-                    input_ret = std::to_string(std::stoll(input_ret, nullptr, 16));
-                }
-                catch(...)
-                {
-                    LOG(LogLevel::Error, "Exception with std::stoll, str: {}", input_ret);
-                }
-                break;
-            }
-            case BitSelection::Binary:
-            {
-                try
-                {
-                    input_ret = std::to_string(std::stoll(input_ret, nullptr, 2));
-                }
-                catch(...)
-                {
-                    LOG(LogLevel::Error, "Exception with std::to_string, str: {}", input_ret);
-                }
-                break;
-            }
-        }
-
-        DBG("input_ret: %s\n", input_ret.c_str());
-        ret.push_back(input_ret);
-    }
-    return ret;
-}
-
-void CmdExecutorParamDialog::OnApply(wxCommandEvent& WXUNUSED(event))
-{
-    DBG("OnApply %d\n", (int)m_ClickType)
-        EndModal(wxID_APPLY);
-    //Close();
-    m_ClickType = ClickType::Apply;
-}
-
-void CmdExecutorParamDialog::OnOk(wxCommandEvent& event)
-{
-    DBG("OnOK %d\n", (int)m_ClickType);
-    if(m_ClickType == ClickType::Close)
-        return;
-    EndModal(wxID_OK);
-    //Close();
-    m_ClickType = ClickType::Ok;
-    event.Skip();
-}
-
-void CmdExecutorParamDialog::OnCancel(wxCommandEvent& WXUNUSED(event))
-{
-    DBG("OnCancel %d\n", (int)m_ClickType);
-    EndModal(wxID_CLOSE);
-    m_ClickType = ClickType::Close;
-    //Close();
-}
-
-void CmdExecutorParamDialog::OnClose(wxCloseEvent& event)
-{
-    DBG("OnClose %d\n", (int)m_ClickType);
-    m_ClickType = ClickType::Close;
-    EndModal(wxID_CLOSE);
-}

@@ -1,7 +1,13 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "Session.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
+#include "Server.hpp"
 
-Session::Session(boost::asio::io_context& io_service, std::mutex& io_mutex, std::unique_ptr<ITcpMessageExecutor>&& executor) :
-	sessionSocket(io_service), m_IoMutex(io_mutex), transferTimer(io_service), m_msgExecutor(std::move(executor))
+Session::Session(boost::asio::io_context& io_service, std::mutex& io_mutex,
+	std::unique_ptr<ITcpMessageExecutor>&& executor, Server* owner) :
+	sessionSocket(io_service), m_IoMutex(io_mutex), transferTimer(io_service), m_msgExecutor(std::move(executor)),
+	m_owner(owner)
 {
 
 }
@@ -13,35 +19,51 @@ Session::~Session()
 
 void Session::HandleRead(const boost::system::error_code& error, std::size_t bytesTransferred)
 {
-	std::scoped_lock lock(m_IoMutex);
-	if(!error)
+	if(error)
+		return;
+
+	if(bytesTransferred > receivedData.size() - receivedLength)
 	{
-		auto message = tcp_message::BoundedMessage(receivedData, bytesTransferred);
-		if(message.size() != bytesTransferred)
-		{
-			LOG(LogLevel::Error, "TCP receive length {} exceeds buffer capacity {}",
-				bytesTransferred, receivedData.size());
-			StopAsync();
-			return;
-		}
-
-		std::tuple<bool, bool, std::string> ret_val;
-		{
-			ret_val = m_msgExecutor->Process(shared_from_this(), message);
-
-			if(!std::get<2>(ret_val).empty())
-			{
-				SendAsync(std::get<2>(ret_val));
-				if(std::get<0>(ret_val))
-					is_close_pending = true;
-			}
-			else
-			{
-				if(std::get<0>(ret_val))
-					StopAsync();
-			}
-		}
+		LOG(LogLevel::Error, "TCP receive length {} exceeds remaining buffer capacity {}",
+			bytesTransferred, receivedData.size() - receivedLength);
+		std::scoped_lock lock(m_IoMutex);
+		StopAsync();
+		return;
 	}
+	receivedLength += bytesTransferred;
+
+	auto message = tcp_message::BoundedMessage(receivedData, receivedLength);
+
+	/* Deliberately not holding m_IoMutex here: the executor can block on
+	   forwarding sockets and file reads, and that mutex also gates accepts and
+	   broadcasts for every other session. */
+	auto ret_val = m_msgExecutor->Process(shared_from_this(), message);
+
+	const bool should_close = std::get<0>(ret_val);
+	const bool recognized = std::get<1>(ret_val);
+	const std::string& response = std::get<2>(ret_val);
+
+	std::scoped_lock lock(m_IoMutex);
+	if(!response.empty())
+	{
+		SendAsync(response);
+		if(should_close)
+			is_close_pending = true;
+		return;
+	}
+
+	/* Nothing matched yet and there is still room: the request may simply have
+	   been split across TCP segments, so read the rest before giving up. */
+	if(!recognized && receivedLength < receivedData.size() && sessionSocket.is_open())
+	{
+		sessionSocket.async_read_some(
+			boost::asio::buffer(receivedData.data() + receivedLength, receivedData.size() - receivedLength),
+			std::bind(&Session::HandleRead, shared_from_this(), std::placeholders::_1, std::placeholders::_2));
+		return;
+	}
+
+	if(should_close)
+		StopAsync();
 }
 
 void Session::HandleTransferTimer(const boost::system::error_code& error)
@@ -114,9 +136,11 @@ void Session::StartAsync()
 		StopAsync();
 		return;
 	}
+
 	sessionAddress = remoteEndpoint.address().to_string(); 
 	sessionPort = remoteEndpoint.port();
-	
+
+	receivedLength = 0;
 	sessionSocket.async_read_some(boost::asio::buffer(receivedData),
 		std::bind(&Session::HandleRead, shared_from_this(), std::placeholders::_1, std::placeholders::_2));
 
@@ -131,16 +155,14 @@ void Session::StopAsync(bool remove_from_session_list)
 		sessionSocket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
 		sessionSocket.close(error);
 		
+
 		if(remove_from_session_list)
 		{
-			for(const auto& c : Server::Get()->sessions)
-			{
-				if(boost::algorithm::equals(c->sessionAddress, sessionAddress))
-				{
-					Server::Get()->sessions.erase(c);
-					return;
-				}
-			}
+			/* Erase by identity. Matching on the address string removed whichever
+			   session happened to share this IP - so a second connection from the
+			   same peer evicted a live session and leaked this one. */
+			if(m_owner != nullptr)
+				m_owner->ForgetSession(shared_from_this());
 		}
 	}
 }

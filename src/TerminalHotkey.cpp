@@ -1,4 +1,10 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "TerminalHotkey.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
+#include "SettingsReader.hpp"
+#include "SettingsWriter.hpp"
+#include <ostream>
 
 void TerminalHotkey::SetKey(const std::string& key_str)
 {
@@ -7,22 +13,24 @@ void TerminalHotkey::SetKey(const std::string& key_str)
 	if(vkey == 0xFFFF)
 	{
 		LOG(LogLevel::Warning, "Invalid hotkey was specified for TerminalHotkey: {}", vkey);
-		TerminalHotkey::Get()->is_enabled = false;
+		/* This is a member function: the field is its own. */
+		is_enabled = false;
 	}
 #endif
 	UpdateHotkeyRegistration();
 }
 
-std::string TerminalHotkey::GetKey()
+std::string TerminalHotkey::GetKey() const
 {
 	return utils::GetKeyStringFromVirtualKey(vkey);
 }
 
 void TerminalHotkey::UpdateHotkeyRegistration()
 {
-	MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-	if(frame)
-		frame->RegisterTerminalHotkey(vkey);
+	/* Registering a system-wide hotkey needs a window handle, which only the
+	   GUI has. The composition root supplies the registrar. */
+	if(m_Registrar)
+		m_Registrar(vkey);
 }
 
 void TerminalHotkey::Process()
@@ -63,28 +71,61 @@ void TerminalHotkey::Process()
 void TerminalHotkey::OpenTerminal(std::wstring& path)
 {
 #ifdef _WIN32
+	/* The path comes from whatever Explorer window had focus, so it is quoted
+	   into a shell command line here. A quote (or a PowerShell brace) in a
+	   directory name would otherwise end the argument early. */
+	std::wstring safe_path;
+	safe_path.reserve(path.size());
+	for(const wchar_t character : path)
+	{
+		if(character == L'"' || character < 0x20)
+			continue;
+		safe_path.push_back(character);
+	}
+	if(safe_path.empty())
+	{
+		LOG(LogLevel::Warning, "Refusing to open a terminal for an empty path");
+		return;
+	}
+
 	switch(type)
 	{
 		case TerminalType::COMMAND_LINE:
 		{
-			ShellExecute(NULL, L"open", L"cmd", std::format(L"/k cd /d \"{}\"", path).c_str(), NULL, SW_SHOW);
+			ShellExecute(NULL, L"open", L"cmd", std::format(L"/k cd /d \"{}\"", safe_path).c_str(), NULL, SW_SHOW);
 			break;
 		}		
 		case TerminalType::POWER_SHELL:
 		{
-			ShellExecute(NULL, L"open", L"powershell", std::format(L"-NoExit -command \"& {{Set-Location {}}}\"", path).c_str(), NULL, SW_SHOW);
+			ShellExecute(NULL, L"open", L"powershell", std::format(L"-NoExit -command \"& {{Set-Location -LiteralPath '{}'}}\"", safe_path).c_str(), NULL, SW_SHOW);
 			break;
 		}		
 		case TerminalType::BASH_TERMINAL:
 		{
-			ShellExecute(NULL, L"open", L"wsl", std::format(L"--cd \"{}\"", path).c_str(), NULL, SW_SHOW);
+			ShellExecute(NULL, L"open", L"wsl", std::format(L"--cd \"{}\"", safe_path).c_str(), NULL, SW_SHOW);
 			break;
 		}
 		default:  /* WINDOWS_TERMINAL */
 		{
-			ShellExecute(NULL, L"open", L"wt", std::format(L"/d \"{}\"", path).c_str(), NULL, SW_SHOW);
+			ShellExecute(NULL, L"open", L"wt", std::format(L"/d \"{}\"", safe_path).c_str(), NULL, SW_SHOW);
 			break;
 		}
 	}
 #endif
+}
+
+void TerminalHotkey::LoadSettings(SettingsReader& reader)
+{
+    is_enabled = utils::stob(reader.Required("TerminalHotkey", "Enable"));
+    SetKey(reader.Required("TerminalHotkey", "Key"));
+    type = static_cast<TerminalType>(utils::stoi<uint8_t>(reader.Required("TerminalHotkey", "Type")));
+}
+
+void TerminalHotkey::SaveSettings(std::ostream& out) const
+{
+    SettingsWriter(out, "TerminalHotkey")
+        .Key("Enable", is_enabled)
+        .Key("Key", GetKey())
+        .Key("Type", static_cast<uint32_t>(type), "0 = WINDOWS_TERMINAL, 1 = cmd.exe, 2 = POWER_SHELL, 3 = BASH_TERMINAL")
+        .Blank();
 }

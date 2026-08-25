@@ -18,18 +18,31 @@ int MenuEventFilter::FilterEvent(wxEvent& event)
 	if(t == wxEVT_MENU)
 	{
 		const int id = event.GetId();
-		if(id >= TrayIcon::ID::DoBackup && id <= TrayIcon::ID::DoBackup + TrayIcon::max_backups)
+
+		/* Not a TrayIcon member, so there is nothing here to inject into: this
+		   filter is registered globally and dispatches by menu id. One lookup
+		   serves both branches. */
+		MyApp& app = wxGetApp();
+		if(id >= TrayIcon::ID::DoBackup && id < TrayIcon::ID::DoBackup + TrayIcon::max_backups)
 		{
 			int backup_id = id - TrayIcon::ID::DoBackup;
-			DirectoryBackup::Get()->BackupFile(backup_id);
+			app.directory_backup->BackupFile(backup_id);
 			return Event_Processed;
 		}
-		else if(id >= TrayIcon::ID::DoAlarm && id <= TrayIcon::ID::DoAlarm + TrayIcon::max_backups)
+		else if(id >= TrayIcon::ID::DoAlarm && id < TrayIcon::ID::DoAlarm + TrayIcon::max_alarms)
 		{
 			int alarm_id = id - TrayIcon::ID::DoAlarm;
 
-			std::unique_ptr<AlarmEntryHandler>& alarm_entry = wxGetApp().alarm_entry;
-			alarm_entry->HandleKeypress(alarm_entry->entries[alarm_id]->trigger_key, true);
+			std::unique_ptr<AlarmEntryHandler>& alarm_entry = app.alarm_entry;
+			/* The key comes out under the lock; HandleKeypress takes the same
+			   lock itself, so it runs outside WithModel. */
+			const std::string trigger_key = alarm_entry->WithModel([&](AlarmEntryHandler::Model& model)
+			{
+				return alarm_id < static_cast<int>(model.entries.size())
+					? model.entries[alarm_id]->trigger_key : std::string{};
+			});
+			if(!trigger_key.empty())
+				alarm_entry->HandleKeypress(trigger_key, true);
 			return Event_Processed;
 		}
 	}
@@ -64,22 +77,29 @@ wxMenu* TrayIcon::CreatePopupMenu()
 {
 	wxMenu* popup = new wxMenu;  /* no memory leak here, wxWidgets takes care about it */
 	max_backups = 0;
-	for(const auto& i : DirectoryBackup::Get()->GetEntries())
+	for(const auto& i : m_Backups.GetEntries())
 	{
 		wxMenuItem* item = popup->Append(TrayIcon::ID::DoBackup + max_backups++, i.from.filename().generic_string());
 		item->SetBitmap(wxArtProvider::GetBitmap(wxART_NEW_DIR, wxART_OTHER, mainFrame->GetMainWindowOfCompositeControl()->FromDIP(wxSize(14, 14))));
-		if(DirectoryBackup::Get()->IsInProgress())
+		if(m_Backups.IsInProgress())
 			item->Enable(false);
 	}
 	popup->AppendSeparator();
 
 	std::unique_ptr<AlarmEntryHandler>& alarm_entry = wxGetApp().alarm_entry;
 	max_alarms = 0;
-	for(auto& i : alarm_entry->entries)
+	/* Names out under the lock, menu items appended outside it. */
+	std::vector<wxString> alarm_names;
+	alarm_entry->WithModel([&](AlarmEntryHandler::Model& model)
 	{
-		wxMenuItem* item = popup->Append(TrayIcon::ID::DoAlarm + max_alarms++, i->name);
+		for(const auto& entry : model.entries)
+			alarm_names.push_back(entry->name);
+	});
+	for(const wxString& name : alarm_names)
+	{
+		wxMenuItem* item = popup->Append(TrayIcon::ID::DoAlarm + max_alarms++, name);
 		item->SetBitmap(wxArtProvider::GetBitmap(wxART_TICK_MARK, wxART_OTHER, mainFrame->GetMainWindowOfCompositeControl()->FromDIP(wxSize(14, 14))));
-		if(DirectoryBackup::Get()->IsInProgress())
+		if(m_Backups.IsInProgress())
 			item->Enable(false);
 	}
 
@@ -96,7 +116,7 @@ wxMenu* TrayIcon::CreatePopupMenu()
 void TrayIcon::OnOpenScreenshots(wxCommandEvent& WXUNUSED(event))
 {
 #ifdef _WIN32
-	ShellExecuteW(NULL, NULL, PrintScreenSaver::Get()->screenshot_path.generic_wstring().c_str(), NULL, NULL, SW_SHOWNORMAL);
+	ShellExecuteW(NULL, NULL, m_Screenshots.screenshot_path.generic_wstring().c_str(), NULL, NULL, SW_SHOWNORMAL);
 #endif
 }
 
@@ -112,7 +132,7 @@ void TrayIcon::OnOpenRootFolder(wxCommandEvent& WXUNUSED(event))
 void TrayIcon::OnReload(wxCommandEvent& WXUNUSED(event))
 {
 	LOG(LogLevel::Verbose, "reload 1");
-	Settings::Get()->LoadFile();
+	m_Settings.LoadFile();
 	LOG(LogLevel::Verbose, "reload 2");
 	std::unique_ptr<CanEntryHandler>& can_handler = wxGetApp().can_entry;
 	can_handler->LoadFiles();
@@ -125,7 +145,7 @@ void TrayIcon::OnReload(wxCommandEvent& WXUNUSED(event))
 	LOG(LogLevel::Verbose, "reload 6");
 	mainFrame->cmd_panel->ReloadCommands();
 	LOG(LogLevel::Normal, "Settings has been reloaded");
-	mainFrame->SetCurrentPage(Settings::Get()->default_page);
+	mainFrame->SetCurrentPage(m_Settings.default_page);
 }
 
 void TrayIcon::OnQuit(wxCommandEvent& WXUNUSED(event))

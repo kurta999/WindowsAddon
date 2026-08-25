@@ -1,27 +1,16 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "IdlePowerSaver.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
+#include "SettingsReader.hpp"
+#include "SettingsWriter.hpp"
+#include <ostream>
 
 constexpr uint8_t MIN_CPU_PERCENT_POWER_SAVE = 0;
 constexpr uint8_t MIN_CPU_PERCENT_PERFORMANCE = 100;
 constexpr int64_t CPU_USAGE_SAMPLE_RATE = 250;  /* Unit: milliseconds */
 
-static float GetCPULoad();
-
 #ifdef _WIN32
-static float CalculateCPULoad(unsigned long long idleTicks, unsigned long long totalTicks)
-{
-    static unsigned long long _previousTotalTicks = 0;
-    static unsigned long long _previousIdleTicks = 0;
-
-    unsigned long long totalTicksSinceLastTime = totalTicks - _previousTotalTicks;
-    unsigned long long idleTicksSinceLastTime = idleTicks - _previousIdleTicks;
-
-    float ret = 1.0f - ((totalTicksSinceLastTime > 0) ? ((float)idleTicksSinceLastTime) / totalTicksSinceLastTime : 0);
-
-    _previousTotalTicks = totalTicks;
-    _previousIdleTicks = idleTicks;
-    return ret;
-}
-
 static unsigned long long FileTimeToInt64(const FILETIME& ft)
 {
     return (((unsigned long long)(ft.dwHighDateTime)) << 32) | ((unsigned long long)ft.dwLowDateTime);
@@ -31,11 +20,27 @@ static unsigned long long FileTimeToInt64(const FILETIME& ft)
 // Returns 1.0f for "CPU fully pinned", 0.0f for "CPU idle", or somewhere in between
 // You'll need to call this at regular intervals, since it measures the load between
 // the previous call and the current one.  Returns -1.0 on error.
-float GetCPULoad()
+//
+// The previous sample is the caller's, so two samplers cannot eat each other's
+// deltas the way a pair of static locals allowed.
+float IdlePowerSaver::GetCPULoad()
 {
 #ifdef _WIN32
     FILETIME idleTime, kernelTime, userTime;
-    return GetSystemTimes(&idleTime, &kernelTime, &userTime) ? CalculateCPULoad(FileTimeToInt64(idleTime), FileTimeToInt64(kernelTime) + FileTimeToInt64(userTime)) : -1.0f;
+    if(!GetSystemTimes(&idleTime, &kernelTime, &userTime))
+        return -1.0f;
+
+    const unsigned long long idle_ticks = FileTimeToInt64(idleTime);
+    const unsigned long long total_ticks = FileTimeToInt64(kernelTime) + FileTimeToInt64(userTime);
+
+    const unsigned long long total_since_last = total_ticks - m_lastCpuSample.total_ticks;
+    const unsigned long long idle_since_last = idle_ticks - m_lastCpuSample.idle_ticks;
+
+    const float ret = 1.0f - ((total_since_last > 0) ? ((float)idle_since_last) / total_since_last : 0);
+
+    m_lastCpuSample.total_ticks = total_ticks;
+    m_lastCpuSample.idle_ticks = idle_ticks;
+    return ret;
 #else
     return 0.0f;
 #endif
@@ -206,4 +211,24 @@ uint8_t IdlePowerSaver::GetCpuMaxPowerPercent()
 #else
     return 0;
 #endif
+}
+
+void IdlePowerSaver::LoadSettings(SettingsReader& reader)
+{
+    is_enabled = utils::stob(reader.Required("IdlePowerSaver", "Enable"));
+    timeout = utils::stoi<uint32_t>(reader.Required("IdlePowerSaver", "Timeout"));
+    reduced_power_percent = utils::stoi<uint8_t>(reader.Required("IdlePowerSaver", "ReducedPowerPercent"));
+    min_load_threshold = utils::stoi<uint8_t>(reader.Required("IdlePowerSaver", "MinLoadThreshold"));
+    max_load_threshold = utils::stoi<uint8_t>(reader.Required("IdlePowerSaver", "MaxLoadThreshold"));
+}
+
+void IdlePowerSaver::SaveSettings(std::ostream& out) const
+{
+    SettingsWriter(out, "IdlePowerSaver")
+        .Key("Enable", is_enabled)
+        .Key("Timeout", timeout)
+        .Key("ReducedPowerPercent", static_cast<int>(reduced_power_percent))
+        .Key("MinLoadThreshold", static_cast<int>(min_load_threshold))
+        .Key("MaxLoadThreshold", static_cast<int>(max_load_threshold))
+        .Blank();
 }

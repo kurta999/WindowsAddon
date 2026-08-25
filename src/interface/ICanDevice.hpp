@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <mutex>
+#include <span>
 
 #include "CanTransportModels.hpp"
 
@@ -15,8 +15,12 @@ class ICanDevice
 public:
     virtual ~ICanDevice() = default;
 
-    // !\brief Process received CAN frames
-    virtual void ProcessReceivedFrames(std::mutex& rx_mutex, const CanFrameReceiver& receiver) = 0;
+    // !\brief Decode a chunk of received bytes into frames.
+    //
+    // The transport owns the receive buffer and the lock that guards it; this
+    // used to take the transport's std::mutex&, which made every wire-protocol
+    // strategy depend on how its caller happens to synchronise.
+    virtual void DecodeReceivedBytes(std::span<const std::uint8_t> received, const CanFrameReceiver& receiver) = 0;
 
     // !\brief Send pending CAN frames from message queue
     // !\param serial_port [in] Reference to async serial port

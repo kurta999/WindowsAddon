@@ -1,11 +1,14 @@
 #pragma once
 
+#include <isotp/isotp.h>
+
 #include "ICanResultPanel.hpp"
 #include "ICanObserver.hpp"
 #include "Logger.hpp"
 
 #include <map>
 #include <array>
+#include "CanEntryHandler.hpp"
 
 using CanScriptReturn = void;
 using OperandParams = std::vector<std::string>;
@@ -46,7 +49,7 @@ private:
     CanScriptReturn Sleep(OperandParams& params);
 
     void OnFrameOnBus(uint32_t frame_id, uint8_t* data, uint16_t size) override;
-    void OnIsoTpDataReceived(uint32_t frame_id, uint8_t* data, uint16_t size) override;
+    void OnIsoTpDataReceived(uint32_t frame_id, const uint8_t* data, uint16_t size) override;
 
     std::map<std::string, std::function<void(OperandParams&)>> m_operands;
     std::map<uint32_t, std::array<uint8_t, 8>> m_FrameData;

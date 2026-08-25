@@ -1,4 +1,7 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "BsecHandler.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
 
 constexpr int NUM_USED_OUTPUTS = 11;
 constexpr int NUM_SAMPLES_BEFORE_SAVE = 100;

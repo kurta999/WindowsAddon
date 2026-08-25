@@ -302,9 +302,6 @@
     <ClInclude Include="src\gui\CanPanel\pch.hpp">
       <Filter>Header Files\gui\CanPanel</Filter>
     </ClInclude>
-    <ClInclude Include="src\gui\CanPanel\BitEditorDialog.hpp">
-      <Filter>Header Files\gui\CanPanel</Filter>
-    </ClInclude>
     <ClInclude Include="src\gui\CanPanel\CanLogPanel.hpp">
       <Filter>Header Files\gui\CanPanel</Filter>
     </ClInclude>
@@ -547,9 +544,6 @@
     <ClCompile Include="src\gui\CanPanel\CanPanel.cpp">
       <Filter>Source Files\gui\CanPanel</Filter>
     </ClCompile>
-    <ClCompile Include="src\gui\CanPanel\BitEditorDialog.cpp">
-      <Filter>Source Files\gui\CanPanel</Filter>
-    </ClCompile>
     <ClCompile Include="src\gui\CanPanel\CanLogPanel.cpp">
       <Filter>Source Files\gui\CanPanel</Filter>
     </ClCompile>
@@ -684,5 +678,110 @@
     <Xml Include="Modbus.xml" />
     <Xml Include="DataSender.xml" />
     <Xml Include="Alarms.xml" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\BackupSettings.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\CanFrameLog.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\CanIsoTpEndpoint.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\CryptoPriceParser.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\DefaultCommandsFile.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\DirectoryUsage.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\HotkeyRegistry.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\KeyScanCodes.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\MacroActions.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\MacroKeyFrame.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\MacroSettings.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\ModbusFrameLog.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\ModbusItemRender.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\ModbusJsonPersistence.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\ModbusValueIo.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\ModbusXmlLoaders.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\SettingsSchema.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\WorkingDaysCalendar.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\gui\BackupProgressDialog.cpp"><Filter>Source Files\gui</Filter></ClCompile>
+    <ClCompile Include="src\gui\BitFieldEditorDialog.cpp"><Filter>Source Files\gui</Filter></ClCompile>
+    <ClCompile Include="src\gui\CanPanel\CanGrids.cpp"><Filter>Source Files\gui\CanPanel</Filter></ClCompile>
+    <ClCompile Include="src\gui\GridBuilder.cpp"><Filter>Source Files\gui</Filter></ClCompile>
+    <ClCompile Include="src\gui\LogRecordingBar.cpp"><Filter>Source Files\gui</Filter></ClCompile>
+    <ClCompile Include="src\gui\MainFrameAccess.cpp"><Filter>Source Files\gui</Filter></ClCompile>
+    <ClCompile Include="src\gui\MenuCommand.cpp"><Filter>Source Files\gui</Filter></ClCompile>
+    <ClCompile Include="src\gui\ModbusDataPanel.cpp"><Filter>Source Files\gui</Filter></ClCompile>
+    <ClCompile Include="src\gui\ModbusDialogs.cpp"><Filter>Source Files\gui</Filter></ClCompile>
+    <ClCompile Include="src\gui\ModbusGraphView.cpp"><Filter>Source Files\gui</Filter></ClCompile>
+    <ClCompile Include="src\gui\NotificationPresenter.cpp"><Filter>Source Files\gui</Filter></ClCompile>
+    <ClCompile Include="src\gui\Prompts.cpp"><Filter>Source Files\gui</Filter></ClCompile>
+    <ClCompile Include="src\gui\StatusLabel.cpp"><Filter>Source Files\gui</Filter></ClCompile>
+    <ClCompile Include="src\gui\TextStylePanel.cpp"><Filter>Source Files\gui</Filter></ClCompile>
+    <ClCompile Include="src\gui\WxClipboard.cpp"><Filter>Source Files\gui</Filter></ClCompile>
+    <ClCompile Include="src\platform\KeyboardInput.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\platform\ScreenAutomation.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\platform\StandardBackupFileSystem.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\utils\TextStyleXml.cpp"><Filter>Source Files\utils</Filter></ClCompile>
+    <ClCompile Include="src\utils\WindowsCommand.cpp"><Filter>Source Files\utils</Filter></ClCompile>
+    <ClCompile Include="src\utils\XmlDocument.cpp"><Filter>Source Files\utils</Filter></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\BackupSettings.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\CanFrameLog.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\CanIsoTpEndpoint.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\CommandParams.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\CryptoPriceParser.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\DefaultCommandsFile.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\DirectoryUsage.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\HotkeyRegistry.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\LogFileSearch.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\MacroKeyFrame.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\ModbusFrameLog.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\ModbusItemRender.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\ModbusJsonPersistence.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\ModbusSpecialRegisters.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\ModbusTypeTraits.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\ModbusValueIo.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\ModbusWriteQueue.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\SettingsReader.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\SettingsSchema.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\SettingsWriter.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\UdsCodes.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\UdsRawScript.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\WorkingDaysCalendar.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\gui\BackupProgressDialog.hpp"><Filter>Header Files\gui</Filter></ClInclude>
+    <ClInclude Include="src\gui\BitFieldEditorDialog.hpp"><Filter>Header Files\gui</Filter></ClInclude>
+    <ClInclude Include="src\gui\GridBuilder.hpp"><Filter>Header Files\gui</Filter></ClInclude>
+    <ClInclude Include="src\gui\LogRecordingBar.hpp"><Filter>Header Files\gui</Filter></ClInclude>
+    <ClInclude Include="src\gui\MainFrameAccess.hpp"><Filter>Header Files\gui</Filter></ClInclude>
+    <ClInclude Include="src\gui\MenuCommand.hpp"><Filter>Header Files\gui</Filter></ClInclude>
+    <ClInclude Include="src\gui\ModbusDialogs.hpp"><Filter>Header Files\gui</Filter></ClInclude>
+    <ClInclude Include="src\gui\ModbusGraphView.hpp"><Filter>Header Files\gui</Filter></ClInclude>
+    <ClInclude Include="src\gui\NotificationPresenter.hpp"><Filter>Header Files\gui</Filter></ClInclude>
+    <ClInclude Include="src\gui\Prompts.hpp"><Filter>Header Files\gui</Filter></ClInclude>
+    <ClInclude Include="src\gui\StatusLabel.hpp"><Filter>Header Files\gui</Filter></ClInclude>
+    <ClInclude Include="src\gui\TextStylePanel.hpp"><Filter>Header Files\gui</Filter></ClInclude>
+    <ClInclude Include="src\gui\TickRegistry.hpp"><Filter>Header Files\gui</Filter></ClInclude>
+    <ClInclude Include="src\gui\WxClipboard.hpp"><Filter>Header Files\gui</Filter></ClInclude>
+    <ClInclude Include="src\interface\IAlarmEventSink.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\IAlarmPrompt.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\IBackupFileSystem.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\IClipboard.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\IHotkeyHandler.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\IKeySink.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\IMeasurementSink.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\INotificationSink.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\IScreenAutomation.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\interface\ISettingsBinding.hpp"><Filter>Header Files\interface</Filter></ClInclude>
+    <ClInclude Include="src\pch_core.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\platform\KeyboardInput.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\platform\ScreenAutomation.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\platform\StandardBackupFileSystem.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\utils\ColorCode.hpp"><Filter>Header Files\utils</Filter></ClInclude>
+    <ClInclude Include="src\utils\Crc16Modbus.hpp"><Filter>Header Files\utils</Filter></ClInclude>
+    <ClInclude Include="src\utils\EnumNameTable.hpp"><Filter>Header Files\utils</Filter></ClInclude>
+    <ClInclude Include="src\utils\HexBytes.hpp"><Filter>Header Files\utils</Filter></ClInclude>
+    <ClInclude Include="src\utils\InterruptibleSleep.hpp"><Filter>Header Files\utils</Filter></ClInclude>
+    <ClInclude Include="src\utils\NumberParsing.hpp"><Filter>Header Files\utils</Filter></ClInclude>
+    <ClInclude Include="src\utils\ScalarTypeDispatch.hpp"><Filter>Header Files\utils</Filter></ClInclude>
+    <ClInclude Include="src\utils\SourceFileName.hpp"><Filter>Header Files\utils</Filter></ClInclude>
+    <ClInclude Include="src\utils\TextStyleXml.hpp"><Filter>Header Files\utils</Filter></ClInclude>
+    <ClInclude Include="src\utils\WindowsCommand.hpp"><Filter>Header Files\utils</Filter></ClInclude>
+    <ClInclude Include="src\utils\XmlDocument.hpp"><Filter>Header Files\utils</Filter></ClInclude>
   </ItemGroup>
 </Project>

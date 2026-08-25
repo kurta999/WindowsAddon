@@ -15,20 +15,6 @@ private:
 	int64_t GetSizeFromText(const wxString& text) const;
 };
 
-class DirItems
-{
-public:
-	DirItems(wxTreeListItem item_, size_t size_, size_t file_count_) :
-		item(item_), size(size_), filecount(file_count_)
-	{
-
-	}
-
-	wxTreeListItem item;
-	size_t size;
-	size_t filecount;
-};
-
 class FilePanel : public wxPanel
 {
 public:
@@ -52,6 +38,9 @@ private:
 	bool m_IsAborted = false;
 private:
 
-	std::map<size_t, std::unique_ptr<DirItems>> dir_map;
+	/* Tree items only, keyed by DirectoryUsage::KeyOf. Sizes and counts,
+	   which used to share this map inside a DirItems struct, live in a
+	   DirectoryUsage local to the scan. */
+	std::map<size_t, wxTreeListItem> dir_map;
 	wxDECLARE_EVENT_TABLE();
 };

@@ -1,27 +1,15 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "CanDeviceStm32.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
 
-CanDeviceStm32::CanDeviceStm32(boost::circular_buffer<char>& CircBuff) : 
-    m_CircBuff(CircBuff)
+CanDeviceStm32::CanDeviceStm32() = default;
+
+CanDeviceStm32::~CanDeviceStm32() = default;
+
+void CanDeviceStm32::DecodeReceivedBytes(std::span<const std::uint8_t> received, const CanFrameReceiver& receiver)
 {
-
-}
-
-CanDeviceStm32::~CanDeviceStm32()
-{
-    
-}
-
-void CanDeviceStm32::ProcessReceivedFrames(std::mutex& rx_mutex, const CanFrameReceiver& receiver)
-{
-    std::unique_lock lock(rx_mutex);
-    std::vector<uint8_t> received;
-    received.reserve(m_CircBuff.size());
-    for(const char byte : m_CircBuff)
-        received.push_back(static_cast<uint8_t>(byte));
-    m_CircBuff.clear();
-    lock.unlock();
-
-    for(auto& frame : m_Decoder.Feed(received))
+    for(auto& frame : m_Decoder.Feed(std::vector<uint8_t>(received.begin(), received.end())))
     {
         receiver(frame.id, static_cast<uint8_t>(frame.data.size()), frame.data.data());
     }

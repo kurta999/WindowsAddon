@@ -1,32 +1,44 @@
 #pragma once
 
-#include <boost/asio.hpp>
+// The application precompiled header: the headless core plus wxWidgets, the GUI
+// panels and the application services. Only GUI-target translation units may
+// use it; headless code includes "pch_core.hpp" and its own dependencies.
 
-#ifdef _WIN32
-#include <urlmon.h>
-#endif
+#include "pch_core.hpp"
 
+#include <wx/aui/aui.h>
+#include <wx/statline.h>
+#include <wx/clipbrd.h>
+#include <wx/valnum.h>
+#include <wx/spinctrl.h>
+#include <wx/richtooltip.h>
+#include <wx/richmsgdlg.h>
+#include <wx/filepicker.h>
+#include <wx/tglbtn.h>
+#include <wx/dataview.h>
+#include <wx/propgrid/propgrid.h>
+#include <wx/propgrid/advprops.h>
+#include "wx/treelist.h"
+#include "wx/treectrl.h"
+#include <wx/dirctrl.h>
+#include <wx/xml/xml.h>
+#include "wx/notifmsg.h"
+#include "wx/generic/notifmsg.h"
+#include <wx/menu.h>
+#include "wx/taskbar.h"
+#include <wx/wxprec.h>
+#include <wx/gbsizer.h>
+#include <wx/grid.h>
+#include <wx/datectrl.h>
+#include <wx/dateevt.h>
+#include <wx/timectrl.h>
+#include <wx/calctrl.h>
+#include <wx/srchctrl.h>
+#include <wx/fontpicker.h>
+#include <wx/artprov.h>
+#include <wx/tipwin.h>
 
-#ifndef _WIN32
-#include <fmt/format.h>
-namespace std
-{
-	template <typename... T>
-	std::string format(fmt::format_string<T...> fmt_, T&&... args)
-	{
-		return fmt::format(fmt_, std::forward<T>(args)...);
-	}
-
-	/*
-	std::string vformat(std::string_view format_arg, fmt::format_args args)
-	{
-		//return fmt::vformat(format_arg, args);
-	}
-	*/
-}
-#endif
-
-#include "gui/CanPanel/BitEditorDialog.hpp"
+#include "gui/BitFieldEditorDialog.hpp"
 #include "gui/CanPanel/CanLogPanel.hpp"
 #include "gui/CanPanel/CanPanel.hpp"
 #include "gui/CanPanel/CanScriptPanel.hpp"
@@ -43,6 +55,8 @@ namespace std
 #include "gui/MainPanel.hpp"
 #include "gui/MainFrame.hpp"
 #include "gui/SettingsDialog.hpp"
+#include "gui/ModbusDialogs.hpp"
+#include "gui/ModbusGraphView.hpp"
 #include "gui/ModbusMasterPanel.hpp"
 #include "gui/CmdExecutorPanel.hpp"
 #include "gui/DidPanel.hpp"
@@ -50,6 +64,7 @@ namespace std
 #include "gui/TimeTrackerPanel.hpp"
 
 #include "Logger.hpp"
+#include "WindowsAddon.hpp"
 #include "CustomMacro.hpp"
 #include "DatabaseImpl.hpp"
 #include "MeasurementRepository.hpp"
@@ -91,135 +106,3 @@ namespace std
 #include "TimeTracker.hpp"
 #include "ScriptLauncher.hpp"
 #include "Utils.hpp"
-
-#include <wx/aui/aui.h>
-#include <wx/statline.h>
-#include <wx/aui/aui.h>
-#include <wx/clipbrd.h>
-#include <wx/valnum.h>
-#include <wx/spinctrl.h>
-#include <wx/statline.h>
-#include <wx/richtooltip.h>
-#include <wx/clipbrd.h>
-#include <wx/richmsgdlg.h>
-#include <wx/aui/aui.h>
-#include <wx/filepicker.h>
-#include <wx/tglbtn.h>
-#include <wx/aui/aui.h>
-#include <wx/dataview.h>
-#include <wx/propgrid/propgrid.h>
-#include <wx/propgrid/advprops.h>
-#include <wx/aui/aui.h>
-#include "wx/treelist.h"
-#include "wx/treectrl.h"
-#include <wx/dirctrl.h>
-#include <wx/xml/xml.h>
-#include "wx/notifmsg.h"
-#include "wx/generic/notifmsg.h"
-#include <wx/filepicker.h>
-#include <wx/menu.h>
-#include "wx/taskbar.h"
-#include <wx/wxprec.h>
-#include <wx/gbsizer.h>
-#include <wx/grid.h>
-#include <wx/statline.h>
-#include <wx/tglbtn.h>
-#include <wx/filepicker.h>
-#include <wx/datectrl.h>
-#include <wx/dateevt.h>
-#include <wx/timectrl.h>
-#include <wx/calctrl.h>
-#include <wx/srchctrl.h>
-#include <wx/fontpicker.h>
-#include <wx/dirctrl.h>
-#include <wx/artprov.h>
-#include <wx/tipwin.h>
-
-#include <boost/algorithm/string.hpp>
-#include <boost/archive/iterators/binary_from_base64.hpp>
-#include <boost/archive/iterators/base64_from_binary.hpp>
-#include <boost/archive/iterators/transform_width.hpp>
-#include <boost/algorithm/string_regex.hpp>
-#include <boost/algorithm/hex.hpp>
-#include <boost/crc.hpp>
-#include <boost/lexical_cast.hpp>
-#include <boost/property_tree/ptree.hpp>
-#include <boost/property_tree/xml_parser.hpp>
-#include <boost/property_tree/ini_parser.hpp>
-#include <boost/program_options.hpp>
-#include <boost/tokenizer.hpp>
-#include <boost/foreach.hpp>
-#include <boost/optional.hpp>
-#include <boost/range/adaptor/reversed.hpp>
-#include <boost/endian.hpp>
-#include <boost/circular_buffer.hpp>
-#include <boost/multiprecision/cpp_int.hpp>
-#include <boost/date_time/gregorian/gregorian.hpp>
-
-#include <assert.h>
-
-#ifdef _WIN32
-#include <shellapi.h>
-#include <shlobj.h>
-#include <exdisp.h>
-#include <shlwapi.h>
-#include <powrprof.h>
-#include <tlhelp32.h>
-#include "Wtsapi32.h"
-#include <wlanapi.h>
-#endif
-
-#include <any>
-#include <iostream>
-#include <fstream>
-#include <array>
-#include <variant>
-#include <string>
-#include <bitset>
-#include <memory>
-#include <chrono>
-#include <iomanip>
-#include <filesystem>
-#include <unordered_set>
-#include <unordered_map>
-#include <algorithm>
-#include <ranges>
-#include <future> 
-#include <tuple>
-#include <set>
-#include <thread>
-#include <codecvt>
-#include <iterator>
-#include <queue>
-#include <deque>
-#include <cstdint>
-#include <stack>
-#include <stack>
-#include <regex>
-
-#ifdef _WIN32
-#include <enumser/enumser.h>
-#endif
-#include <lodepng.h>
-
-#include "utils/AsyncSerial.hpp"
-
-#ifdef USE_OPENCV
-#include <opencv4/opencv2/opencv.hpp>
-#endif
-
-extern "C"
-{
-	#include "sha256/sha256.h"
-#ifdef USE_BSEC
-	#include "bsec/bsec_interface.h"
-#endif
-	#include <bitfield/bitfield.h>
-	#include <isotp/isotp.h>
-}
-
-#ifdef _WIN32
-#include <Windows.h>
-#endif
-
-using namespace std::chrono_literals;

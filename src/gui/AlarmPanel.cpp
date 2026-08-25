@@ -1,15 +1,18 @@
 #include "pch.hpp"
+#include "MenuCommand.hpp"
+#include "MainFrameAccess.hpp"
 
 wxBEGIN_EVENT_TABLE(AlarmPanel, wxPanel)
 wxEND_EVENT_TABLE()
 
-AlarmPanel::AlarmPanel(wxFrame* parent) :
-    wxPanel(parent, wxID_ANY)
+AlarmPanel::AlarmPanel(wxFrame* parent, AlarmEntryHandler& handler) :
+    wxPanel(parent, wxID_ANY), m_handler(handler)
 {
     wxBoxSizer* bSizer1 = new wxBoxSizer(wxVERTICAL);
 
-    std::unique_ptr<AlarmEntryHandler>& alarm_entry = wxGetApp().alarm_entry;
-    for (auto& i : alarm_entry->entries)
+    m_handler.WithModel([&](AlarmEntryHandler::Model& model)
+    {
+    for (auto& i : model.entries)
     {
         wxStaticText* text = new wxStaticText(this, NULL, i->name);
         text->SetFont(wxFont(15, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD, false, wxEmptyString));
@@ -18,6 +21,7 @@ AlarmPanel::AlarmPanel(wxFrame* parent) :
 
         alarms.push_back(text);
     }
+    });
 
     this->SetSizer(bSizer1);
     this->Layout();
@@ -25,7 +29,7 @@ AlarmPanel::AlarmPanel(wxFrame* parent) :
 
 void AlarmPanel::ShowAlarmDialogInternal()
 {
-    MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
+    MyFrame* frame = TryGetMainFrame();
     wxTextEntryDialog dlg(frame, "Enter execution delay in hh:mm format", "Execution");
     int ret = dlg.ShowModal();
     if(ret == wxID_OK)
@@ -54,14 +58,28 @@ void AlarmPanel::WaitForAlarmSemaphore()
 void AlarmPanel::UpdateAlarmsDisplay()
 {
     int pos = 0;
-    std::unique_ptr<AlarmEntryHandler>& alarm_entry = wxGetApp().alarm_entry;
+    /* Copied out under the lock; the wx calls run outside it. The worker
+       arms and fires entries while this ticks. */
+    struct LabelState
+    {
+        wxString text;
+        bool armed;
+    };
+    std::vector<LabelState> states;
+    m_handler.WithModel([&](AlarmEntryHandler::Model& model)
+    {
+        states.reserve(model.entries.size());
+        for(const auto& entry : model.entries)
+            states.push_back({ wxString::Format("%s - %s", entry->name,
+                utils::SecondsToHms(entry->duration.count())), entry->is_armed });
+    });
+
     for (auto& i : alarms)
     {
-        i->SetLabelText(wxString::Format("%s - %s", alarm_entry->entries[pos]->name, utils::SecondsToHms(alarm_entry->entries[pos]->duration.count())));
-        if (alarm_entry->entries[pos]->is_armed)
-            i->SetForegroundColour(*wxRED);
-        else
-            i->SetForegroundColour(*wxBLACK);
+        if(pos >= states.size())
+            break;
+        i->SetLabelText(states[pos].text);
+        i->SetForegroundColour(states[pos].armed ? *wxRED : *wxBLACK);
         pos++;
     }
 }
@@ -80,7 +98,6 @@ void AlarmPanel::On10MsTimer()
 void AlarmPanel::OnRightClick(wxMouseEvent& event)
 {
     auto obj = event.GetEventObject();
-    std::unique_ptr<AlarmEntryHandler>& alarm_entry = wxGetApp().alarm_entry;
 
     wxStaticText* text = dynamic_cast<wxStaticText*>(obj);
     if (text == nullptr)
@@ -97,23 +114,11 @@ void AlarmPanel::OnRightClick(wxMouseEvent& event)
     }
 
     AlarmEntry* e = reinterpret_cast<AlarmEntry*>(clientdata);
-    wxMenu menu;
-    menu.Append(ID_AlarmTrigger, "&Trigger")->SetBitmap(wxArtProvider::GetBitmap(wxART_EDIT, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    menu.Append(ID_AlarmCancel, "&Cancel")->SetBitmap(wxArtProvider::GetBitmap(wxART_DELETE, wxART_OTHER, FromDIP(wxSize(14, 14))));
-    int ret = GetPopupMenuSelectionFromUser(menu);
 
-    switch (ret)
-    {
-        case ID_AlarmTrigger:
-        {
-            alarm_entry->SetupAlarm(e);
-            break;
-        }
-        case ID_AlarmCancel:
-        {
-            alarm_entry->CancelAlarm(e);
-            break;
-        }
-    }
+    const gui::MenuEntry entries[]{
+        gui::MenuCommand{ "&Trigger", [this, e] { m_handler.SetupAlarm(e); }, wxART_EDIT },
+        gui::MenuCommand{ "&Cancel", [this, e] { m_handler.CancelAlarm(e); }, wxART_DELETE },
+    };
+    gui::RunContextMenu(this, entries);
     event.Skip();
 }

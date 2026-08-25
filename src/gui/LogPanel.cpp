@@ -1,18 +1,18 @@
 #include "pch.hpp"
+#include "WxClipboard.hpp"
 
 wxBEGIN_EVENT_TABLE(LogPanel, wxPanel)
 wxEND_EVENT_TABLE()
 
-LogPanel::~LogPanel()
-{
-	if(auto* logger = Logger::TryGet())
-		logger->SetLogHelper(nullptr);
-}
+LogPanel::~LogPanel() = default;
 
-LogPanel::LogPanel(wxFrame* parent)
-	: wxPanel(parent, wxID_ANY)
+LogPanel::LogPanel(wxFrame* parent, Logger& logger)
+	: wxPanel(parent, wxID_ANY), m_Logger(logger)
 {
-	Logger::Get()->SetLogHelper(this);
+	/* The frame registers this panel as the logger's view once it exists,
+	   and clears it before the panel is torn down. Registering itself into
+	   a global from its own constructor is what ILogHelper was meant to
+	   stop. */
 	wxBoxSizer* bSizer1 = new wxBoxSizer(wxVERTICAL);
 	wxBoxSizer* v_sizer = new wxBoxSizer(wxHORIZONTAL);
 
@@ -50,7 +50,7 @@ LogPanel::LogPanel(wxFrame* parent)
 	m_ApplyFilter->SetToolTip("Filter log messages from logfile");
 	v_sizer->Add(m_ApplyFilter, 0, wxALL, 5);
 
-	m_ApplyFilter->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event)
+	m_ApplyFilter->Bind(wxEVT_BUTTON, [this](wxCommandEvent&)
 		{
 			ExecuteSearchInLogfile();
 		});
@@ -75,23 +75,23 @@ LogPanel::LogPanel(wxFrame* parent)
 	m_DefaultLogLevel = new wxComboBox(this, wxID_ANY, "All", wxDefaultPosition, wxDefaultSize, default_filters, wxTE_PROCESS_ENTER | wxTE_READONLY);
 	v_sizer_2->AddSpacer(10);
 
-	int log_level = static_cast<int>(Logger::Get()->GetDefaultLogLevel());
+	int log_level = static_cast<int>(m_Logger.GetDefaultLogLevel());
 	m_DefaultLogLevel->SetSelection(log_level);
 	v_sizer_2->Add(m_DefaultLogLevel);
 
 	m_ApplyButton = new wxButton(this, wxID_ANY, wxT("Apply"), wxDefaultPosition, wxDefaultSize, 0);
-	m_ApplyButton->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event)
+	m_ApplyButton->Bind(wxEVT_BUTTON, [this](wxCommandEvent&)
 		{
 			int log_level = m_DefaultLogLevel->GetSelection();
-			Logger::Get()->SetDefaultLogLevel(static_cast<LogLevel>(log_level));
+			m_Logger.SetDefaultLogLevel(static_cast<LogLevel>(log_level));
 		});
 	v_sizer_2->Add(m_ApplyButton);
 	v_sizer_2->AddSpacer(15);
 
 	m_FilterList = new wxButton(this, wxID_ANY, wxT("Filters"), wxDefaultPosition, wxDefaultSize, 0);
-	m_FilterList->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event)
+	m_FilterList->Bind(wxEVT_BUTTON, [this](wxCommandEvent&)
 		{
-			std::string filters = Logger::Get()->GetLogFilters();
+			std::string filters = m_Logger.GetLogFilters();
 			boost::algorithm::replace_all(filters, "|", "\n");
 
 			wxTextEntryDialog d(this, "Enter below destiantion list where backup(s) will be placed", "Enter filters", filters, wxOK | wxCANCEL | wxTE_MULTILINE);
@@ -100,14 +100,14 @@ LogPanel::LogPanel(wxFrame* parent)
 			{
 				std::string result = d.GetValue().ToStdString();
 				boost::algorithm::replace_all(result, "\n", "|");
-				Logger::Get()->SetLogFilters(result);
+				m_Logger.SetLogFilters(result);
 			}
 		});
 	v_sizer_2->Add(m_FilterList);
 
 	bSizer1->Add(v_sizer_2, 0, wxALL, 5);
 
-	m_AutoScrollBtn->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event)
+	m_AutoScrollBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&)
 		{
 			m_AutoScroll ^= 1;
 			if(m_AutoScroll)
@@ -119,11 +119,11 @@ LogPanel::LogPanel(wxFrame* parent)
 	m_Log = new wxListBox(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 0, 0, wxLB_SINGLE | wxLB_HSCROLL | wxLB_NEEDED_SB);
 	m_Log->Bind(wxEVT_LEFT_DCLICK, [this](wxMouseEvent& event)
 		{
-			wxClipboard* clip = new wxClipboard();
-			clip->Clear();
-			clip->SetData(new wxTextDataObject(m_Log->GetString(m_Log->GetSelection())));
-			clip->Flush();
-			clip->Close();
+			const int selection = m_Log->GetSelection();
+			if(selection == wxNOT_FOUND)
+				return;
+
+			gui::CopyTextToClipboard(m_Log->GetString(selection));
 		});
 	bSizer1->Add(m_Log, wxSizerFlags(1).Left().Expand());
 
@@ -131,7 +131,7 @@ LogPanel::LogPanel(wxFrame* parent)
 	m_ClearButton->SetToolTip("Clear log box");
 	bSizer1->Add(m_ClearButton, 0, wxALL, 5);
 
-	m_ClearButton->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event)
+	m_ClearButton->Bind(wxEVT_BUTTON, [this](wxCommandEvent&)
 		{
 			m_Log->Clear();
 		});
@@ -149,7 +149,7 @@ void LogPanel::ExecuteSearchInLogfile()
 	if(log_level == "All")
 		log_level.clear();
 
-	bool ret = Logger::Get()->SearchInLogFile(filter, log_level);
+	bool ret = m_Logger.SearchInLogFile(filter, log_level);
 	if(ret)
 		m_Log->ScrollLines(m_Log->GetCount());
 }

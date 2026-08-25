@@ -3,15 +3,19 @@
 #include <wx/wx.h>
 #include "ILogHelper.hpp"
 
+class Logger;
+
 class LogPanel : public wxPanel, public ILogHelper
 {
 public:
-	LogPanel(wxFrame* parent);
+	LogPanel(wxFrame* parent, Logger& logger);
 	~LogPanel() override;
 
 	wxListBox* m_Log = nullptr;
 
 private:
+	Logger& m_Logger;
+
 	void ExecuteSearchInLogfile();
 	//template <typename T> bool IsFilterered(const T& file);
 

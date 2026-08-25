@@ -1,10 +1,12 @@
 #include "pch.hpp"
+#include "WxClipboard.hpp"
 
 wxBEGIN_EVENT_TABLE(DebugPanel, wxPanel)
 wxEND_EVENT_TABLE()
 
-DebugPanel::DebugPanel(wxFrame* parent)
-	: wxPanel(parent, wxID_ANY)
+DebugPanel::DebugPanel(wxFrame* parent, PrintScreenSaver& screenshots, IdlePowerSaver& power_saver,
+	IKeySink& keys)
+	: wxPanel(parent, wxID_ANY), m_Screenshots(screenshots), m_PowerSaver(power_saver), m_Keys(keys)
 {
 	wxBoxSizer* bSizer1 = new wxBoxSizer(wxVERTICAL);
 
@@ -19,7 +21,7 @@ DebugPanel::DebugPanel(wxFrame* parent)
 	m_SaveScreenshot->SetToolTip("Save screenshot from clipboard to a .png file");
     m_SaveScreenshot->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event)
         {
-			PrintScreenSaver::Get()->SaveScreenshot();
+			m_Screenshots.SaveScreenshot();
         });
 	bSizer1->Add(m_SaveScreenshot);	
 	
@@ -27,7 +29,7 @@ DebugPanel::DebugPanel(wxFrame* parent)
 	m_PathSeparatorReplace->SetToolTip("Replace path separators in clipboard");
 	m_PathSeparatorReplace->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event)
         {
-			//PathSeparator::Get()->ReplaceClipboard();
+			//path_separator.ReplaceClipboard();
         });
 	bSizer1->Add(m_PathSeparatorReplace);	
 	
@@ -41,9 +43,11 @@ DebugPanel::DebugPanel(wxFrame* parent)
 			if(keypress_future.valid())
 				keypress_future.get();
 
-			keypress_future = std::async([key = m_KeyTopress->GetValue().ToStdString()] {
+			/* The sink, not `this`: the task sleeps half a second before it
+			   fires, and the panel may be gone by then. The sink outlives it. */
+			keypress_future = std::async([key = m_KeyTopress->GetValue().ToStdString(), keys = &m_Keys] {
 				std::this_thread::sleep_for(std::chrono::milliseconds(500));
-				CustomMacro::Get()->SimulateKeypress(key);
+				keys->OnKeyPressed(key);
 				});
 
         });
@@ -70,8 +74,8 @@ DebugPanel::DebugPanel(wxFrame* parent)
 	m_CpuPowerRefresh->SetToolTip("Refresh actual CPU power percent");
 	m_CpuPowerRefresh->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event)
 		{
-			m_CpuMinPowerPercent->SetValue(IdlePowerSaver::Get()->GetCpuMinPowerPercent());
-			m_CpuMaxPowerPercent->SetValue(IdlePowerSaver::Get()->GetCpuMaxPowerPercent());
+			m_CpuMinPowerPercent->SetValue(m_PowerSaver.GetCpuMinPowerPercent());
+			m_CpuMaxPowerPercent->SetValue(m_PowerSaver.GetCpuMaxPowerPercent());
 		});
 	h_sizer->Add(m_CpuPowerRefresh);
 
@@ -82,7 +86,7 @@ DebugPanel::DebugPanel(wxFrame* parent)
 			uint8_t min_percent = m_CpuMinPowerPercent->GetValue();
 			uint8_t max_percent = m_CpuMaxPowerPercent->GetValue();
 
-			IdlePowerSaver::Get()->SetCpuPowerPercent(min_percent, max_percent);
+			m_PowerSaver.SetCpuPowerPercent(min_percent, max_percent);
 		});
 	h_sizer->Add(m_CpuPowerApply);
 
@@ -107,11 +111,7 @@ DebugPanel::DebugPanel(wxFrame* parent)
 			wxString input = m_HourMinSec->GetValue();
 			auto [hours, minutes] = utils::ConvertToDecimalHoursAndMinutes(input.ToStdString());
 
-			if (wxTheClipboard->Open())
-			{
-				wxTheClipboard->SetData(new wxTextDataObject(std::format("{},{}", hours, minutes)));
-				wxTheClipboard->Close();
-			}
+			gui::CopyTextToClipboard(std::format("{},{}", hours, minutes));
 		});
 	hsizer_2->Add(m_HourConvert);
 	bSizer1->Add(hsizer_2);

@@ -277,30 +277,46 @@ endif()
 
 set(WINDOWSADDON_SOURCES
     src/Alarms.cpp
+    src/BackupSettings.cpp
     src/BsecHandler.cpp
     src/CanDeviceFactory.cpp
     src/CanDeviceLawicel.cpp
     src/CanDeviceStm32.cpp
     src/CanEntryHandler.cpp
+    src/CanFrameLog.cpp
+    src/CanIsoTpEndpoint.cpp
     src/CanScriptHandler.cpp
     src/CanSerialPort.cpp
     src/CanXmlLoaders.cpp
     src/CmdExecutor.cpp
     src/CorsairHid.cpp
     src/CryptoPrice.cpp
+    src/CryptoPriceParser.cpp
     src/CustomMacro.cpp
     src/DatabaseImpl.cpp
     src/DatabaseLogic.cpp
+    src/DefaultCommandsFile.cpp
     src/DidHandler.cpp
     src/DirectoryBackup.cpp
+    src/DirectoryUsage.cpp
     src/ExceptionHandler.cpp
     src/GraphGenerator.cpp
+    src/HotkeyRegistry.cpp
     src/IdlePowerSaver.cpp
     src/ImageRecognition.cpp
+    src/KeyScanCodes.cpp
     src/Logger.cpp
+    src/MacroActions.cpp
+    src/MacroKeyFrame.cpp
+    src/MacroSettings.cpp
     src/MeasurementRepository.cpp
+    src/ModbusFrameLog.cpp
     src/ModbusHandler.cpp
+    src/ModbusItemRender.cpp
+    src/ModbusJsonPersistence.cpp
     src/ModbusMasterSerialPort.cpp
+    src/ModbusValueIo.cpp
+    src/ModbusXmlLoaders.cpp
     src/PathSeparator.cpp
     src/PrintScreenSaver.cpp
     src/ScriptLauncher.cpp
@@ -311,18 +327,28 @@ set(WINDOWSADDON_SOURCES
     src/Server.cpp
     src/Session.cpp
     src/Settings.cpp
+    src/SettingsSchema.cpp
     src/TcpMessageExecutor.cpp
     src/TerminalHotkey.cpp
     src/Utils.cpp
     src/WindowsAddon.cpp
     src/WorkingDays.cpp
+    src/WorkingDaysCalendar.cpp
     src/XmlConfigurations.cpp
+    src/platform/KeyboardInput.cpp
+    src/platform/ScreenAutomation.cpp
+    src/platform/StandardBackupFileSystem.cpp
     src/utils/AsyncSerial.cpp
+    src/utils/TextStyleXml.cpp
+    src/utils/WindowsCommand.cpp
+    src/utils/XmlDocument.cpp
 )
 
 set(WINDOWSADDON_GUI_SOURCES
     src/gui/AlarmPanel.cpp
-    src/gui/CanPanel/BitEditorDialog.cpp
+    src/gui/BackupProgressDialog.cpp
+    src/gui/BitFieldEditorDialog.cpp
+    src/gui/CanPanel/CanGrids.cpp
     src/gui/CanPanel/CanLogPanel.cpp
     src/gui/CanPanel/CanPanel.cpp
     src/gui/CanPanel/CanScriptPanel.cpp
@@ -334,13 +360,25 @@ set(WINDOWSADDON_GUI_SOURCES
     src/gui/DidPanel.cpp
     src/gui/EscaperPanel.cpp
     src/gui/FilePanel.cpp
+    src/gui/GridBuilder.cpp
     src/gui/LogPanel.cpp
+    src/gui/LogRecordingBar.cpp
     src/gui/MainFrame.cpp
+    src/gui/MainFrameAccess.cpp
     src/gui/MainPanel.cpp
+    src/gui/MenuCommand.cpp
+    src/gui/ModbusDataPanel.cpp
+    src/gui/ModbusDialogs.cpp
+    src/gui/ModbusGraphView.cpp
     src/gui/ModbusMasterPanel.cpp
+    src/gui/NotificationPresenter.cpp
+    src/gui/Prompts.cpp
     src/gui/SettingsDialog.cpp
+    src/gui/StatusLabel.cpp
+    src/gui/TextStylePanel.cpp
     src/gui/TimeTrackerPanel.cpp
     src/gui/TrayIcon.cpp
+    src/gui/WxClipboard.cpp
 )
 
 if(WIN32)

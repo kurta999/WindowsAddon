@@ -71,40 +71,48 @@ std::optional<std::array<std::uint8_t, Stm32WireSize>> EncodeStm32(const Frame& 
     result[18] = static_cast<std::uint8_t>(crc >> 8);
     return result;
 }
-
 std::vector<Frame> Stm32StreamDecoder::Feed(std::span<const std::uint8_t> bytes)
 {
     m_buffer.insert(m_buffer.end(), bytes.begin(), bytes.end());
     std::vector<Frame> frames;
 
-    while(m_buffer.size() >= 4)
+    // Bytes consumed so far. Erasing from the front on every resync step made
+    // noisy input quadratic; the buffer is compacted once at the end instead.
+    std::size_t cursor = 0;
+
+    while(m_buffer.size() - cursor >= 4)
     {
-        if(ReadU32Le(m_buffer.data()) != Stm32ReceiveMagic)
+        if(ReadU32Le(m_buffer.data() + cursor) != Stm32ReceiveMagic)
         {
-            m_buffer.erase(m_buffer.begin());
+            ++cursor;
             continue;
         }
-        if(m_buffer.size() < Stm32WireSize)
+        if(m_buffer.size() - cursor < Stm32WireSize)
             break;
 
-        const auto length = m_buffer[8];
-        const auto expected_crc = static_cast<std::uint16_t>(m_buffer[17]) |
-                                  (static_cast<std::uint16_t>(m_buffer[18]) << 8);
-        const auto actual_crc = ModbusCrc(std::span<const std::uint8_t>(m_buffer).first(17));
+        const auto* frame_start = m_buffer.data() + cursor;
+        const auto length = frame_start[8];
+        const auto expected_crc = static_cast<std::uint16_t>(frame_start[17]) |
+                                  (static_cast<std::uint16_t>(frame_start[18]) << 8);
+        const auto actual_crc = ModbusCrc(std::span<const std::uint8_t>(frame_start, 17));
         if(length > 8 || expected_crc != actual_crc)
         {
             // Advance one byte so a valid frame immediately following corrupt
             // input can still be found.
-            m_buffer.erase(m_buffer.begin());
+            ++cursor;
             continue;
         }
 
         Frame frame;
-        frame.id = ReadU32Le(m_buffer.data() + 4);
-        frame.data.assign(m_buffer.begin() + 9, m_buffer.begin() + 9 + length);
+        frame.id = ReadU32Le(frame_start + 4);
+        frame.data.assign(frame_start + 9, frame_start + 9 + length);
         frames.push_back(std::move(frame));
-        m_buffer.erase(m_buffer.begin(), m_buffer.begin() + Stm32WireSize);
+        cursor += Stm32WireSize;
     }
+
+    if(cursor != 0)
+        m_buffer.erase(m_buffer.begin(), m_buffer.begin() + static_cast<std::ptrdiff_t>(cursor));
+
     return frames;
 }
 

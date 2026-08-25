@@ -1,4 +1,7 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "ScriptLauncher.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
 
 ScriptLaunchResult ScriptLauncher::LaunchScript(const std::filesystem::path& script_path)
 {
@@ -20,6 +23,11 @@ ScriptLaunchResult ScriptLauncher::LaunchScript(const std::filesystem::path& scr
     return result;
 }
 
+void ScriptLauncher::OnHotkeyPressed()
+{
+    Execute();
+}
+
 void ScriptLauncher::Execute()
 {
     auto path = utils::GetDestinationPathFromFileExplorer();
@@ -28,7 +36,8 @@ void ScriptLauncher::Execute()
     if(items.size() != 1)
         return;
 
-    std::wstring script_path = items[0];
-
-    (void)LaunchScript(std::string(script_path.begin(), script_path.end()));
+    /* std::filesystem::path knows how to carry a wide native path; the
+       character-by-character narrowing this used to do corrupted any path with
+       a non-ASCII component. */
+    (void)LaunchScript(std::filesystem::path(items[0]));
 }

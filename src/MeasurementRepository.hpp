@@ -1,6 +1,8 @@
 #pragma once
 
 #include "interface/IDatabase.hpp"
+#include "DatabaseImpl.hpp"
+#include "Measurement.hpp"
 
 class Measurement;
 

@@ -1,4 +1,5 @@
 #include "pch.hpp"
+#include "DirectoryUsage.hpp"
 
 wxBEGIN_EVENT_TABLE(FilePanel, wxPanel)
 EVT_SIZE(FilePanel::OnSize)
@@ -99,14 +100,14 @@ FilePanel::FilePanel(wxFrame* parent)
 	m_Generate = new wxButton(this, wxID_ANY, "Generate", wxDefaultPosition, wxDefaultSize);
 	m_Generate->SetToolTip("Read dirs and get it's size");
 	bSizer2->Add(m_Generate, 0, wxALL, 5);
-	m_Generate->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event)
+	m_Generate->Bind(wxEVT_BUTTON, [this](wxCommandEvent&)
 		{
 			GenerateTree();
 		});
 	m_Clear = new wxButton(this, wxID_ANY, "Clear", wxDefaultPosition, wxDefaultSize);
 	m_Clear->SetToolTip("Clear generated tree to free up memory");
 	bSizer2->Add(m_Clear, 0, wxALL, 5);
-	m_Clear->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event)
+	m_Clear->Bind(wxEVT_BUTTON, [this](wxCommandEvent&)
 		{
 			m_IsAborted = true;
 			wxYield();
@@ -136,14 +137,22 @@ void FilePanel::GenerateTree()
 		return;
 	}
 
-	size_t file_sizes = 0, dir_cnt = 0, file_cnt = 0;
+	size_t dir_cnt = 0;
+
+	/* Canonical once, here: the per-file aggregation used to compare
+	   canonicalised directories against this path as typed, and a trailing
+	   separator made that comparison never succeed - the ancestor walk then
+	   ran to the drive root, whose parent is itself, and the UI thread never
+	   came back. DirectoryUsage owns that walk now, boundary included. */
+	const std::filesystem::path scan_root = std::filesystem::canonical(path);
+	DirectoryUsage usage(scan_root);
 
 	std::filesystem::path root_path = path.filename();
 	if(root_path.empty())
 		root_path = path;
 	wxTreeListItem root = tree->GetRootItem();
 	wxTreeListItem root_item = tree->AppendItem(root, root_path.generic_wstring().c_str());
-	dir_map[std::filesystem::hash_value(path)] = std::make_unique<DirItems>(root_item, 0, 0);
+	dir_map[DirectoryUsage::KeyOf(scan_root)] = root_item;
 
 	size_t cnt = 0;
 	try
@@ -180,74 +189,25 @@ void FilePanel::GenerateTree()
 					size_t fsize = std::filesystem::file_size(curr_path);
 					std::string str = utils::GetDataUnit(fsize);
 
-					auto it = dir_map.find(std::filesystem::hash_value(parent_p));
-					if(it != dir_map.end())
-					{
-						wxTreeListItem child_item = tree->AppendItem(it->second->item, curr_path.filename().generic_wstring().c_str());
-						tree->SetItemText(child_item, 1, str.c_str());
-						if(p.depth() < 1)
-							tree->Expand(child_item);
-					}
-					else
-					{
-						wxTreeListItem child_item = tree->AppendItem(item, curr_path.filename().generic_wstring().c_str());
-						tree->SetItemText(child_item, 1, str.c_str());
-						if(p.depth() < 1)
-							tree->Expand(child_item);
-					}
+					auto it = dir_map.find(DirectoryUsage::KeyOf(parent_p));
+					wxTreeListItem file_parent = it != dir_map.end() ? it->second : item;
+					wxTreeListItem child_item = tree->AppendItem(file_parent, curr_path.filename().generic_wstring().c_str());
+					tree->SetItemText(child_item, 1, str.c_str());
+					if(p.depth() < 1)
+						tree->Expand(child_item);
 
-					auto it2 = dir_map.find(std::filesystem::hash_value(dir_without_filename));
-					if(it2 != dir_map.end())
-					{
-						it2->second->size += fsize;
-						it2->second->filecount++;
-					}
-					else
-						dir_map[std::filesystem::hash_value(dir_without_filename)] = std::make_unique<DirItems>((wxTreeListItem)NULL, fsize, 0);
-					file_sizes += fsize;
-					file_cnt++;
-
-					auto parentppp = dir_without_filename;  /* update size of every parent directory */
-					while(parentppp != path)
-					{
-						auto parentppp2 = parentppp.parent_path();
-						auto it2 = dir_map.find(std::filesystem::hash_value(parentppp2));
-						if(it2 != dir_map.end())
-							it2->second->size += fsize;
-						parentppp = parentppp2;
-						//DBG("while remove: %s\n", parentppp.generic_string().c_str());
-					}
-					//DBG("fasz\n");
+					usage.AddFile(dir_without_filename, fsize);
 				}
 				else
 				{
-					auto it = dir_map.find(std::filesystem::hash_value(parent_p));
-					if(it != dir_map.end())
-					{
-						wxTreeListItem child_item = tree->AppendItem(it->second->item, curr_path.filename().generic_wstring().c_str());
-						if(p.depth() < 1)
-							tree->Expand(child_item);
-
-						auto it2 = dir_map.find(std::filesystem::hash_value(curr_path));
-						if(it2 != dir_map.end())
-							it2->second->item = child_item;
-						else
-							dir_map[std::filesystem::hash_value(curr_path)] = std::make_unique<DirItems>(child_item, 0, 0);
-					}
-					else
-					{
-						wxTreeListItem child_item = tree->AppendItem(item, curr_path.filename().generic_wstring().c_str());
-						if(p.depth() < 1)
-							tree->Expand(child_item);
-
-						auto it2 = dir_map.find(std::filesystem::hash_value(curr_path));
-						if(it2 != dir_map.end())
-							it2->second->item = child_item;
-						else
-							dir_map[std::filesystem::hash_value(curr_path)] = std::make_unique<DirItems>(child_item, 0, 0);
-
+					auto it = dir_map.find(DirectoryUsage::KeyOf(parent_p));
+					wxTreeListItem dir_parent = it != dir_map.end() ? it->second : item;
+					wxTreeListItem child_item = tree->AppendItem(dir_parent, curr_path.filename().generic_wstring().c_str());
+					if(p.depth() < 1)
+						tree->Expand(child_item);
+					dir_map[DirectoryUsage::KeyOf(curr_path)] = child_item;
+					if(it == dir_map.end())
 						item = child_item;
-					}
 					dir_cnt++;
 				}
 			}
@@ -259,42 +219,40 @@ void FilePanel::GenerateTree()
 
 			if(++cnt > YIELD_AFTER_PROCESSED_NUM_ENTRIES)
 			{
-				std::string file_sizes_str = utils::GetDataUnit(file_sizes);
+				std::string file_sizes_str = utils::GetDataUnit(usage.TotalBytes());
 				std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
 				int64_t dif = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 
-				m_ProcessInfo->SetLabelText(wxString::Format("Processing ongoing: %s (%lld dirs, %lld files - total: %lld) - elapsed: %.3fms", file_sizes_str, dir_cnt, file_cnt,
-					dir_cnt + file_cnt, (double)dif / 1000000.0));
+				m_ProcessInfo->SetLabelText(wxString::Format("Processing ongoing: %s (%lld dirs, %lld files - total: %lld) - elapsed: %.3fms", file_sizes_str, dir_cnt, usage.FileCount(),
+					dir_cnt + usage.FileCount(), (double)dif / 1000000.0));
 				cnt = 0;
 				wxYield();
 			}
 		}
 
-		std::string file_sizes_str = utils::GetDataUnit(file_sizes);
+		std::string file_sizes_str = utils::GetDataUnit(usage.TotalBytes());
 		std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
 		int64_t dif = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 
-		m_ProcessInfo->SetLabelText(wxString::Format("Processing done: %s (%lld dirs, %lld files - total: %lld) - elapsed: %.3fms", file_sizes_str, dir_cnt, file_cnt,
-			dir_cnt + file_cnt, (double)dif / 1000000.0));
+		m_ProcessInfo->SetLabelText(wxString::Format("Processing done: %s (%lld dirs, %lld files - total: %lld) - elapsed: %.3fms", file_sizes_str, dir_cnt, usage.FileCount(),
+			dir_cnt + usage.FileCount(), (double)dif / 1000000.0));
 	}
 	catch(const std::exception& e)
 	{
-		std::string file_sizes_str = utils::GetDataUnit(file_sizes);
+		std::string file_sizes_str = utils::GetDataUnit(usage.TotalBytes());
 		std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
 		int64_t dif = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 
-		m_ProcessInfo->SetLabelText(wxString::Format("Processing failed: %s (%lld dirs, %lld files - total: %lld) - elapsed: %.3fms", file_sizes_str, dir_cnt, file_cnt,
-			dir_cnt + file_cnt, (double)dif / 1000000.0));
+		m_ProcessInfo->SetLabelText(wxString::Format("Processing failed: %s (%lld dirs, %lld files - total: %lld) - elapsed: %.3fms", file_sizes_str, dir_cnt, usage.FileCount(),
+			dir_cnt + usage.FileCount(), (double)dif / 1000000.0));
 		LOG(LogLevel::Error, "Exception: {}", e.what());
 	}
 
-	for(auto& i : dir_map)  /* finally update base directories */
+	for(auto& [key, dir_item] : dir_map)  /* finally update base directories */
 	{
-		if(i.second->size != 0)
-		{
-			std::string str = utils::GetDataUnit(i.second->size);
-			tree->SetItemText(i.second->item, 1, str.c_str());
-		}
+		const DirectoryUsage::Usage* used = usage.FindByKey(key);
+		if(used && used->bytes != 0)
+			tree->SetItemText(dir_item, 1, utils::GetDataUnit(used->bytes).c_str());
 	}
 }
 

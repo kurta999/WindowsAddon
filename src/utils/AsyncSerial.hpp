@@ -8,6 +8,7 @@
 #ifndef ASYNCSERIAL_H
 #define	ASYNCSERIAL_H
 
+#include <span>
 #include <vector>
 #include <memory>
 #include <functional>
@@ -101,6 +102,9 @@ public:
      * \param data array of char to be sent through the serial device
      * \param size array size
      */
+    // !\brief Queue bytes for the background thread to send.
+    void write(std::span<const char> data);
+
     void write(const char *data, size_t size);
 
      /**
@@ -143,6 +147,14 @@ private:
      * If it is already in progress, does nothing.
      * This callback is called by the io_service in the spawned thread.
      */
+    // !\brief Drain the queue into the write buffer and start one async
+    // write on whichever stream is live. Caller holds writeQueueMutex.
+    void PumpNextWrite();
+
+    // !\brief Post the first read and start the io thread; marks the port
+    // open and clears the error flag. The tail both open paths share.
+    void StartIoThread();
+
     void doWrite();
 
     /**

@@ -2,21 +2,37 @@
 
 #include "utils/CSingleton.hpp"
 #include "interface/IBackupEventSink.hpp"
+#include "interface/IBackupFileSystem.hpp"
+#include <deque>
+#include <functional>
 #include <future>
 #include <filesystem>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
+#include "interface/ISettingsBinding.hpp"
+#include <iosfwd>
+#include <string_view>
 
 class BackupEntry
 {
 public:
-    BackupEntry(std::filesystem::path&& from_, std::vector<std::filesystem::path>&& to_, std::vector<std::wstring>&& ignore_list_, int max_backups_,
+    BackupEntry(std::filesystem::path&& from_, std::vector<std::filesystem::path>&& to_, std::vector<std::string>&& ignore_list_, int max_backups_,
         bool compress, bool calculate_hash_, size_t hash_buf_size_);
 
     // !\brief Is constructed backup entry valid?
-    bool IsValid() const;
+    // !\param fs [in] The filesystem the source path is checked against.
+    bool IsValid(const IBackupFileSystem& fs) const;
+
+    // !\brief The largest limit an entry may carry.
+    // Rotation walks the destination once per backup, so an absurd limit is a
+    // typo rather than an intention.
+    static constexpr int max_backups_limit = 10000;
+
+    // !\brief Fold a configured limit into the accepted range.
+    // Anything at or below zero means unlimited and is stored as zero.
+    [[nodiscard]] static int ClampMaxBackups(long long configured);
 
     // !\brief Backup source path
     std::filesystem::path from;
@@ -24,10 +40,12 @@ public:
     // !\brief Backup destination path vector (for multiple destinations)
     std::vector<std::filesystem::path> to;
 
-    // !\brief Ignored file list
-    std::vector<std::wstring> ignore_list;
+    // !\brief Ignored file list. Narrow, because that is what the copy matches
+    // against - converting to wide and back lost non-ASCII rules on the way.
+    std::vector<std::string> ignore_list;
 
-    // !\brief max backups for backup rotation in destination folder
+    // !\brief max backups for backup rotation in destination folder.
+    // Zero means unlimited; see BackupEntry::ClampMaxBackups.
     int max_backups;
 
     // !\brief Calculate hash for backups (hash of destination folder)
@@ -40,18 +58,29 @@ public:
     size_t hash_buf_size;
 };
 
-class DirectoryBackup : public CSingleton < DirectoryBackup >
+// !\brief The backup jobs: their settings, and running one on demand.
+class DirectoryBackup : public ISettingsBinding
 {
-    friend class CSingleton < DirectoryBackup >;
-
 public:
+    // ISettingsBinding - this subsystem owns its own block of settings.ini.
+    [[nodiscard]] std::string_view SettingsSection() const override { return "BackupSettings"; }
+    void LoadSettings(SettingsReader& reader) override;
+    void SaveSettings(std::ostream& out) const override;
+    void SaveDefaultSettings(std::ostream& out) const override;
+
     DirectoryBackup() = default;
-    ~DirectoryBackup() = default;
+    // Cancels and joins a running backup before the state it works on is gone.
+    ~DirectoryBackup() override;
 
     // !\brief Initialize DirectoryBackup
     void Init();
 
     void SetEventSink(IBackupEventSink* event_sink) noexcept { m_EventSink.store(event_sink, std::memory_order_release); }
+
+    // !\brief The filesystem this works on. Defaults to the real one; a test
+    // supplies its own to drive the paths that used to need a real disk.
+    void SetFileSystem(IBackupFileSystem& file_system) noexcept { m_FileSystem = &file_system; }
+    [[nodiscard]] IBackupFileSystem& FileSystem() const noexcept;
 
     // !\brief Construct backup entry from string
     void LoadEntry(const std::string& from, const std::string& to, const std::string& ignore, int max_backups, bool compress_, bool calculate_hash, size_t buffer_size);
@@ -74,6 +103,13 @@ public:
 
     void SetBackupTimeFormat(std::string format);
     [[nodiscard]] std::string GetBackupTimeFormat() const;
+
+    // !\brief How a finished backup is turned into an archive.
+    // Returns true only once a usable archive exists; the caller then removes
+    // the uncompressed copy. Defaults to CompressBackup, which shells out to
+    // 7z - an empty function restores that default.
+    using Compressor = std::function<bool(const std::filesystem::path&)>;
+    void SetCompressor(Compressor compressor);
 
     void RequestCancel() noexcept { m_IsCancelled.store(true); }
     [[nodiscard]] bool IsCancelled() const noexcept { return m_IsCancelled.load(); }
@@ -101,9 +137,25 @@ protected:
 private:
     void SetCurrentFile(std::string current_file);
 
+    // !\brief Drains m_PendingBackups on the worker thread.
+    void RunQueuedBackups();
+
+    // !\brief The configured compressor, or the built-in 7z one.
+    [[nodiscard]] Compressor GetCompressor();
+
+    IBackupFileSystem* m_FileSystem = nullptr;
     mutable std::mutex m_StateMutex;
     std::vector<BackupEntry> m_Backups;
     std::string m_BackupTimeFormat = "_%Y_%m_%d %H_%M_%S";
     std::string m_CurrentFile;
+    Compressor m_Compressor;
     std::atomic<bool> m_IsCancelled{false};
+
+    /* Backups are queued rather than run on top of each other, and the caller
+       never waits for one: BackupFile is reached from the GUI thread and from
+       the scheduler. m_WorkerMutex guards this queue and backup_future; it is
+       never held while waiting on the future. */
+    mutable std::mutex m_WorkerMutex;
+    std::deque<BackupEntry> m_PendingBackups;
+    bool m_WorkerRunning = false;
 };

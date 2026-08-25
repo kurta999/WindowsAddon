@@ -1,4 +1,9 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "CanDeviceLawicel.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
+
+using namespace std::chrono_literals;
 
 constexpr size_t CAN_SERIAL_RESPONSE_BUFFER_SIZE = 64;
 
@@ -6,24 +11,35 @@ constexpr const char MESSAGE_TRANSMIT_STANDARD_FRAME = 't';
 constexpr const char MESSAGE_TRANSMIT_EXTENDED_FRAME = 'T';
 constexpr const char MESSAGE_TRANSMIT_VERSION_INFO = 'V';
 
-CanDeviceLawicel::CanDeviceLawicel(boost::circular_buffer<char>& CircBuff) :
-    m_CircBuff(CircBuff)
+namespace
 {
+/* The wake-up sequence a Lawicel adapter wants before it will carry frames,
+   one row per exchange. This was a switch over a bare uint8_t that ++'d its
+   way through five case labels, where adding a step meant renumbering the
+   comments and nothing named what state 2 was. */
+struct HandshakeCommand
+{
+    std::string_view command;
+    /* How long the adapter needs to chew on it before the next byte. */
+    std::chrono::milliseconds settle;
+};
 
+constexpr HandshakeCommand kHandshake[] = {
+    { "\r",   std::chrono::milliseconds(150) },  /* flush the adapter's line buffer */
+    { "V\r",  std::chrono::milliseconds(150) },  /* version query, as a liveness probe */
+    { "S6\r", std::chrono::milliseconds(50) },   /* 500 kbit/s */
+    { "O\r",  std::chrono::milliseconds(200) },  /* open the CAN channel */
+};
 }
 
-CanDeviceLawicel::~CanDeviceLawicel()
-{
+CanDeviceLawicel::CanDeviceLawicel() = default;
 
-}
+CanDeviceLawicel::~CanDeviceLawicel() = default;
 
-void CanDeviceLawicel::ProcessReceivedFrames(std::mutex& rx_mutex, const CanFrameReceiver& receiver)
+void CanDeviceLawicel::DecodeReceivedBytes(std::span<const std::uint8_t> received, const CanFrameReceiver& receiver)
 {
-    std::unique_lock lock(rx_mutex);
-    std::string received(m_CircBuff.begin(), m_CircBuff.end());
-    m_CircBuff.clear();
-    lock.unlock();
-    for(auto& frame : m_Decoder.Feed(received))
+    const std::string bytes(received.begin(), received.end());
+    for(auto& frame : m_Decoder.Feed(bytes))
     {
         receiver(frame.id, static_cast<uint8_t>(frame.data.size()), frame.data.data());
     }
@@ -31,58 +47,23 @@ void CanDeviceLawicel::ProcessReceivedFrames(std::mutex& rx_mutex, const CanFram
 
 size_t CanDeviceLawicel::PrepareSendDataFormat(const std::shared_ptr<CanData>& data_ptr, char* out, size_t max_size, bool& remove_from_queue)
 {
-    size_t send_size = 0;
-    switch(device_state)
+    if(m_HandshakeStep < std::size(kHandshake))
     {
-        case 0:  /* Initial CR */
-        {
-            send_size = 1;
-            memcpy(out, "\r", send_size);
-            device_state++;
-            std::this_thread::sleep_for(150ms);
-            break;
-        }
-        case 1:  /* Get version */
-        {
-            send_size = 2;
-            memcpy(out, "V\r", send_size);  
-            device_state++;
-            std::this_thread::sleep_for(150ms);
-            break;
-        }
-        case 2:  /* CAN Baudrate 500Kbps */
-        {
-            send_size = 3;
-            memcpy(out, "S6\r", send_size);
-            device_state++;
-            std::this_thread::sleep_for(50ms);
-            break;
-        }
-        case 3:  /* Open CAN channel */
-        {
-            send_size = 2;
-            memcpy(out, "O\r", send_size);
-            device_state++;
-            std::this_thread::sleep_for(200ms);
-            break;
-        }
-        case 4:  /* Send data to CAN bus */
-        {
-            remove_from_queue = true;
-            const can_codec::Frame frame{data_ptr->frame_id,
-                std::vector<uint8_t>(data_ptr->data, data_ptr->data + data_ptr->data_len)};
-            const auto encoded = can_codec::EncodeLawicel(frame);
-            if(!encoded || encoded->size() > max_size)
-                return 0;
-            send_size = encoded->size();
-            memcpy(out, encoded->data(), encoded->size());
-            break;
-        }
-        default:
-        {
-            assert(false);
-            break;
-        }
+        const HandshakeCommand& step = kHandshake[m_HandshakeStep];
+        if(step.command.size() > max_size)
+            return 0;
+        memcpy(out, step.command.data(), step.command.size());
+        ++m_HandshakeStep;
+        std::this_thread::sleep_for(step.settle);
+        return step.command.size();
     }
-    return send_size;
+
+    remove_from_queue = true;
+    const can_codec::Frame frame{data_ptr->frame_id,
+        std::vector<uint8_t>(data_ptr->data, data_ptr->data + data_ptr->data_len)};
+    const auto encoded = can_codec::EncodeLawicel(frame);
+    if(!encoded || encoded->size() > max_size)
+        return 0;
+    memcpy(out, encoded->data(), encoded->size());
+    return encoded->size();
 }

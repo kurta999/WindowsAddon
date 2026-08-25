@@ -1,4 +1,6 @@
 #include "pch.hpp"
+#include "UdsRawScript.hpp"
+#include "utils/HexBytes.hpp"
 
 wxBEGIN_EVENT_TABLE(CanUdsRawDialog, wxDialog)
 EVT_BUTTON(wxID_APPLY, CanUdsRawDialog::OnApply)
@@ -138,60 +140,27 @@ void CanUdsRawDialog::ShowDialog()
     ShowModal();
 }
 
+/* These four were the same ten-line try/catch shell around std::stoi, one per
+   field, each falling back to 0 when the user typed something that would not
+   parse. utils::ParseOr is that shell. */
 uint32_t CanUdsRawDialog::GetSenderId()
 {
-    uint32_t ret = 0;
-    try
-    {
-        ret = std::stoi(m_SenderId->GetValue().ToStdString(), 0, 16);
-    }
-    catch(const std::exception& e)
-    {
-        LOG(LogLevel::Warning, "stoi exception: {}", e.what());
-    }
-    return ret;
+    return utils::ParseOr<uint32_t>(m_SenderId->GetValue().ToStdString(), 0, utils::ParseMode::Whole, 16);
 }
 
 uint32_t CanUdsRawDialog::GetReceiverId()
 {
-    uint32_t ret = 0;
-    try
-    {
-        ret = std::stoi(m_ReceiverId->GetValue().ToStdString(), 0, 16);
-    }
-    catch(const std::exception& e)
-    {
-        LOG(LogLevel::Warning, "stoi exception: {}", e.what());
-    }
-    return ret;
+    return utils::ParseOr<uint32_t>(m_ReceiverId->GetValue().ToStdString(), 0, utils::ParseMode::Whole, 16);
 }
 
 uint32_t CanUdsRawDialog::GetDelayBetweenFrames()
 {
-    uint32_t ret = 0;
-    try
-    {
-        ret = std::stoi(m_DelayBetweenFrames->GetValue().ToStdString());
-    }
-    catch(const std::exception& e)
-    {
-        LOG(LogLevel::Warning, "stoi exception: {}", e.what());
-    }
-    return ret;
+    return utils::ParseOr<uint32_t>(m_DelayBetweenFrames->GetValue().ToStdString(), 0);
 }
 
 uint32_t CanUdsRawDialog::GetWaitingTimeForFrames()
 {
-    uint32_t ret = 0;
-    try
-    {
-        ret = std::stoi(m_RecvDelayFrames->GetValue().ToStdString());
-    }
-    catch(const std::exception& e)
-    {
-        LOG(LogLevel::Warning, "stoi exception: {}", e.what());
-    }
-    return ret;
+    return utils::ParseOr<uint32_t>(m_RecvDelayFrames->GetValue().ToStdString(), 0);
 }
 
 std::string CanUdsRawDialog::GetSentData()
@@ -205,10 +174,10 @@ void CanUdsRawDialog::OnApply(wxCommandEvent& WXUNUSED(event))
     Close();
 }
 
-bool SendIsoTpFrameGlobal(uint32_t sender_id, char* arr_to_send, uint16_t len)
+bool SendIsoTpFrameGlobal(uint32_t sender_id, std::vector<uint8_t> arr_to_send)
 {
     std::unique_ptr<CanEntryHandler>& can_handler = wxGetApp().can_entry;
-    can_handler->SendIsoTpFrame(sender_id, (uint8_t*)arr_to_send, len);
+    can_handler->SendIsoTpFrame(sender_id, arr_to_send.data(), static_cast<uint16_t>(arr_to_send.size()));
     return true;
 }
 
@@ -222,38 +191,36 @@ void CanUdsRawDialog::HandleFrameSending()
     m_LastDelayBetweenFrames = GetDelayBetweenFrames();
     m_LastRecvWaitingTime = GetWaitingTimeForFrames();
 
-    auto& uds_responses = can_handler->GetUdsRawBuffer();
-    uds_responses.clear();  /* Clear every older request */
+    can_handler->ClearUdsRawFrames();  /* Clear every older request */
 
     uint32_t old_recv_frame_id = can_handler->GetIsoTpResponseFrameId();
-    std::vector<std::string> lines;
-    boost::split(lines, m_LastUdsInput, [](char input) { return input == '\n' || input == ';'; }, boost::algorithm::token_compress_on);
-    for(auto& hex_str : lines)
+
+    /* The syntax is uds_raw::Parse, where it has tests; this loop only sends
+       and sleeps - and it does still sleep on purpose: blocking between
+       frames is what this dialog does. */
+    uds_raw::Script script = uds_raw::Parse(m_LastUdsInput, MAX_ISOTP_FRAME_LEN);
+    for(const uds_raw::Skipped& skipped : script.skipped)
     {
-        int delay = 0;
-        int delay_check = sscanf(hex_str.c_str(), "DELAY%*c%d%*c[^\n]", &delay);
-        if(delay_check == 1)
-        {
-            {
-                LOG(LogLevel::Notification, "Sending ISO-TP Frame, Delay: {}ms", delay);
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(delay));
-            continue;
-        }
-
-        char byte_array[MAX_ISOTP_FRAME_LEN];
-        boost::algorithm::erase_all(hex_str, " ");
-        boost::algorithm::erase_all(hex_str, ".");
-        utils::ConvertHexStringToBuffer(hex_str, std::span{ byte_array });
-
-        uint16_t len = (hex_str.length() / 2);
-        if(len == 0)
-        {
+        if(skipped.reason == "empty")
             LOG(LogLevel::Warning, "Skipping IsoTP frame, input length is zero");
+        else
+            LOG(LogLevel::Warning, "Skipping IsoTP frame, '{}' is not valid hex", skipped.line);
+    }
+
+    for(uds_raw::Step& step : script.steps)
+    {
+        if(step.kind == uds_raw::Step::Kind::Delay)
+        {
+            LOG(LogLevel::Notification, "Sending ISO-TP Frame, Delay: {}ms", step.delay_ms);
+            std::this_thread::sleep_for(std::chrono::milliseconds(step.delay_ms));
             continue;
         }
 
-        m_isotp_future = std::async(&SendIsoTpFrameGlobal, m_LastUdsSenderId, byte_array, len);
+        const uint16_t len = static_cast<uint16_t>(step.payload.size());
+
+        /* The task owns its payload. Passing a pointer to a loop-local array
+           let the next iteration overwrite the bytes mid-send. */
+        m_isotp_future = std::async(&SendIsoTpFrameGlobal, m_LastUdsSenderId, std::move(step.payload));
         LOG(LogLevel::Notification, "Sending ISO-TP Frame, FrameID: {:X}, ResponseFrameID: {:X}, Len: {}", m_LastUdsSenderId, can_handler->GetIsoTpResponseFrameId(), len);
 
         std::this_thread::sleep_for(std::chrono::milliseconds(m_LastDelayBetweenFrames));
@@ -268,14 +235,16 @@ void CanUdsRawDialog::HandleFrameSending()
     }
     LOG(LogLevel::Warning, "Sending complete 2");
 
+    /* Taking the frames both reads and clears them, under the endpoint's
+       lock. This used to iterate a reference to the vector that the receive
+       thread was appending to. */
     std::string response;
-    for(auto& i : uds_responses)
+    for(const auto& i : can_handler->TakeUdsRawFrames())
     {
         std::string tmp;
         utils::ConvertHexBufferToString(i.c_str(), i.length(), tmp);
         response += tmp + "\r\n";
     }
-    uds_responses.clear();
     m_DataRecv->SetValue(response);
 
     if(old_recv_frame_id != m_LastUdsReceiverId)

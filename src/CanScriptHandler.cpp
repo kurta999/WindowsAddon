@@ -1,4 +1,8 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "CanScriptHandler.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
+#include <bitfield/bitfield.h>
 
 CanScriptHandler::CanScriptHandler(ICanResultPanel& result_panel, CanEntryHandler& handler) :
     m_Result(result_panel), m_Handler(handler)
@@ -100,21 +104,16 @@ void CanScriptHandler::OnFrameOnBus(uint32_t frame_id, uint8_t* data, uint16_t s
     }
 }
 
-void CanScriptHandler::OnIsoTpDataReceived(uint32_t frame_id, uint8_t* data, uint16_t size)
+void CanScriptHandler::OnIsoTpDataReceived(uint32_t frame_id, const uint8_t* data, uint16_t size)
 {
 }
 
 template <typename T> void CanScriptHandler::HandleBitWriting(uint32_t frame_id, uint8_t& pos, uint8_t offset, uint8_t size, uint8_t* byte_array, std::string& new_data)
 {
-    try
-    {
-        T raw_data = static_cast<T>(std::stoll(new_data, nullptr, 16));
-        set_bitfield(raw_data, offset, size, byte_array, 8);
-    }
-    catch(const std::exception& e)
-    {
-        LOG(LogLevel::Error, "Invalid input for pos {}. Exception: {}", pos, e.what());
-    }
+    if(const auto raw_data = utils::TryParse<int64_t>(new_data, utils::ParseMode::Whole, 16))
+        set_bitfield(static_cast<uint64_t>(static_cast<T>(*raw_data)), offset, size, byte_array, 8);
+    else
+        LOG(LogLevel::Error, "Invalid input for pos {}: '{}' is not hexadecimal", pos, new_data);
     pos++;
 }
 
@@ -210,7 +209,11 @@ CanScriptReturn CanScriptHandler::SetFrameFieldRaw(OperandParams& params)
         frame_value += '0';
 
     std::array<uint8_t, 8> array_to_send{};
-    utils::ConvertHexStringToBuffer(frame_value, std::span{ array_to_send });
+    if(!utils::ConvertHexStringToBuffer(frame_value, std::span{ array_to_send }))
+    {
+        LOG(LogLevel::Error, "SetFrameFieldRaw {}: '{}' is not valid hex", field_name, frame_value);
+        return;
+    }
     raw_frame_blocks[frame_id].assign(array_to_send.begin(), array_to_send.end());
 
     std::string hex;
@@ -263,16 +266,13 @@ CanScriptReturn CanScriptHandler::WaitForFrame(OperandParams& params)
         return;
 
     const std::string& field_name = params[1];
-    uint32_t wait_ms = 0;
-    try
+    const std::optional<uint32_t> parsed_wait = utils::TryParse<uint32_t>(params[2]);
+    if(!parsed_wait)
     {
-        wait_ms = static_cast<uint32_t>(std::stoi(params[2]));
-    }
-    catch(const std::exception& e)
-    {
-        LOG(LogLevel::Error, "Invalid WaitForFrame parameter, stoi exception: {} (Input: {})", e.what(), params[2]);
+        LOG(LogLevel::Error, "Invalid WaitForFrame parameter, expected a timeout in ms (Input: {})", params[2]);
         return;
     }
+    const uint32_t wait_ms = *parsed_wait;
 
     const uint32_t frame_id = FindFrameIdByFieldName(m_Handler.GetMapping(), field_name);
     if(!frame_id)
@@ -322,16 +322,13 @@ CanScriptReturn CanScriptHandler::Sleep(OperandParams& params)
     if(!CheckParams(params.size(), 2))
         return;
 
-    uint32_t sleep_ms = 0;
-    try
+    const std::optional<uint32_t> parsed_sleep = utils::TryParse<uint32_t>(params[1]);
+    if(!parsed_sleep)
     {
-        sleep_ms = static_cast<uint32_t>(std::stoi(params[1]));
-    }
-    catch(const std::exception& e)
-    {
-        LOG(LogLevel::Error, "Invalid Sleep parameter, stoi exception: {} (Input: {})", e.what(), params[1]);
+        LOG(LogLevel::Error, "Invalid Sleep parameter, expected a duration in ms (Input: {})", params[1]);
         return;
     }
+    const uint32_t sleep_ms = *parsed_sleep;
 
     m_Result.AddToLog(std::format("Wait {} ms... ", sleep_ms));
     std::unique_lock lk(cv_m);

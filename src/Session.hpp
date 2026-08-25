@@ -14,11 +14,17 @@
 #include "TcpMessageExecutor.hpp"
 #include "TcpMessageParser.hpp"
 
+class Server;
+
 class Session : public std::enable_shared_from_this<Session>
 {
 	friend class Server;
 public:
-	Session(boost::asio::io_context& io_service, std::mutex& io_mutex, std::unique_ptr<ITcpMessageExecutor>&& executor);
+	// !\brief `owner` is told when this session closes, so it can drop it from
+	// its set. The session used to erase itself through Server::Get(), which is
+	// the only reason a connection needed to know the server was a singleton.
+	Session(boost::asio::io_context& io_service, std::mutex& io_mutex,
+		std::unique_ptr<ITcpMessageExecutor>&& executor, Server* owner);
 
 	~Session();
 
@@ -52,6 +58,9 @@ public:
 	// !\brief Buffer for received data
 	std::array<char, tcp_message::MaxMessageSize> receivedData{};
 
+	// !\brief Bytes accumulated in receivedData across partial reads
+	std::size_t receivedLength = 0;
+
 	// !\brief Last sent data
 	std::string sentData;
 
@@ -81,4 +90,5 @@ public:
 	
 	// !\brief Pointer to TCP message executor
 	std::unique_ptr<ITcpMessageExecutor> m_msgExecutor;
+	Server* m_owner = nullptr;
 };

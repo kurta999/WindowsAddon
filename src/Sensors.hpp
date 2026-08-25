@@ -1,5 +1,7 @@
 #pragma once
 
+#include "interface/IMeasurementSink.hpp"
+
 #include "utils/CSingleton.hpp"
 #include "interface/ISensorObserver.hpp"
 #include "Measurement.hpp"
@@ -9,12 +11,35 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include "interface/ISettingsBinding.hpp"
+#include <iosfwd>
+#include <string_view>
 
-class Sensors : public CSingleton<Sensors>
+class Server;
+class DatabaseLogic;
+class BsecHandler;
+
+class Sensors : public CSingleton<Sensors>, public ISettingsBinding, public IMeasurementSink
 {
     friend class CSingleton<Sensors>;
 
 public:
+    // !\brief The TCP server this coordinates. Supplied by the composition
+    // root before settings are read: five of the keys in this subsystem's
+    // block belong to the server, and it configures the server on load.
+    void SetServer(Server& server) noexcept { m_Server = &server; }
+
+    // !\brief The store the accumulated measurements go to, and the air-quality
+    // library that turns a gas reading into an IAQ index. The sensor worker
+    // fetched both from its own thread, six times, on every broadcast.
+    void SetDatabase(DatabaseLogic& database) noexcept { m_Database = &database; }
+    void SetBsec(BsecHandler& bsec) noexcept { m_Bsec = &bsec; }
+
+    // ISettingsBinding - this subsystem owns its own block of settings.ini.
+    [[nodiscard]] std::string_view SettingsSection() const override { return "Sensors"; }
+    void LoadSettings(SettingsReader& reader) override;
+    void SaveSettings(std::ostream& out) const override;
+
     void Init();
 
     void AddObserver(ISensorObserver* observer);
@@ -22,6 +47,13 @@ public:
 
     // Entry point for raw incoming TCP data; parses, accumulates, and forwards.
     void HandleAndForwardIncomingMeasurements(const char* data, size_t len, const char* from_ip);
+
+    // IMeasurementSink - the same operation, named for the port so a caller
+    // can forward a broadcast without knowing this class exists.
+    void HandleIncomingMeasurements(const char* data, std::size_t len, const char* source) override
+    {
+        HandleAndForwardIncomingMeasurements(data, len, source);
+    }
 
     // Parse a raw sensor broadcast string and drive the accumulation pipeline.
     bool ProcessIncomingData(const char* data, size_t len, const char* from_ip);
@@ -46,6 +78,10 @@ public:
     void ResetMeasurements();
 
 private:
+    Server* m_Server = nullptr;
+    DatabaseLogic* m_Database = nullptr;
+    BsecHandler* m_Bsec = nullptr;
+
     enum FieldIndex
     {
         IDX_SCD_TEMP,
@@ -72,14 +108,16 @@ private:
     void UpdateGui(const Measurement& m);
     void UpdateDatabaseIfNeeded();
 
-    // Graph-writing helpers (templated to work with any Measurement field type).
+    // Graph-writing helpers. The field is named with a pointer-to-member so a
+    // reordered or retyped Measurement member is a compile error rather than a
+    // silent misread through offsetof + reinterpret_cast.
     template<typename FieldType, typename Container>
-    static void CollectSeries(const Container& c, size_t offset,
+    static void CollectSeries(const Container& c, FieldType Measurement::* field,
                                std::string& labels, std::string& values);
 
     template<typename FieldType>
     void WriteGraph(const char* filename, uint16_t min_val, uint16_t max_val,
-                    const char* name, size_t offset);
+                    const char* name, FieldType Measurement::* field);
 
     // --- state ---
     std::vector<ISensorObserver*>          m_observers;

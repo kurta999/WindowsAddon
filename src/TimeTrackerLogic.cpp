@@ -1,6 +1,7 @@
 #include "TimeTrackerLogic.hpp"
 
 #include <algorithm>
+#include <format>
 #include <numeric>
 
 namespace time_tracker_logic
@@ -37,5 +38,16 @@ bool ShouldPersistElapsedMinute(std::int64_t elapsed_seconds, std::int64_t last_
     if(elapsed_seconds < 0)
         return false;
     return elapsed_seconds / 60 > last_persisted_minute;
+}
+
+std::string ContinuationName(const std::string& comment)
+{
+    return comment + " #2";
+}
+
+std::string FormatTotalWorkLabel(std::int64_t total_seconds, int hourly_rate)
+{
+    const double hours = total_seconds > 0 ? static_cast<double>(total_seconds) / 3600.0 : 0.0;
+    return std::format("{:.2f} / {:.2f}", hours, hours * hourly_rate);
 }
 }

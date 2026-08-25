@@ -1,4 +1,10 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "DatabaseLogic.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
+#include "SettingsReader.hpp"
+#include "SettingsWriter.hpp"
+#include <ostream>
 
 constexpr const char* db_name = "meas_data.db";
 
@@ -40,4 +46,19 @@ uint32_t DatabaseLogic::GetGraphHours(uint8_t slot) const
 std::chrono::steady_clock::time_point DatabaseLogic::GetLastUpdateTime() const
 {
     return m_generator->GetLastUpdateTime();
+}
+
+void DatabaseLogic::LoadSettings(SettingsReader& reader)
+{
+    SetGraphHours(0, utils::stoi<uint32_t>(reader.Required("Graph", "Graph1HoursBack")));
+    SetGraphHours(1, utils::stoi<uint32_t>(reader.Required("Graph", "Graph2HoursBack")));
+}
+
+void DatabaseLogic::SaveSettings(std::ostream& out) const
+{
+    /* No trailing blank line: this block and [TimeTracker] are the two that
+       never had one, and the ini parser does not mind either way. */
+    SettingsWriter(out, "Graph")
+        .Key("Graph1HoursBack", GetGraphHours(0), "One day")
+        .Key("Graph2HoursBack", GetGraphHours(1), "One week");
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -21,6 +22,17 @@ public:
 
     bool Parse(std::string content, std::string& error);
     std::string Render() const;
+
+    // !\brief Read and Parse `path`.
+    bool LoadFromFile(const std::filesystem::path& path, std::string& error);
+
+    // !\brief Render into `path` via a temporary and an atomic replace, so a
+    // crash mid-write leaves the previous file intact.
+    //
+    // The temp-write-then-rename lived inside the settings dialog - a wxDialog
+    // owned the file-durability rule while this class, which exists to keep
+    // settings.ini intact, only rendered strings.
+    bool SaveToFileAtomically(const std::filesystem::path& path, std::string& error) const;
 
     const std::vector<Entry>& Entries() const { return m_entries; }
     std::vector<Entry>& Entries() { return m_entries; }

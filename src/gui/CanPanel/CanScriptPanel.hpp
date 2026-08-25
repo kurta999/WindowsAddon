@@ -5,11 +5,13 @@
 #include "ICanResultPanel.hpp"
 #include <wx/filepicker.h>
 
+class CanEntryHandler;
+
 class CanScriptHandler;
 class CanScriptPanel : public wxPanel, public ICanResultPanel
 {
 public:
-    CanScriptPanel(wxWindow* parent);
+    CanScriptPanel(wxWindow* parent, CanEntryHandler& handler);
     ~CanScriptPanel();
     void OnFileDrop(wxDropFilesEvent& event);
     void OnFileSelected(wxFileDirPickerEvent& event);
@@ -44,6 +46,12 @@ private:
     wxString path;
 
     std::unique_ptr<CanScriptHandler> m_Script;
+
+
+    /* Handed in rather than fetched from wxGetApp() on every use.
+       docs/code-style.md: "A class gets its collaborators through its
+       constructor. It does not fetch them." */
+    CanEntryHandler& m_handler;
 
     wxDECLARE_EVENT_TABLE();
 };

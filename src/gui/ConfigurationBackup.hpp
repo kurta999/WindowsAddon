@@ -17,15 +17,19 @@ private:
 	T value;
 };
 
+class DirectoryBackup;
+
 class BackupPanel : public wxPanel
 {
 public:
-	BackupPanel(wxWindow* parent);
+	BackupPanel(wxWindow* parent, DirectoryBackup& backups);
 	void UpdateMainTree();
 
 private:
 	void OnItemContextMenu(wxTreeListEvent& evt);
 	void OnItemActivated(wxTreeListEvent& evt);
+
+	DirectoryBackup& m_Backups;
 
 	wxButton* m_Ok = nullptr;
 	wxTreeListCtrl* tree = nullptr;

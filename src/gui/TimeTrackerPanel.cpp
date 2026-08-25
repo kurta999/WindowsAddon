@@ -1,4 +1,8 @@
 #include "pch.hpp"
+#include "MenuCommand.hpp"
+#include "GridBuilder.hpp"
+#include "MainFrameAccess.hpp"
+#include "TimeTrackerLogic.hpp"
 
 wxBEGIN_EVENT_TABLE(TimeTrackerPanel, wxPanel)
 EVT_GRID_CELL_CHANGED(TimeTrackerPanel::OnCellValueChanged)
@@ -25,86 +29,68 @@ std::string SecondsToDecimalHours(long total_seconds)
     return result;
 }
 
+// !\brief A duration as hh:mm, the form the worktime grid shows.
+//
+// Six cells in this file spelled out the same
+// wxString::Format("%02lld:%02lld", d.hours(), d.minutes()). utils::SecondsToHms
+// is the hh:mm:ss form and takes a count of seconds, so it does not fit here.
+static wxString FormatHoursMinutes(const boost::posix_time::time_duration& duration)
+{
+    return wxString::Format("%02lld:%02lld", duration.hours(), duration.minutes());
+}
+
 TimeTrackerGrid::TimeTrackerGrid(wxWindow* parent)
 {
-    m_grid = new wxGrid(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, 0);
+    /* In TimeTrackerCol order. */
+    static constexpr gui::GridColumn kColumns[]{
+        { "Time", 70 },        // TimeTracker_Date
+        { "Start", 50 },       // TimeTracker_Start
+        { "End", 50 },         // TimeTracker_End
+        { "Comment", 400 },    // TimeTracker_Comment
+        { "Hours", 50 },       // TimeTracker_Hours
+        { "Total Work", 135 }, // TimeTracker_TotalWork
+    };
+    static_assert(std::size(kColumns) == TimeTrackerCol::TimeTracker_Max);
+
+    m_grid = gui::BuildGrid(parent, gui::GridSpec{
+        .size = wxDefaultSize,
+        .initial_rows = 1,
+        .columns = kColumns,
+        .selection_mode = wxGrid::wxGridSelectRows,
+        .hide_row_labels = true,
+    });
     m_grid->SetMinSize(wxSize(1024, 768));
     m_grid->SetMaxSize(wxSize(2048, 2048));
-
-    // Grid
-    m_grid->CreateGrid(1, TimeTrackerCol::TimeTracker_Max);
-    m_grid->EnableEditing(true);
-    m_grid->EnableGridLines(true);
-    m_grid->EnableDragGridSize(false);
-    m_grid->SetMargins(0, 0);
-
-    m_grid->SetColLabelValue(TimeTrackerCol::TimeTracker_Date, "Time");
-    m_grid->SetColLabelValue(TimeTrackerCol::TimeTracker_Start, "Start");
-    m_grid->SetColLabelValue(TimeTrackerCol::TimeTracker_End, "End");
-    m_grid->SetColLabelValue(TimeTrackerCol::TimeTracker_Comment, "Comment");
-    m_grid->SetColLabelValue(TimeTrackerCol::TimeTracker_Hours, "Hours");
-    m_grid->SetColLabelValue(TimeTrackerCol::TimeTracker_TotalWork, "Total Work");
-
-    // Columns
-    m_grid->EnableDragColMove(true);
-    m_grid->EnableDragColSize(true);
-    m_grid->SetColLabelAlignment(wxALIGN_CENTER, wxALIGN_CENTER);
-
-    m_grid->SetSelectionMode(wxGrid::wxGridSelectionModes::wxGridSelectRows);
-
-    // Rows
-    m_grid->EnableDragRowSize(true);
-    m_grid->SetRowLabelAlignment(wxALIGN_CENTER, wxALIGN_CENTER);
-
-
-    // Label Appearance
-
-    // Cell Defaults
-    m_grid->SetDefaultCellAlignment(wxALIGN_LEFT, wxALIGN_TOP);
-    m_grid->HideRowLabels();
-
-    m_grid->SetColSize(TimeTrackerCol::TimeTracker_Date, 70);
-    m_grid->SetColSize(TimeTrackerCol::TimeTracker_Start, 50);
-    m_grid->SetColSize(TimeTrackerCol::TimeTracker_End, 50);
-    m_grid->SetColSize(TimeTrackerCol::TimeTracker_Comment, 400);
-    m_grid->SetColSize(TimeTrackerCol::TimeTracker_Hours, 50);
-    m_grid->SetColSize(TimeTrackerCol::TimeTracker_TotalWork, 135);
 
     m_grid->AutoSizeRows();
     m_grid->AutoSizeColumns();
 }
 
-void TimeTrackerGrid::AddRow(TimeEntry* entry)
+void TimeTrackerGrid::AddRow(TimeEntry* entry, int hourly_rate)
 {
     if(!entry)
         return;
 
-    static boost::gregorian::date lastSetDate; // Tracks the last set date
-    static boost::posix_time::time_duration totalDurationForDay(0, 0, 0); // Tracks total duration for the current day
-    static boost::posix_time::time_duration totalDuration(0, 0, 0); // Tracks total duration
-    static bool isGray = true;
 
-    int num_rows = m_grid->GetNumberRows();
-    if (num_rows <= cnt)
-        m_grid->AppendRows(1);
+    gui::EnsureRow(*m_grid, cnt);
 
     // Extract the date from the entry's start time
     boost::gregorian::date currentDate = entry->start.date();
 
     // If the date changes, set the total hours for the previous day
-    if (currentDate != lastSetDate)
+    if (currentDate != m_LastSetDate)
     {
         wxString totalHoursStr = wxString::Format("%02lld:%02lld:%02lld",
-            totalDurationForDay.hours(),
-            totalDurationForDay.minutes(),
-            totalDurationForDay.seconds());
+            m_TotalDurationForDay.hours(),
+            m_TotalDurationForDay.minutes(),
+            m_TotalDurationForDay.seconds());
         m_grid->SetCellValue(wxGridCellCoords(cnt, TimeTrackerCol::TimeTracker_TotalWork), totalHoursStr);
 
         // Reset the total duration for the new day
-        totalDurationForDay = boost::posix_time::time_duration(0, 0, 0);
+        m_TotalDurationForDay = boost::posix_time::time_duration(0, 0, 0);
 
         // Alternate the row color
-        isGray = !isGray;
+        m_RowIsGray = !m_RowIsGray;
 
         // Set the date for the new day
         wxString dateStr = wxString::Format("%04d-%02d-%02d",
@@ -112,46 +98,42 @@ void TimeTrackerGrid::AddRow(TimeEntry* entry)
             static_cast<int>(currentDate.month().as_number()),
             static_cast<int>(currentDate.day()));
         m_grid->SetCellValue(wxGridCellCoords(cnt, TimeTrackerCol::TimeTracker_Date), dateStr);
-        lastSetDate = currentDate; // Update the last set date
+        m_LastSetDate = currentDate; // Update the last set date
     }
 
     // Calculate the duration for the current entry and add it to the total duration for the day
     boost::posix_time::time_duration entryDuration = entry->end - entry->start;
-    totalDurationForDay += entryDuration;
-    totalDuration += entryDuration;
+    m_TotalDurationForDay += entryDuration;
+    m_TotalDuration += entryDuration;
 
     // Set the start time
     boost::posix_time::time_duration startDuration = entry->start.time_of_day();
-    wxString timeStartStr = wxString::Format("%02lld:%02lld", startDuration.hours(), startDuration.minutes());
+    wxString timeStartStr = FormatHoursMinutes(startDuration);
     m_grid->SetCellValue(wxGridCellCoords(cnt, TimeTrackerCol::TimeTracker_Start), timeStartStr);
 
     // Set the end time
     boost::posix_time::time_duration endDuration = entry->end.time_of_day();
-    wxString timeEndStr = wxString::Format("%02lld:%02lld", endDuration.hours(), endDuration.minutes());
+    wxString timeEndStr = FormatHoursMinutes(endDuration);
     m_grid->SetCellValue(wxGridCellCoords(cnt, TimeTrackerCol::TimeTracker_End), timeEndStr);
 
     // Set the time difference (duration) in the TimeTracker_Hours column
 	if (entryDuration.hours() < 0)
 		entryDuration = boost::posix_time::time_duration(0, 0, 0);
-    wxString timeDiffStr = wxString::Format("%02lld:%02lld", entryDuration.hours(), entryDuration.minutes());
+    wxString timeDiffStr = FormatHoursMinutes(entryDuration);
     m_grid->SetCellValue(wxGridCellCoords(cnt, TimeTrackerCol::TimeTracker_Hours), timeDiffStr);
 
     // Set the comment
     m_grid->SetCellValue(wxGridCellCoords(cnt, TimeTrackerCol::TimeTracker_Comment), entry->desc);
 
-    // Apply the row color based on the current state of `isGray`
-    wxColor rowColor = isGray ? wxColor(230, 230, 230) : wxColor(255, 255, 255);
+    // Apply the row color based on the current stripe phase
+    wxColor rowColor = m_RowIsGray ? wxColor(230, 230, 230) : wxColor(255, 255, 255);
     for (int col = 0; col < TimeTrackerCol::TimeTracker_Max; ++col)
     {
         m_grid->SetCellBackgroundColour(cnt, col, rowColor);
     }
 
-    if (totalDuration.hours() < 0)
-		totalDuration = boost::posix_time::time_duration(0, 0, 0);
-
-    std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
     m_grid->SetColLabelValue(TimeTrackerCol::TimeTracker_TotalWork,
-        wxString::Format("%lld [h] / %lld�", totalDuration.hours(), totalDuration.hours() * time_tracker->GetHourlyRate()));
+        time_tracker_logic::FormatTotalWorkLabel(m_TotalDuration.total_seconds(), hourly_rate));
 
     // Map the entry to the grid row
     grid_to_entry_id[static_cast<int>(cnt)] = entry->sql_id;
@@ -163,9 +145,7 @@ void TimeTrackerGrid::AddRowSerialized(TimeEntrySerialized* entry)
     if(!entry || !entry->entry)
         return;
 
-    int num_rows = m_grid->GetNumberRows();
-    if (num_rows <= cnt)
-        m_grid->AppendRows(1);
+    gui::EnsureRow(*m_grid, cnt);
 
     if (!entry->date.is_not_a_date())
     {
@@ -176,17 +156,17 @@ void TimeTrackerGrid::AddRowSerialized(TimeEntrySerialized* entry)
 		m_grid->SetCellValue(wxGridCellCoords(cnt, TimeTrackerCol::TimeTracker_Date), dateStr);
     }
 
-    wxString timeStartStr = wxString::Format("%02lld:%02lld", entry->start.hours(), entry->start.minutes());
+    wxString timeStartStr = FormatHoursMinutes(entry->start);
     m_grid->SetCellValue(wxGridCellCoords(cnt, TimeTrackerCol::TimeTracker_Start), timeStartStr);
 
     // Set the end time
-    wxString timeEndStr = wxString::Format("%02lld:%02lld", entry->end.hours(), entry->end.minutes());
+    wxString timeEndStr = FormatHoursMinutes(entry->end);
     m_grid->SetCellValue(wxGridCellCoords(cnt, TimeTrackerCol::TimeTracker_End), timeEndStr);
 
 	auto entryDuration = entry->end - entry->start;
     if (entryDuration.hours() < 0)
         entryDuration = boost::posix_time::time_duration(0, 0, 0);
-    wxString timeDiffStr = wxString::Format("%02lld:%02lld", entryDuration.hours(), entryDuration.minutes());
+    wxString timeDiffStr = FormatHoursMinutes(entryDuration);
     m_grid->SetCellValue(wxGridCellCoords(cnt, TimeTrackerCol::TimeTracker_Hours), timeDiffStr);
 
 	if (entry->total_duration_per_day != boost::posix_time::time_duration(0, 0, 0))
@@ -239,20 +219,23 @@ void TimeTrackerGrid::ClearRows()
     }
 	grid_to_entry_id.clear();
 	cnt = 0;
+	m_LastSetDate = {};
+	m_TotalDurationForDay = boost::posix_time::time_duration(0, 0, 0);
+	m_TotalDuration = boost::posix_time::time_duration(0, 0, 0);
+	m_RowIsGray = true;
 }
 
 void TimeTrackerPanel::ToggleWorktime()
 {
     FinishActiveEdit();
 	boost::posix_time::time_duration duration(0, 0, 0);
-    std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
     if (!is_working)
     {
         auto time = boost::posix_time::second_clock::local_time();
-        TimeEntry* time_entry = time_tracker->AddEntry(time, time, "");
+        TimeEntry* time_entry = m_tracker.AddEntry(time, time, "");
         if(!time_entry)
         {
-            wxMessageBox(time_tracker->LastError(), "Unable to start time tracking", wxOK | wxICON_ERROR, this);
+            wxMessageBox(m_tracker.LastError(), "Unable to start time tracking", wxOK | wxICON_ERROR, this);
             return;
         }
 
@@ -260,8 +243,8 @@ void TimeTrackerPanel::ToggleWorktime()
 		lastTimeEntryStart = time_entry->start;
         lastPersistedMinute = 0;
 
-        tracker_grid->AddRow(time_entry);
-        time_tracker->UpdateEntries();
+        tracker_grid->AddRow(time_entry, m_tracker.GetHourlyRate());
+        m_tracker.UpdateEntries();
         RefreshPanel();
 
         is_working = true;
@@ -276,7 +259,7 @@ void TimeTrackerPanel::ToggleWorktime()
             return;
         }
 
-        const TimeEntry* entry = time_tracker->FindEntry(*lastTimeEntryId);
+        const TimeEntry* entry = m_tracker.FindEntry(*lastTimeEntryId);
         if(!entry)
         {
             is_working = false;
@@ -290,12 +273,12 @@ void TimeTrackerPanel::ToggleWorktime()
         const auto start = entry->start;
         const auto end = boost::posix_time::second_clock::local_time();
         const auto comment = entry->desc;
-        if(!time_tracker->EditEntry(*lastTimeEntryId, start, end, comment))
+        if(!m_tracker.EditEntry(*lastTimeEntryId, start, end, comment))
         {
-            wxMessageBox(time_tracker->LastError(), "Unable to stop time tracking", wxOK | wxICON_ERROR, this);
+            wxMessageBox(m_tracker.LastError(), "Unable to stop time tracking", wxOK | wxICON_ERROR, this);
             return;
         }
-        time_tracker->UpdateEntries();
+        m_tracker.UpdateEntries();
         RefreshPanel();
 
         duration = end - start;
@@ -304,16 +287,12 @@ void TimeTrackerPanel::ToggleWorktime()
         SetWorktimeUi(false);
     }
 
-    MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-    if(frame)
-    {
-        frame->PostNotification(WorktimeToggledNotification{is_working,
-            std::chrono::seconds{duration.total_seconds()}});
-    }
+    PostAppNotification(WorktimeToggledNotification{is_working,
+        std::chrono::seconds{duration.total_seconds()}});
 }
 
-TimeTrackerPanel::TimeTrackerPanel(wxFrame* parent) :
-    wxPanel(parent, wxID_ANY)
+TimeTrackerPanel::TimeTrackerPanel(wxFrame* parent, TimeTracker& tracker, WorkingDays& working_days) :
+    wxPanel(parent, wxID_ANY), m_tracker(tracker), m_WorkingDays(working_days)
 {
     wxBoxSizer* bSizer1 = new wxBoxSizer(wxVERTICAL);
 
@@ -387,15 +366,13 @@ TimeTrackerPanel::TimeTrackerPanel(wxFrame* parent) :
                 return;
             }
 
-            std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
-            time_tracker->SetActualYearMonth(year_int, month_int);
-            time_tracker->LoadEntries(year_int, month_int);
+            m_tracker.SetActualYearMonth(year_int, month_int);
+            m_tracker.LoadEntries(year_int, month_int);
             RefreshPanel();
         });
 
-    std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
-    m_WorktimeMonth->SetSelection(time_tracker->GetMonth() - 1);
-    m_WorktimeYear->SetSelection(time_tracker->GetYear() - 2023);
+    m_WorktimeMonth->SetSelection(m_tracker.GetMonth() - 1);
+    m_WorktimeYear->SetSelection(m_tracker.GetYear() - 2023);
 
     bSizer1->Add(v_sizer_0);
 
@@ -469,8 +446,7 @@ void TimeTrackerPanel::OnCellValueChanged(wxGridEvent& ev)
 	if(row == tracker_grid->grid_to_entry_id.end())
 		return;
 
-    std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
-    TimeEntry* entry = time_tracker->FindEntry(row->second);
+    TimeEntry* entry = m_tracker.FindEntry(row->second);
 	if(!entry)
     {
         ScheduleRefresh();
@@ -497,17 +473,20 @@ void TimeTrackerPanel::OnCellValueChanged(wxGridEvent& ev)
 			static const boost::regex date_regex("^([0-9]{4})-([0-1][0-9])-([0-3][0-9])$");
             if(boost::regex_match(date_str, date_regex))
             {
+                /* The regex has already established that these three are
+                   numeric, so the try is here for gregorian::date - the regex
+                   admits 2024-02-31 and 2024-00-00, which it rejects. */
                 try
                 {
                     const size_t dash_pos1 = date_str.find('-');
                     const size_t dash_pos2 = date_str.find('-', dash_pos1 + 1);
-                    const int year = std::stoi(date_str.substr(0, dash_pos1));
-                    const int month = std::stoi(date_str.substr(dash_pos1 + 1, dash_pos2 - dash_pos1 - 1));
-                    const int day = std::stoi(date_str.substr(dash_pos2 + 1));
+                    const int year = utils::ParseOr<int>(date_str.substr(0, dash_pos1), 0);
+                    const int month = utils::ParseOr<int>(date_str.substr(dash_pos1 + 1, dash_pos2 - dash_pos1 - 1), 0);
+                    const int day = utils::ParseOr<int>(date_str.substr(dash_pos2 + 1), 0);
                     const boost::gregorian::date new_date(year, month, day);
                     const auto date_shift = new_date - entry->start.date();
                     valid_edit = true;
-                    saved = time_tracker->EditEntry(entry_id,
+                    saved = m_tracker.EditEntry(entry_id,
                         entry->start + date_shift, entry->end + date_shift, entry->desc);
                 }
                 catch(const std::exception&)
@@ -529,8 +508,8 @@ void TimeTrackerPanel::OnCellValueChanged(wxGridEvent& ev)
                 try
                 {
                     const size_t colon_pos = time_str.find(':');
-                    const int hours = std::stoi(time_str.substr(0, colon_pos));
-                    const int minutes = std::stoi(time_str.substr(colon_pos + 1));
+                    const int hours = utils::ParseOr<int>(time_str.substr(0, colon_pos), 0);
+                    const int minutes = utils::ParseOr<int>(time_str.substr(colon_pos + 1), 0);
                     const boost::posix_time::time_duration new_time(hours, minutes, 0);
                     auto new_start = entry->start;
                     auto new_end = entry->end;
@@ -539,7 +518,7 @@ void TimeTrackerPanel::OnCellValueChanged(wxGridEvent& ev)
                     else
                         new_end = boost::posix_time::ptime(entry->start.date(), new_time);
                     valid_edit = true;
-                    saved = time_tracker->EditEntry(entry_id, new_start, new_end, entry->desc);
+                    saved = m_tracker.EditEntry(entry_id, new_start, new_end, entry->desc);
                 }
                 catch(const std::exception&)
                 {
@@ -553,7 +532,7 @@ void TimeTrackerPanel::OnCellValueChanged(wxGridEvent& ev)
             valid_edit = true;
             const std::string comment = tracker_grid->m_grid->GetCellValue(
                 wxGridCellCoords(ev.GetRow(), TimeTrackerCol::TimeTracker_Comment)).ToStdString();
-            saved = time_tracker->EditEntry(entry_id, entry->start, entry->end, comment);
+            saved = m_tracker.EditEntry(entry_id, entry->start, entry->end, comment);
             break;
         }
 	    default:
@@ -561,9 +540,9 @@ void TimeTrackerPanel::OnCellValueChanged(wxGridEvent& ev)
 	}
 
     if(saved)
-        time_tracker->UpdateEntries();
+        m_tracker.UpdateEntries();
     else if(valid_edit)
-        wxMessageBox(time_tracker->LastError(), "Unable to save time entry", wxOK | wxICON_ERROR, this);
+        wxMessageBox(m_tracker.LastError(), "Unable to save time entry", wxOK | wxICON_ERROR, this);
 
     // Deleting rows while EVT_GRID_CELL_CHANGED is still unwinding can leave
     // wxGrid's edit control referencing a destroyed row. Rebuild afterwards.
@@ -572,50 +551,41 @@ void TimeTrackerPanel::OnCellValueChanged(wxGridEvent& ev)
 
 void TimeTrackerPanel::OnCellRightClick(wxGridEvent& ev)
 {
-    if (ev.GetEventObject() == dynamic_cast<wxObject*>(tracker_grid->m_grid))
+    if (ev.GetEventObject() == static_cast<wxObject*>(tracker_grid->m_grid))
     {
         FinishActiveEdit();
-        wxMenu menu;
-        menu.Append(ID_TimesheetAdd, "&Add")->SetBitmap(wxArtProvider::GetBitmap(wxART_ADD_BOOKMARK, wxART_OTHER, FromDIP(wxSize(14, 14))));
-        menu.Append(ID_TimesheetDelete, "&Delete")->SetBitmap(wxArtProvider::GetBitmap(wxART_DELETE, wxART_OTHER, FromDIP(wxSize(14, 14))));
-        int ret = GetPopupMenuSelectionFromUser(menu);
-        switch (ret)
-        {
-            case ID_TimesheetAdd:
-            {
-                std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
-
-                const auto now = boost::posix_time::second_clock::local_time();
-				if(!time_tracker->AddEntry(now, now, ""))
+        const gui::MenuEntry entries[]{
+            gui::MenuCommand{ "&Add", [this]
                 {
-                    wxMessageBox(time_tracker->LastError(), "Unable to add time entry", wxOK | wxICON_ERROR, this);
-                    break;
-                }
-                time_tracker->UpdateEntries();
-                RefreshPanel();
-                break;
-            }
-            case ID_TimesheetDelete:
-            {
-                std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
-                const auto row = tracker_grid->grid_to_entry_id.find(ev.GetRow());
-                if(row == tracker_grid->grid_to_entry_id.end())
-                    break;
-
-                if(lastTimeEntryId == row->second)
+                    const auto now = boost::posix_time::second_clock::local_time();
+                    if(!m_tracker.AddEntry(now, now, ""))
+                    {
+                        wxMessageBox(m_tracker.LastError(), "Unable to add time entry", wxOK | wxICON_ERROR, this);
+                        return;
+                    }
+                    m_tracker.UpdateEntries();
+                    RefreshPanel();
+                }, wxART_ADD_BOOKMARK },
+            gui::MenuCommand{ "&Delete", [this, row = ev.GetRow()]
                 {
-                    wxMessageDialog(this, "Given entry can't be removed\nStop the worktime counter, then try again!", "Error", wxOK).ShowModal();
-                    return;
-                }
+                    const auto entry = tracker_grid->grid_to_entry_id.find(row);
+                    if(entry == tracker_grid->grid_to_entry_id.end())
+                        return;
 
-				if(time_tracker->RemoveEntry(row->second))
-                    time_tracker->UpdateEntries();
-                else
-                    wxMessageBox(time_tracker->LastError(), "Unable to delete time entry", wxOK | wxICON_ERROR, this);
-				RefreshPanel();
-                break;
-            }
-        }
+                    if(lastTimeEntryId == entry->second)
+                    {
+                        wxMessageDialog(this, "Given entry can\'t be removed\nStop the worktime counter, then try again!", "Error", wxOK).ShowModal();
+                        return;
+                    }
+
+                    if(m_tracker.RemoveEntry(entry->second))
+                        m_tracker.UpdateEntries();
+                    else
+                        wxMessageBox(m_tracker.LastError(), "Unable to delete time entry", wxOK | wxICON_ERROR, this);
+                    RefreshPanel();
+                }, wxART_DELETE },
+        };
+        gui::RunContextMenu(this, entries);
     }
 }
 
@@ -627,32 +597,10 @@ void TimeTrackerPanel::OnKeyDown(wxKeyEvent& evt)
         {
             case 'C':
             {
-                wxWindow* focus = wxWindow::FindFocus();
-                if (focus == tracker_grid->m_grid)
+                if (wxWindow::FindFocus() == tracker_grid->m_grid &&
+                    gui::CopySelectedRowsToClipboard(*tracker_grid->m_grid, TimeTrackerCol::TimeTracker_Max))
                 {
-                    wxArrayInt rows = tracker_grid->m_grid->GetSelectedRows();
-                    if (rows.empty()) return;
-
-                    wxString str_to_copy;
-                    for (auto& row : rows)
-                    {
-                        for (uint8_t col = 0; col < TimeTrackerCol::TimeTracker_Max; col++)
-                        {
-                            str_to_copy += tracker_grid->m_grid->GetCellValue(row, col);
-                            str_to_copy += '\t';
-                        }
-                        str_to_copy += '\n';
-                    }
-                    if (str_to_copy.Last() == '\n')
-                        str_to_copy.RemoveLast();
-
-                    if (wxTheClipboard->Open())
-                    {
-                        wxTheClipboard->SetData(new wxTextDataObject(str_to_copy));
-                        wxTheClipboard->Close();
-                        MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-                        frame->PostNotification(SimpleNotification{SimpleNotificationKind::SelectedLogsCopied});
-                    }
+                    PostAppNotification(SimpleNotification{SimpleNotificationKind::SelectedLogsCopied});
                 }
                 break;
             }
@@ -716,11 +664,7 @@ void TimeTrackerPanel::HandleElapsedTime()
     auto duration = now - lastTimeEntryStart;
     const std::int64_t elapsed_seconds = std::max<std::int64_t>(0, duration.total_seconds());
 
-    // Format the duration into hh:mm:ss
-    const auto hours = elapsed_seconds / 3600;
-    const auto minutes = (elapsed_seconds / 60) % 60;
-    const auto seconds = elapsed_seconds % 60;
-    wxString formattedTime = wxString::Format("%02lld:%02lld:%02lld", hours, minutes, seconds);
+    wxString formattedTime = utils::SecondsToHms(static_cast<int>(elapsed_seconds));
 
     // Update the static text
     if (m_TimeCounter)
@@ -734,7 +678,6 @@ void TimeTrackerPanel::HandleElapsedTime()
         return;
 
     lastPersistedMinute = elapsed_seconds / 60;
-    std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
     if(!lastTimeEntryId)
     {
         is_working = false;
@@ -742,15 +685,13 @@ void TimeTrackerPanel::HandleElapsedTime()
         return;
     }
 
-    const TimeEntry* entry = time_tracker->FindEntry(*lastTimeEntryId);
+    const TimeEntry* entry = m_tracker.FindEntry(*lastTimeEntryId);
     if(!entry)
     {
         is_working = false;
         lastTimeEntryId.reset();
         SetWorktimeUi(false);
-        MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-        if(frame)
-            frame->PostNotification(WorktimeToggledNotification{false, std::chrono::seconds{elapsed_seconds}});
+        PostAppNotification(WorktimeToggledNotification{false, std::chrono::seconds{elapsed_seconds}});
         return;
     }
 
@@ -759,7 +700,7 @@ void TimeTrackerPanel::HandleElapsedTime()
     bool saved = false;
     if(entry_start.date() == now.date())
     {
-        saved = time_tracker->EditEntry(*lastTimeEntryId, entry_start, now, comment);
+        saved = m_tracker.EditEntry(*lastTimeEntryId, entry_start, now, comment);
     }
     else
     {
@@ -767,10 +708,11 @@ void TimeTrackerPanel::HandleElapsedTime()
         // entry. Keeping only IDs prevents either grid refresh from invalidating
         // the running-session state.
         const boost::posix_time::ptime midnight(now.date());
-        saved = time_tracker->EditEntry(*lastTimeEntryId, entry_start, midnight, comment);
+        saved = m_tracker.EditEntry(*lastTimeEntryId, entry_start, midnight, comment);
         if(saved)
         {
-            TimeEntry* next_entry = time_tracker->AddEntry(midnight, now, comment + " #2");
+            TimeEntry* next_entry = m_tracker.AddEntry(midnight, now,
+                time_tracker_logic::ContinuationName(comment));
             if(next_entry)
             {
                 lastTimeEntryId = next_entry->sql_id;
@@ -782,9 +724,7 @@ void TimeTrackerPanel::HandleElapsedTime()
                 is_working = false;
                 lastTimeEntryId.reset();
                 SetWorktimeUi(false);
-                MyFrame* frame = ((MyFrame*)(wxGetApp().GetTopWindow()));
-                if(frame)
-                    frame->PostNotification(WorktimeToggledNotification{false, std::chrono::seconds{elapsed_seconds}});
+                PostAppNotification(WorktimeToggledNotification{false, std::chrono::seconds{elapsed_seconds}});
                 return;
             }
         }
@@ -792,7 +732,7 @@ void TimeTrackerPanel::HandleElapsedTime()
 
     if(saved)
     {
-        time_tracker->UpdateEntries();
+        m_tracker.UpdateEntries();
         RefreshPanel();
     }
 }
@@ -802,13 +742,12 @@ void TimeTrackerPanel::HandleInit()
 	if (is_inited)
 		return;
 
-    std::unique_ptr<TimeTracker>& time_tracker = wxGetApp().time_tracker;
 
-    boost::gregorian::date date(time_tracker->GetYear(), time_tracker->GetMonth(), 1);
+    boost::gregorian::date date(m_tracker.GetYear(), m_tracker.GetMonth(), 1);
     boost::posix_time::ptime posixt(date);  // time defaults to 00:00:00
 
-	int offset = time_tracker->CalculateMapDateOffset(posixt);
-    const auto& entries = time_tracker->GetEntries();
+	int offset = m_tracker.CalculateMapDateOffset(posixt);
+    const auto& entries = m_tracker.GetEntries();
 
 	auto it = entries.find(offset);
 
@@ -827,28 +766,27 @@ void TimeTrackerPanel::HandleInit()
 		}
 	}
 
-	float hours = it->second->total_worktime / 3600.0f;
-    wxString total_work = wxString::Format("%.2f / %.2f", hours, hours * time_tracker->GetHourlyRate());
-	is_inited = true;  
-    tracker_grid->m_grid->SetColLabelValue(TimeTrackerCol::TimeTracker_TotalWork, total_work);
+	is_inited = true;
+    tracker_grid->m_grid->SetColLabelValue(TimeTrackerCol::TimeTracker_TotalWork,
+        time_tracker_logic::FormatTotalWorkLabel(it->second->total_worktime, m_tracker.GetHourlyRate()));
 
     AdjustColumns();
 }
 
 void TimeTrackerPanel::UpdateWorkingDays()
 {
-    WorkingDays::Get()->Update();
-    m_WorkingDaysSk->SetLabelText(wxString::Format("SK: %d [%d] - (%d)", WorkingDays::Get()->m_WorkingDaysSlovakia, WorkingDays::Get()->m_WorkingDaysSlovakia * 8,
-        WorkingDays::Get()->m_HolidaysSlovakia));
-    m_WorkingDaysSk->SetToolTip(wxString::Format("Holidays:\n%s", WorkingDays::Get()->m_HolidaysStrSlovakia));
+    m_WorkingDays.Update();
+    m_WorkingDaysSk->SetLabelText(wxString::Format("SK: %d [%d] - (%d)", m_WorkingDays.m_WorkingDaysSlovakia, m_WorkingDays.m_WorkingDaysSlovakia * 8,
+        m_WorkingDays.m_HolidaysSlovakia));
+    m_WorkingDaysSk->SetToolTip(wxString::Format("Holidays:\n%s", m_WorkingDays.m_HolidaysStrSlovakia));
 
-    m_WorkingDaysHu->SetLabelText(wxString::Format("HU: %d [%d] - (%d)", WorkingDays::Get()->m_WorkingDaysHungary, WorkingDays::Get()->m_WorkingDaysHungary * 8,
-        WorkingDays::Get()->m_HolidaysHungary));
-    m_WorkingDaysHu->SetToolTip(wxString::Format("Holidays:\n%s", WorkingDays::Get()->m_HolidaysStrHungary));
+    m_WorkingDaysHu->SetLabelText(wxString::Format("HU: %d [%d] - (%d)", m_WorkingDays.m_WorkingDaysHungary, m_WorkingDays.m_WorkingDaysHungary * 8,
+        m_WorkingDays.m_HolidaysHungary));
+    m_WorkingDaysHu->SetToolTip(wxString::Format("Holidays:\n%s", m_WorkingDays.m_HolidaysStrHungary));
 
-    m_WorkingDaysAt->SetLabelText(wxString::Format("AT: %d [%d] - (%d)", WorkingDays::Get()->m_WorkingDaysAustria, WorkingDays::Get()->m_WorkingDaysAustria * 8,
-        WorkingDays::Get()->m_HolidaysAustria));
-    m_WorkingDaysAt->SetToolTip(wxString::Format("Holidays:\n%s", WorkingDays::Get()->m_HolidaysStrAustria));
+    m_WorkingDaysAt->SetLabelText(wxString::Format("AT: %d [%d] - (%d)", m_WorkingDays.m_WorkingDaysAustria, m_WorkingDays.m_WorkingDaysAustria * 8,
+        m_WorkingDays.m_HolidaysAustria));
+    m_WorkingDaysAt->SetToolTip(wxString::Format("Holidays:\n%s", m_WorkingDays.m_HolidaysStrAustria));
 
     UpdateCurrentWeekNumber();
 }
@@ -879,78 +817,11 @@ int GetNumberVisibleRows(wxGrid* grid) {
    return clientHeight / rowHeight;  
 }  
 
-void TimeTrackerPanel::AutoSizeGrid(bool initialFit)
-{
-    tracker_grid->m_grid->Freeze();
-
-    if (initialFit) {
-        // First-time setup - fit columns to content
-        tracker_grid->m_grid->AutoSizeColumns(false);
-        StoreColumnRatios();
-
-        // Calculate total width needed
-        int totalWidth = 0;
-        for (int col = 0; col < tracker_grid->m_grid->GetNumberCols(); ++col) {
-            totalWidth += tracker_grid->m_grid->GetColSize(col);
-        }
-
-        // Add margins for labels and scrollbars
-        totalWidth += tracker_grid->m_grid->GetRowLabelSize() + 5;
-
-        // Set initial size
-        wxSize newSize(
-            wxMin(totalWidth, GetClientSize().GetWidth() - 5),
-            -1 // Keep current height
-        );
-        tracker_grid->m_grid->SetSize(newSize);
-    }
-
-    ApplyColumnRatios();
-    tracker_grid->m_grid->AutoSizeRows();
-    tracker_grid->m_grid->Thaw();
-    Layout();
-}
-
-void TimeTrackerPanel::StoreColumnRatios()
-{
-    m_columnRatios.clear();
-    int totalWidth = 0;
-
-    // Calculate total width first
-    for (int col = 0; col < tracker_grid->m_grid->GetNumberCols(); ++col) {
-        totalWidth += tracker_grid->m_grid->GetColSize(col);
-    }
-
-    // Store ratios
-    for (int col = 0; col < tracker_grid->m_grid->GetNumberCols(); ++col) {
-        if (totalWidth > 0) {
-            m_columnRatios.push_back(static_cast<double>(tracker_grid->m_grid->GetColSize(col)) / totalWidth);
-        }
-        else {
-            m_columnRatios.push_back(1.0 / tracker_grid->m_grid->GetNumberCols());
-        }
-    }
-}
-
-void TimeTrackerPanel::ApplyColumnRatios()
-{
-    if (m_columnRatios.empty() || m_columnRatios.size() != static_cast<size_t>(tracker_grid->m_grid->GetNumberCols())) {
-        return;
-    }
-
-    int availableWidth = tracker_grid->m_grid->GetClientSize().GetWidth() - tracker_grid->m_grid->GetRowLabelSize();
-    if (availableWidth <= 0) return;
-
-    tracker_grid->m_grid->Freeze();
-
-    // Apply ratios
-    for (int col = 0; col < tracker_grid->m_grid->GetNumberCols(); ++col) {
-        int newWidth = static_cast<int>(availableWidth * m_columnRatios[col]);
-        tracker_grid->m_grid->SetColSize(col, wxMax(newWidth, 70)); // Minimum 30px width
-    }
-
-    tracker_grid->m_grid->Thaw();
-}
+/* AutoSizeGrid, StoreColumnRatios and ApplyColumnRatios were here - a
+   second column-width algorithm competing with AdjustColumns below. Nothing
+   called AutoSizeGrid, so the ratio vector was never populated, so the
+   ApplyColumnRatios call OnSize made was guarded into a no-op: one live
+   algorithm and ninety lines of dead one that looked alive. */
 
 void TimeTrackerPanel::AdjustColumns()
 {
@@ -1007,11 +878,6 @@ void TimeTrackerPanel::AdjustColumns()
 void TimeTrackerPanel::OnSize(wxSizeEvent& event)
 {
     event.Skip(); // Important for proper layout handling
-
-    // Only resize if we have column ratios stored
-    if (!m_columnRatios.empty()) {
-        ApplyColumnRatios();
-    }
 
     SetSize(event.GetSize());
     tracker_grid->m_grid->SetMinSize(event.GetSize() - wxSize(50, 120));

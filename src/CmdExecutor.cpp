@@ -1,4 +1,10 @@
-#include "pch.hpp"
+#include "pch_core.hpp"
+#include "CmdExecutor.hpp"
+#include "CommandParams.hpp"
+#include "DefaultCommandsFile.hpp"
+#include "utils/XmlDocument.hpp"
+#include "Logger.hpp"
+#include "Utils.hpp"
 
 void Command::Execute(ICommandRunner& command_runner, const ICommandTextResolver& text_resolver)
 {
@@ -41,101 +47,73 @@ void CmdExecutor::ExecuteByName(const std::string& page_name, const std::string&
     }
 }
 
+/* The three walks below share command_params::Next. Each keeps its own idea of
+   where to resume, because that is what differs between them: substituting a
+   value moves past what it wrote, collecting a default moves past the closing
+   marker, and writing a default back stays inside the placeholder it edited. */
+
 std::string Command::HandleParameters()
 {
-    constexpr size_t param_len = std::char_traits<char>::length("[({PARAM:");
+    std::string new_cmd{ m_cmd };
     size_t param_count = 0;
     size_t pos = 1;
 
-    std::string new_cmd{ m_cmd };
     while(pos < m_cmd.length() - 1)
     {
-        size_t first_end = new_cmd.find("})]", pos + 3);
-        size_t first_pos = new_cmd.substr(0, first_end).find("[({PARAM:", pos - 1);
-
-        if(first_pos != std::string::npos && first_end != std::string::npos)
-        {
-            std::string ret = utils::extract_string(new_cmd, first_pos, first_end, param_len);
-            DBG("ret: %s", ret.c_str());
-
-            size_t to_erase = (first_end + 3) - first_pos;
-            size_t replace_len = m_params.size() <= param_count ? ret.length() : m_params[param_count].length();
-
-            new_cmd.erase(first_pos, to_erase);
-            new_cmd.insert(first_pos, m_params.size() <= param_count ? ret : m_params[param_count]);
-
-            pos = first_pos + replace_len;
-            ++param_count;
-        }
-        else
-        {
+        const auto found = command_params::Next(new_cmd, pos);
+        if(!found)
             break;
-        }
+
+        const std::string fallback = new_cmd.substr(found->value_begin, found->value_length());
+        const std::string& value = m_params.size() <= param_count ? fallback : m_params[param_count];
+
+        new_cmd.erase(found->begin, found->end() - found->begin);
+        new_cmd.insert(found->begin, value);
+
+        pos = found->begin + value.length();
+        ++param_count;
     }
     return new_cmd;
 }
 
 void Command::LoadParametersFromString()
 {
-    constexpr size_t param_len = std::char_traits<char>::length("[({PARAM:");
-    size_t param_count = 0;
     size_t pos = 1;
 
-    std::string new_cmd{ m_cmd };
     while(pos < m_cmd.length() - 1)
     {
-        size_t first_end = new_cmd.find("})]", pos + 3);
-        size_t first_pos = new_cmd.substr(0, first_end).find("[({PARAM:", pos - 1);
-
-        if(first_pos != std::string::npos && first_end != std::string::npos)
-        {
-            std::string ret = utils::extract_string(new_cmd, first_pos, first_end, param_len);
-            m_params.push_back(ret);
-
-            pos = first_end;
-            ++param_count;
-        }
-        else
-        {
+        const auto found = command_params::Next(m_cmd, pos);
+        if(!found)
             break;
-        }
+
+        m_params.push_back(m_cmd.substr(found->value_begin, found->value_length()));
+        pos = found->value_end;
     }
 }
 
 void Command::SaveParametersToString()
 {
-    constexpr size_t param_len = std::char_traits<char>::length("[({PARAM:");
+    std::string new_cmd{ m_cmd };
     size_t param_count = 0;
     size_t pos = 1;
 
-    std::string new_cmd{ m_cmd };
     while(pos < m_cmd.length() - 1)
     {
-        size_t first_end = new_cmd.find("})]", pos + 3);
-        size_t first_pos = new_cmd.substr(0, first_end).find("[({PARAM:", pos - 1);
-
-        if(first_pos != std::string::npos && first_end != std::string::npos)
-        {
-            std::string ret = new_cmd.substr(first_pos + param_len, (first_end - (first_pos + param_len)));
-            DBG("ret: %s", ret.c_str());
-
-            size_t to_erase = ret.length();
-
-            if(m_params.size() <= param_count)
-            {
-                break;
-            }
-
-            new_cmd.erase(first_pos + param_len, to_erase);
-            new_cmd.insert(first_pos + param_len, m_params[param_count]);
-
-            pos = first_pos + param_len + to_erase;
-            ++param_count;
-        }
-        else
-        {
+        const auto found = command_params::Next(new_cmd, pos);
+        if(!found)
             break;
-        }
+
+        /* A command whose text has more placeholders than the entry has values
+           keeps the rest of its defaults. */
+        if(m_params.size() <= param_count)
+            break;
+
+        const size_t old_length = found->value_length();
+        new_cmd.erase(found->value_begin, old_length);
+        new_cmd.insert(found->value_begin, m_params[param_count]);
+
+        pos = found->value_begin + old_length;
+        ++param_count;
     }
     m_cmd = new_cmd;
 }
@@ -145,25 +123,87 @@ XmlCommandLoader::XmlCommandLoader(ICmdHelper* mediator)
     m_Mediator = mediator;
 }
 
+namespace
+{
+/* Every optional attribute a <Cmd> can carry, in both spellings the file
+   format grew: as a child element (<Name>x</Name>) and as an attribute
+   (name="x"). The loader declared eleven boost::optional locals and then read
+   all eleven twice, once per spelling, so adding a twelfth meant three edits
+   in two shapes and forgetting one of them was silent. */
+enum class CmdField : std::size_t
+{
+    Name, Icon, Hidden, Color, BackgroundColor, Bold, FontFace, Scale,
+    UseSizer, AddToPrevSizer, MinSize, Count
+};
+
+constexpr std::size_t kCmdFieldCount = static_cast<std::size_t>(CmdField::Count);
+
+struct CmdFieldSpelling
+{
+    std::string_view element;
+    std::string_view attribute;
+};
+
+constexpr std::array<CmdFieldSpelling, kCmdFieldCount> kCmdFields{{
+    { "Name",            "<xmlattr>.name" },
+    { "Icon",            "<xmlattr>.icon" },
+    { "Hidden",          "<xmlattr>.hidden" },
+    { "Color",           "<xmlattr>.color" },
+    { "BackgroundColor", "<xmlattr>.bg_color" },
+    { "Bold",            "<xmlattr>.bold" },
+    { "FontFace",        "<xmlattr>.font_face" },
+    { "Scale",           "<xmlattr>.scale" },
+    { "UseSizer",        "<xmlattr>.use_sizer" },
+    { "AddToPrevSizer",  "<xmlattr>.add_to_prev_sizer" },
+    { "MinSize",         "<xmlattr>.min_size" },
+}};
+
+using CmdFields = std::array<boost::optional<std::string>, kCmdFieldCount>;
+
+[[nodiscard]] const boost::optional<std::string>& Field(const CmdFields& fields, CmdField which)
+{
+    return fields[static_cast<std::size_t>(which)];
+}
+
+// !\brief The field's value, or `fallback` when the <Cmd> did not carry it.
+template <typename T, typename F>
+[[nodiscard]] T FieldOr(const CmdFields& fields, CmdField which, T fallback, F&& convert)
+{
+    const auto& value = Field(fields, which);
+    return value.has_value() ? convert(*value) : fallback;
+}
+}
+
 bool XmlCommandLoader::Load(const std::filesystem::path& path, CommandStorage& storage, CommandPageNames& names, CommandPageIcons& icons)
 {
-    if(!std::filesystem::exists(COMMAND_FILE_PATH))
+    /* Checked against the file being loaded, not against the default one: a
+       reload from anywhere else used to create Cmds.xml as a side effect and
+       then still fail on the file it was actually asked for. */
+    if(!std::filesystem::exists(path))
     {
-        CmdExecutor::WriteDefaultCommandsFile();
+        if(path != COMMAND_FILE_PATH)
+        {
+            LOG(LogLevel::Error, "Command file '{}' does not exist", path.generic_string());
+            return false;
+        }
+        if(!default_commands::Write(path))
+            return false;
         LOG(LogLevel::Normal, "Default {} is missing, creating one", COMMAND_FILE_PATH);
     }
 
-    bool ret = true;
-    boost::property_tree::ptree pt;
+    auto document = utils::xml::Load(path);
+    if(!document)
+        return false;
+
+    boost::property_tree::ptree& pt = *document;
     try
     {
-        read_xml(path.generic_string(), pt);
 
         storage.clear();
-        m_Pages = pt.get_child("Commands").get_child("Pages").get_value<uint8_t>();
+        const uint8_t declared_pages = pt.get_child("Commands").get_child("Pages").get_value<uint8_t>();
         if(m_Mediator)
-            m_Mediator->OnPreReload(m_Pages);
-        for(uint8_t p = 1; p <= m_Pages; p++)
+            m_Mediator->OnPreReload(declared_pages);
+        for(uint8_t p = 1; p <= declared_pages; p++)
         {
             auto pages_child = pt.get_child("Commands").get_child_optional(std::format("Page_{}", p));
             if(!pages_child.has_value())
@@ -174,18 +214,21 @@ bool XmlCommandLoader::Load(const std::filesystem::path& path, CommandStorage& s
 
             std::string page_name = pages_child->get<std::string>("<xmlattr>.name");
             names.push_back(std::move(page_name));
-            std::string page_icon = pages_child->get<std::string>("<xmlattr>.icon");
+            /* Optional, not required: an absent icon means the same as an empty
+               one. Demanding it made the default file this class writes
+               unreadable by the very next load. */
+            std::string page_icon = pages_child->get<std::string>("<xmlattr>.icon", "");
 
             if(page_icon.empty())
                 page_icon = "wxART_HARDDISK"; // Do not let page icon empty, set it to default
             icons.push_back(std::move(page_icon));
 
-            m_Cols = pages_child->get_child("Columns").get_value<uint8_t>();
+            const uint8_t declared_cols = pages_child->get_child("Columns").get_value<uint8_t>();
             if(m_Mediator)
-                m_Mediator->OnPreReloadColumns(p, m_Cols);
+                m_Mediator->OnPreReloadColumns(p, declared_cols);
 
             std::vector<std::vector<CommandTypes>> temp_cmds_per_page;
-            for(uint8_t i = 1; i <= m_Cols; i++)
+            for(uint8_t i = 1; i <= declared_cols; i++)
             {
                 auto col_child = pages_child->get_child_optional(std::format("Col_{}", i));
                 if(!col_child.has_value())
@@ -200,79 +243,61 @@ bool XmlCommandLoader::Load(const std::filesystem::path& path, CommandStorage& s
                     if(v.first == "Cmd")
                     {
                         std::string cmd;
-                        boost::optional<std::string> name;
-                        boost::optional<std::string> icon;
-                        boost::optional<std::string> is_hidden;
-                        boost::optional<std::string> color;
-                        boost::optional<std::string> bg_color;
-                        boost::optional<std::string> is_bold;
-                        boost::optional<std::string> font_face;
-                        boost::optional<std::string> scale;
-                        boost::optional<std::string> use_sizer;
-                        boost::optional<std::string> add_to_prev_sizer;
-                        boost::optional<std::string> min_size;
+                        CmdFields fields;
 
-                        auto is_name_present = v.second.get_child_optional("Execute");
-                        if(is_name_present.has_value())
+                        /* A <Cmd> carrying an <Execute> child spells its
+                           attributes as child elements; one without spells them
+                           as XML attributes. Same eleven fields either way. */
+                        if(v.second.get_child_optional("Execute").has_value())
                         {
                             cmd = v.second.get_child("Execute").get_value<std::string>();
-
-                            utils::xml::ReadChildIfexists<std::string>(v, "Name", name);
-                            utils::xml::ReadChildIfexists<std::string>(v, "Icon", icon);
-                            utils::xml::ReadChildIfexists<std::string>(v, "Hidden", is_hidden);
-                            utils::xml::ReadChildIfexists<std::string>(v, "Color", color);
-                            utils::xml::ReadChildIfexists<std::string>(v, "BackgroundColor", bg_color);
-                            utils::xml::ReadChildIfexists<std::string>(v, "Bold", is_bold);
-                            utils::xml::ReadChildIfexists<std::string>(v, "FontFace", font_face);
-                            utils::xml::ReadChildIfexists<std::string>(v, "Scale", scale);
-                            utils::xml::ReadChildIfexists<std::string>(v, "UseSizer", use_sizer);
-                            utils::xml::ReadChildIfexists<std::string>(v, "AddToPrevSizer", add_to_prev_sizer);
-                            utils::xml::ReadChildIfexists<std::string>(v, "MinSize", min_size);
+                            for(std::size_t i = 0; i < kCmdFieldCount; ++i)
+                                utils::xml::ReadChildIfexists<std::string>(v,
+                                    std::string(kCmdFields[i].element), fields[i]);
                         }
                         else
                         {
                             cmd = v.second.get_value<std::string>();
-
-                            name = v.second.get_optional<std::string>("<xmlattr>.name");
-                            icon = v.second.get_optional<std::string>("<xmlattr>.icon");
-                            is_hidden = v.second.get_optional<std::string>("<xmlattr>.hidden");
-                            color = v.second.get_optional<std::string>("<xmlattr>.color");
-                            bg_color = v.second.get_optional<std::string>("<xmlattr>.bg_color");
-                            is_bold = v.second.get_optional<std::string>("<xmlattr>.bold");
-                            font_face = v.second.get_optional<std::string>("<xmlattr>.font_face");
-                            scale = v.second.get_optional<std::string>("<xmlattr>.scale");
-                            use_sizer = v.second.get_optional<std::string>("<xmlattr>.use_sizer");
-                            add_to_prev_sizer = v.second.get_optional<std::string>("<xmlattr>.add_to_prev_sizer");
-                            min_size = v.second.get_optional<std::string>("<xmlattr>.min_size");
+                            for(std::size_t i = 0; i < kCmdFieldCount; ++i)
+                                fields[i] = v.second.get_optional<std::string>(
+                                    std::string(kCmdFields[i].attribute));
                         }
 
                         if(cmd.empty())
                         {
-                            if(!name)
-                                name = "Unknown";
-                            LOG(LogLevel::Warning, "Empty cmd for command: {}", *name);
+                            const auto& name = Field(fields, CmdField::Name);
+                            LOG(LogLevel::Warning, "Empty cmd for command: {}",
+                                name.has_value() ? *name : "Unknown");
                         }
 
                         LogicalSize minimum_size;
-                        if(min_size.has_value())
+                        if(const auto& min_size = Field(fields, CmdField::MinSize))
                         {
                             if(sscanf(min_size->c_str(), "%d,%d", &minimum_size.width, &minimum_size.height) != 2)
                                 LOG(LogLevel::Error, "Invalid format for MinSize");
                         }
 
+                        const auto text = [](const std::string& s) { return s; };
+                        const auto flag = [](const std::string& s) { return utils::stob(s); };
+                        const auto colour = [](const std::string& s) { return utils::ColorStringToInt(s); };
+
                         std::shared_ptr<Command> command = std::make_shared<Command>(
-                            name.has_value() ? *name : "",
+                            FieldOr<std::string>(fields, CmdField::Name, "", text),
                             cmd,
-                            icon.has_value() ? *icon : "",
-                            is_hidden.has_value() ? utils::stob(*is_hidden) : false,
-                            color.has_value() ? utils::ColorStringToInt(*color) : 0,
-                            bg_color.has_value() ? utils::ColorStringToInt(*bg_color) : 0xFFFFFF,
-                            is_bold.has_value() ? utils::stob(*is_bold) : false,
-                            font_face.has_value() ? *font_face : "",
-                            scale.has_value() ? std::stof(*scale) : 1.0f,
+                            FieldOr<std::string>(fields, CmdField::Icon, "", text),
+                            FieldOr<bool>(fields, CmdField::Hidden, false, flag),
+                            FieldOr<uint32_t>(fields, CmdField::Color, 0, colour),
+                            FieldOr<uint32_t>(fields, CmdField::BackgroundColor, 0xFFFFFF, colour),
+                            FieldOr<bool>(fields, CmdField::Bold, false, flag),
+                            FieldOr<std::string>(fields, CmdField::FontFace, "", text),
+                            /* std::stof threw out of the XML loader on a
+                               hand-edited Scale; an unreadable one now falls
+                               back to the same 1.0 as an absent one. */
+                            FieldOr<float>(fields, CmdField::Scale, 1.0f,
+                                [](const std::string& s) { return utils::ParseOr<float>(s, 1.0f); }),
                             minimum_size,
-                            use_sizer.has_value() ? utils::stob(*use_sizer) : false,
-                            add_to_prev_sizer.has_value() ? utils::stob(*add_to_prev_sizer) : false);
+                            FieldOr<bool>(fields, CmdField::UseSizer, false, flag),
+                            FieldOr<bool>(fields, CmdField::AddToPrevSizer, false, flag));
 
                         temp_cmds.push_back(command);
 
@@ -294,25 +319,22 @@ bool XmlCommandLoader::Load(const std::filesystem::path& path, CommandStorage& s
             storage.push_back(std::move(temp_cmds_per_page));
 
             if(m_Mediator)
-                m_Mediator->OnPostReload(p, m_Cols, names, icons);
+                m_Mediator->OnPostReload(p, declared_cols, names, icons);
         }
-    }
-    catch(const boost::property_tree::xml_parser_error& e)
-    {
-        LOG(LogLevel::Error, "Exception thrown: {}, {}", e.filename(), e.what());
-        ret = false;
     }
     catch(const std::exception& e)
     {
-        LOG(LogLevel::Error, "Exception thrown: {}", e.what());
-        ret = false;
+        /* utils::xml::Load already reported anything that was not well-formed,
+           so what reaches here is a document that parsed but does not contain
+           what this loader expects - a missing element or an unreadable value. */
+        LOG(LogLevel::Error, "Malformed {}: {}", path.generic_string(), e.what());
+        return false;
     }
-    return ret;
+    return true;
 }
 
 bool XmlCommandLoader::Save(const std::filesystem::path& path, CommandStorage& storage, CommandPageNames& names, CommandPageIcons& icons) const
 {
-    bool ret = true;
     boost::property_tree::ptree pt;
     auto& root_node = pt.add_child("Commands", boost::property_tree::ptree{});
     root_node.put("Pages", std::to_string(storage.size()));
@@ -343,6 +365,9 @@ bool XmlCommandLoader::Save(const std::filesystem::path& path, CommandStorage& s
                                 cmd_node.add("Icon", c->GetIcon());
                             if(c->IsConsoleHidden())
                                 cmd_node.add("Hidden", true);
+                            /* Written alongside the background: leaving it out
+                               made every command black again on the next load. */
+                            cmd_node.add("Color", utils::ColorIntToString(c->GetColor()));
                             cmd_node.add("BackgroundColor", utils::ColorIntToString(c->GetBackgroundColor()));
                             cmd_node.add("Bold", c->IsBold());
                             cmd_node.add("FontFace", c->GetFontFace());
@@ -368,16 +393,7 @@ bool XmlCommandLoader::Save(const std::filesystem::path& path, CommandStorage& s
         page_cnt++;
     }
 
-    try
-    {
-        boost::property_tree::write_xml(path.generic_string(), pt, std::locale(),
-            boost::property_tree::xml_writer_make_settings<boost::property_tree::ptree::key_type>('\t', 1));
-    }
-    catch(...)
-    {
-        ret = false;
-    }
-    return ret;
+    return utils::xml::Save(path, pt);
 }
 
 void CmdExecutor::Init()
@@ -390,24 +406,29 @@ void CmdExecutor::SetMediator(ICmdHelper* mediator)
     m_CmdMediator = mediator;
 }
 
-void CmdExecutor::AddCommand(uint8_t page, uint8_t col, Command cmd)
+void CmdExecutor::AddCommand(uint8_t page_number, uint8_t col_number, Command cmd)
 {
-    if(AddItem(page, col, std::make_shared<Command>(std::move(cmd))))
+    if(AddItem(page_number, col_number, std::make_shared<Command>(std::move(cmd))))
     {
         if(m_CmdMediator)
-            m_CmdMediator->OnCommandLoaded(page, col, m_Commands[page - 1][col - 1].back());
+            m_CmdMediator->OnCommandLoaded(page_number, col_number,
+                m_Commands[page_number - 1][col_number - 1].back());
     }
 }
 
-void CmdExecutor::RotateCommand(uint8_t page, uint8_t col, Command& cmd, uint8_t direction)
+void CmdExecutor::RotateCommand([[maybe_unused]] uint8_t page_number, [[maybe_unused]] uint8_t col_number,
+    [[maybe_unused]] Command& cmd, [[maybe_unused]] uint8_t direction)
 {
-//    if(m_Commands[page - 1][col - 1].back() == cmd)
+    /* Not implemented: reordering a command inside its column has no storage
+       representation yet. The operation is declared by ICmdExecutor, so it stays
+       as an explicit no-op rather than being silently absent. */
 }
 
-void CmdExecutor::AddSeparator(uint8_t page, uint8_t col, Separator sep)
+void CmdExecutor::AddSeparator(uint8_t page_number, uint8_t col_number, Separator sep)
 {
-    if(AddItem(page, col, sep) && m_CmdMediator)
-        m_CmdMediator->OnCommandLoaded(page, col, m_Commands[page - 1][col - 1].back());
+    if(AddItem(page_number, col_number, sep) && m_CmdMediator)
+        m_CmdMediator->OnCommandLoaded(page_number, col_number,
+            m_Commands[page_number - 1][col_number - 1].back());
 }
 
 void CmdExecutor::Execute(Command& command)
@@ -415,29 +436,63 @@ void CmdExecutor::Execute(Command& command)
     command.Execute(m_CommandRunner, m_CommandTextResolver);
 }
 
-bool CmdExecutor::AddItem(uint8_t page, uint8_t col, CommandTypes item)
+bool CmdExecutor::AddItem(uint8_t page_number, uint8_t col_number, CommandTypes item)
 {
-    if(page > 0 && page <= m_Commands.size() && col > 0 && col <= m_Commands[page - 1].size())
+    if(page_number > 0 && page_number <= m_Commands.size() &&
+        col_number > 0 && col_number <= m_Commands[page_number - 1].size())
     {
-        m_Commands[page - 1][col - 1].push_back(std::move(item));
+        m_Commands[page_number - 1][col_number - 1].push_back(std::move(item));
         return true;
     }
     return false;
 }
 
-void CmdExecutor::AddCol(uint8_t page, uint8_t dest_index)
+namespace
 {
+/* The five methods below indexed their vectors without checking, so a page
+   index past the end was undefined behaviour rather than a refusal. AddItem
+   above has always checked; these now match it. */
+[[nodiscard]] bool IsPage(const CommandStorage& storage, uint8_t page_index)
+{
+    if(page_index < storage.size())
+        return true;
+    LOG(LogLevel::Warning, "No page at index {}; there are {}", page_index, storage.size());
+    return false;
+}
+
+[[nodiscard]] bool IsInsertPosition(std::size_t size, uint8_t dest_index)
+{
+    /* One past the end is a legal place to insert. */
+    if(dest_index <= size)
+        return true;
+    LOG(LogLevel::Warning, "Cannot insert at {}; the range holds {}", dest_index, size);
+    return false;
+}
+}
+
+void CmdExecutor::AddCol(uint8_t page_index, uint8_t dest_index)
+{
+    if(!IsPage(m_Commands, page_index) ||
+        !IsInsertPosition(m_Commands[page_index].size(), dest_index))
+        return;
+
     std::vector<CommandTypes> temp_cmds_per_page;
-    m_Commands[page].insert(m_Commands[page].begin() + dest_index, temp_cmds_per_page);
+    m_Commands[page_index].insert(m_Commands[page_index].begin() + dest_index, temp_cmds_per_page);
 }
 
-void CmdExecutor::DeleteCol(uint8_t page, uint8_t dest_index)
+void CmdExecutor::DeleteCol(uint8_t page_index, uint8_t dest_index)
 {
-    m_Commands[page].erase(m_Commands[page].begin() + dest_index);
+    if(!IsPage(m_Commands, page_index) || dest_index >= m_Commands[page_index].size())
+        return;
+
+    m_Commands[page_index].erase(m_Commands[page_index].begin() + dest_index);
 }
 
-void CmdExecutor::AddPage(uint8_t page, uint8_t dest_index)
+void CmdExecutor::AddPage([[maybe_unused]] uint8_t page_index, uint8_t dest_index)  /* a new page starts empty, so the source page is not read */
 {
+    if(!IsInsertPosition(m_Commands.size(), dest_index))
+        return;
+
     std::vector<std::vector<CommandTypes>> temp_cmds_per_page;
 
     std::vector<CommandTypes> cmd_types;
@@ -449,11 +504,14 @@ void CmdExecutor::AddPage(uint8_t page, uint8_t dest_index)
     m_CommandPageIcons.insert(m_CommandPageIcons.begin() + dest_index, "wxART_HARDDISK");
 }
 
-void CmdExecutor::CopyPage(uint8_t page, uint8_t dest_index)
+void CmdExecutor::CopyPage(uint8_t page_index, uint8_t dest_index)
 {
+    if(!IsPage(m_Commands, page_index) || !IsInsertPosition(m_Commands.size(), dest_index))
+        return;
+
     std::vector<std::vector<CommandTypes>> temp_cmds_per_page;
 
-    for(auto& cmd : m_Commands[page])
+    for(auto& cmd : m_Commands[page_index])
     {
         std::vector<CommandTypes> cmd_types;
         for(auto& col_cmd : cmd)
@@ -476,15 +534,18 @@ void CmdExecutor::CopyPage(uint8_t page, uint8_t dest_index)
         temp_cmds_per_page.push_back(std::move(cmd_types));
     }
     m_Commands.insert(m_Commands.begin() + dest_index, std::move(temp_cmds_per_page));
-    m_CommandPageNames.insert(m_CommandPageNames.begin() + dest_index, m_CommandPageNames[page]);
-    m_CommandPageIcons.insert(m_CommandPageIcons.begin() + dest_index, m_CommandPageIcons[page]);
+    m_CommandPageNames.insert(m_CommandPageNames.begin() + dest_index, m_CommandPageNames[page_index]);
+    m_CommandPageIcons.insert(m_CommandPageIcons.begin() + dest_index, m_CommandPageIcons[page_index]);
 }
 
-void CmdExecutor::DeletePage(uint8_t page)
+void CmdExecutor::DeletePage(uint8_t page_index)
 {
-    m_Commands.erase(m_Commands.begin() + page);
-    m_CommandPageNames.erase(m_CommandPageNames.begin() + page);
-    m_CommandPageIcons.erase(m_CommandPageIcons.begin() + page);
+    if(!IsPage(m_Commands, page_index))
+        return;
+
+    m_Commands.erase(m_Commands.begin() + page_index);
+    m_CommandPageNames.erase(m_CommandPageNames.begin() + page_index);
+    m_CommandPageIcons.erase(m_CommandPageIcons.begin() + page_index);
 }
 
 bool CmdExecutor::ReloadCommandsFromFile(const char* path)
@@ -530,55 +591,3 @@ CommandPageIcons& CmdExecutor::GetPageIcons()
     return m_CommandPageIcons;
 }
 
-void CmdExecutor::WriteDefaultCommandsFile()
-{
-    std::string_view file_content = R"xml(<Commands>
-  <Pages>2</Pages>
-  <Page_1 name="Board">
-    <Columns>4</Columns>
-    <Col_1>
-      <Cmd>
-        <Name>Directory</Name>
-        <Execute>cd C:\ &amp; dir &amp; ping 127.0.0.1 -n [({PARAM:3})] > nul</Execute>
-        <Color>0xFF0000</Color>
-        <BackgroundColor>green</BackgroundColor>
-        <Bold>true</Bold>
-        <Scale>2.0</Scale>
-      </Cmd>
-      <Cmd>
-        <Name>Set date</Name>
-        <Execute>cd C:\ &amp; dir &amp; ping 127.0.0.1 -n 3 > nul</Execute>
-        <Color>0xFF0000</Color>
-        <BackgroundColor>green</BackgroundColor>
-        <Bold>true</Bold>
-        <Scale>2.0</Scale>
-      </Cmd>
-      <Cmd>cd ..</Cmd>
-      <Separator>4</Separator>
-      <Cmd>cd2 ..</Cmd>
-    </Col_1>
-    <Col_2>
-      <Cmd>dir C:</Cmd>
-      <Cmd>cd ../..</Cmd>
-    </Col_2>
-  </Page_1>
-  <Page_2 name="Linux VM">
-    <Columns>2</Columns>
-    <Col_1>
-      <Cmd>
-        <Name>Print directory</Name>
-        <Execute>cd C:\ &amp; dir &amp; ping 127.0.0.1 -n 3 > nul</Execute>
-        <Color>0xFF0000</Color>
-        <BackgroundColor>green</BackgroundColor>
-        <Bold>true</Bold>
-        <Scale>2.0</Scale>
-      </Cmd>
-    </Col_1>
-  </Page_2>
-</Commands>)xml";
-    std::ofstream out(COMMAND_FILE_PATH, std::ofstream::binary);
-    if(out)
-        out.write(file_content.data(), static_cast<std::streamsize>(file_content.size()));
-    else
-        LOG(LogLevel::Error, "Failed to write default commands file!");
-}

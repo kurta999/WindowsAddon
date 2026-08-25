@@ -8,6 +8,7 @@
 #include <optional>
 #include <utility>
 #include <vector>
+#include "ModbusTypeTraits.hpp"
 
 struct ModbusRegisterRange { size_t offset = 0; size_t count = 0; };
 
@@ -67,8 +68,8 @@ std::optional<GroupedModbusRegisterReadResult> ReadGroupedModbusRegisters(
     GroupedModbusRegisterReadResult result;
     for(const auto& range : BuildContiguousModbusRegisterRanges(items, branch))
     {
-        if(range.offset > std::numeric_limits<uint16_t>::max() - base_offset ||
-            range.count > std::numeric_limits<uint16_t>::max())
+        if(range.offset > static_cast<size_t>(std::numeric_limits<uint16_t>::max()) - base_offset ||
+            range.count > static_cast<size_t>(std::numeric_limits<uint16_t>::max()))
             return std::nullopt;
         auto registers = read_registers(static_cast<uint16_t>(base_offset + range.offset),
             static_cast<uint16_t>(range.count));
@@ -91,8 +92,8 @@ std::optional<GroupedModbusBitReadResult> ReadGroupedModbusBits(
     GroupedModbusBitReadResult result;
     for(const auto& range : BuildContiguousModbusRegisterRanges(items, branch))
     {
-        if(range.offset > std::numeric_limits<uint16_t>::max() - base_offset ||
-            range.count > std::numeric_limits<uint16_t>::max())
+        if(range.offset > static_cast<size_t>(std::numeric_limits<uint16_t>::max()) - base_offset ||
+            range.count > static_cast<size_t>(std::numeric_limits<uint16_t>::max()))
         {
             ++result.failed_read_count;
             continue;

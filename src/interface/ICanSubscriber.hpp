@@ -1,5 +1,7 @@
 #pragma once
 
+#include <isotp/isotp.h>
+
 #include "ICanObserver.hpp"
 
 #include <algorithm>
@@ -35,7 +37,7 @@ protected:
             observer->OnFrameOnBus(frame_id, data, size);
     }
 
-    void NotifyIsoTpData(uint32_t frame_id, uint8_t* data, uint16_t size) const
+    void NotifyIsoTpData(uint32_t frame_id, const uint8_t* data, uint16_t size) const
     {
         for(auto* observer : ObserverSnapshot())
             observer->OnIsoTpDataReceived(frame_id, data, size);
