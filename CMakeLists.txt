@@ -392,46 +392,30 @@ if(WIN32)
     )
 endif()
 
-find_package(Git QUIET)
-set(WINDOWSADDON_COMMIT_TAG "${PROJECT_VERSION}")
-set(WINDOWSADDON_COMMIT_ID "unknown")
-set(WINDOWSADDON_COMMIT_DIRTY "")
-if(Git_FOUND)
-    execute_process(
-        COMMAND "${GIT_EXECUTABLE}" describe --tags --abbrev=0
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        OUTPUT_VARIABLE WINDOWSADDON_COMMIT_TAG
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
-    )
-    execute_process(
-        COMMAND "${GIT_EXECUTABLE}" rev-parse --short HEAD
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        OUTPUT_VARIABLE WINDOWSADDON_COMMIT_ID
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
-    )
-    execute_process(
-        COMMAND "${GIT_EXECUTABLE}" diff --shortstat
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        OUTPUT_VARIABLE WINDOWSADDON_COMMIT_DIRTY
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
-    )
-endif()
-if(NOT WINDOWSADDON_COMMIT_TAG)
-    set(WINDOWSADDON_COMMIT_TAG "${PROJECT_VERSION}")
-endif()
-if(NOT WINDOWSADDON_COMMIT_ID)
-    set(WINDOWSADDON_COMMIT_ID "unknown")
-endif()
-
 set(WINDOWSADDON_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${WINDOWSADDON_GENERATED_DIR}")
-configure_file(
-    cmake/commitid.h.in
-    "${WINDOWSADDON_GENERATED_DIR}/commitid.h"
-    @ONLY
+
+# commitid.h is regenerated on every build, not at configure time: the old
+# execute_process block froze the id at whatever HEAD was when CMake last
+# ran, so incremental builds carried a stale commit id until the next
+# reconfigure. The script only rewrites the header when its content changes,
+# so ordinary rebuilds recompile nothing.
+set(WINDOWSADDON_COMMITID_ARGS
+    -DCOMMITID_TEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/commitid.h.in
+    -DCOMMITID_OUTPUT=${WINDOWSADDON_GENERATED_DIR}/commitid.h
+    -DCOMMITID_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+    -DCOMMITID_FALLBACK_TAG=${PROJECT_VERSION}
+    -DCOMMITID_PREFIX=WINDOWSADDON
+)
+# Once at configure time, so the header exists before the first build...
+execute_process(COMMAND "${CMAKE_COMMAND}" ${WINDOWSADDON_COMMITID_ARGS}
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateCommitId.cmake")
+# ...and again before every build of the targets that include it.
+add_custom_target(windowsaddon_commitid
+    COMMAND "${CMAKE_COMMAND}" ${WINDOWSADDON_COMMITID_ARGS}
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateCommitId.cmake"
+    COMMENT "Refreshing commitid.h"
+    VERBATIM
 )
 
 add_library(windowsaddon_gui STATIC ${WINDOWSADDON_GUI_SOURCES})
@@ -440,12 +424,16 @@ add_executable(WindowsAddon WIN32 ${WINDOWSADDON_SOURCES})
 
 set(WINDOWSADDON_APP_TARGETS WindowsAddon windowsaddon_gui)
 foreach(target IN LISTS WINDOWSADDON_APP_TARGETS)
+    add_dependencies(${target} windowsaddon_commitid)
     target_precompile_headers(${target} PRIVATE src/pch.hpp)
+    # The generated dir sits before src/: the MSBuild pre-build event writes
+    # its own commitid.h into src/, and with src/ first that stale copy
+    # silently shadowed the one this build just generated.
     target_include_directories(${target} PRIVATE
+        "${WINDOWSADDON_GENERATED_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/libs"
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/interface"
-        "${WINDOWSADDON_GENERATED_DIR}"
     )
     target_compile_definitions(${target} PRIVATE
         WINDOWSADDON_CMAKE_BUILD
