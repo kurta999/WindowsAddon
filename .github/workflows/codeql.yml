@@ -26,12 +26,12 @@ jobs:
       VCPKG_DISABLE_METRICS: 1
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Check out pinned vcpkg
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: microsoft/vcpkg
           ref: 89dd0f4d241136b843fb55813b2f0fa6448c204d
