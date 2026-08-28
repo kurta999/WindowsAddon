@@ -145,7 +145,7 @@ TEST_CASE(ModbusRegisterEditorReflowsOnlyTheSelectedContiguousGroup)
 TEST_CASE(ModbusScalingFeedsConditionalColors)
 {
     auto item = Register(0);
-    item->m_Value = 500;
+    item->m_Value.SetInteger(500);
     item->m_ValueScaling = { true, 0, 0, 1000, 100, 1 };
     item->m_ConditionalColors[0].comparison = ModbusConditionalColorComparison::GreaterThanOrEqualTo;
     item->m_ConditionalColors[0].value = 50;

@@ -2,6 +2,7 @@
 
 #include "SettingsIniDocument.hpp"
 
+#include <filesystem>
 #include <string>
 
 TEST_CASE(SettingsIniDocumentExcludesComplexEditors)
@@ -62,3 +63,35 @@ TEST_CASE(SettingsIniDocumentAcceptsEmptyValuesAndInlineSemicolonComments)
     EXPECT_EQ(document.Render(),
         std::string("[COM_Backend]\r\nRemoteTcpIp =   host.example; optional destination\r\n"));
 }
+TEST_CASE(SettingsIniDocumentSurvivesAFileRoundTrip)
+{
+    /* The temp-write-then-atomic-replace lived inside the settings dialog,
+       where a wxDialog owned the file-durability rule and nothing could test
+       it. It is the document's job now. */
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "windowshelper-inidoc-test.ini";
+    const std::filesystem::path temp = path.string() + ".tmp";
+    std::filesystem::remove(path);
+
+    SettingsIniDocument original;
+    std::string error;
+    EXPECT_TRUE(original.Parse("[Section]\n# a comment\nKey = 1\n", error));
+    EXPECT_TRUE(original.SaveToFileAtomically(path, error));
+
+    SettingsIniDocument reloaded;
+    EXPECT_TRUE(reloaded.LoadFromFile(path, error));
+    EXPECT_TRUE(reloaded.Render() == original.Render());
+
+    /* The temporary must not survive a successful replace. */
+    EXPECT_TRUE(!std::filesystem::exists(temp));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE(SettingsIniDocumentReportsAnUnreadableFile)
+{
+    SettingsIniDocument document;
+    std::string error;
+    EXPECT_TRUE(!document.LoadFromFile("does-not-exist-anywhere.ini", error));
+    EXPECT_TRUE(!error.empty());
+}
+

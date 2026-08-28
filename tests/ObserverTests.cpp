@@ -24,7 +24,7 @@ public:
         ++frame_count;
     }
 
-    void OnIsoTpDataReceived(std::uint32_t, std::uint8_t*, std::uint16_t) override {}
+    void OnIsoTpDataReceived(std::uint32_t, const std::uint8_t*, std::uint16_t) override {}
 
     int frame_count = 0;
 };
@@ -40,7 +40,7 @@ public:
         m_Publisher.UnregisterObserver(this);
     }
 
-    void OnIsoTpDataReceived(std::uint32_t, std::uint8_t*, std::uint16_t) override {}
+    void OnIsoTpDataReceived(std::uint32_t, const std::uint8_t*, std::uint16_t) override {}
 
     int frame_count = 0;
 

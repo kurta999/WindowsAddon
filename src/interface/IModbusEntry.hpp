@@ -144,16 +144,16 @@ struct ModbusItemPresentation
     float m_scale{ 1.0f };
 
     // !\brief Font face
-    std::string m_font_face;
+    std::string m_font_face{};
 
     // !\brief Decimal places shown for a floating point register
     uint8_t m_FloatPrecision = 3;
 
     // !\brief Up to two value-dependent colour rules
-    std::array<ModbusConditionalColorRule, 2> m_ConditionalColors;
+    std::array<ModbusConditionalColorRule, 2> m_ConditionalColors{};
 
     // !\brief Two-point linear scaling applied before display
-    ModbusValueScaling m_ValueScaling;
+    ModbusValueScaling m_ValueScaling{};
 };
 
 // !\brief The value a Modbus register currently holds.

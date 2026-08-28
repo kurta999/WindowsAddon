@@ -142,3 +142,25 @@ TEST_CASE(TimeTrackerFailedTransactionRollsBackAllRows)
     EXPECT_EQ(rows.size(), size_t{1});
     EXPECT_EQ(rows[0].comment, std::string("original"));
 }
+TEST_CASE(TimeTrackerContinuationNameAppendsTheSuffix)
+{
+    /* The name a session carries after the midnight rollover splits it. The
+       rule lived inline in the rollover branch of the panel's minute tick. */
+    EXPECT_TRUE(time_tracker_logic::ContinuationName("support") == "support #2");
+    EXPECT_TRUE(time_tracker_logic::ContinuationName("") == " #2");
+}
+
+TEST_CASE(TimeTrackerTotalWorkLabelKeepsFractionalHours)
+{
+    /* Two independent computations of this label existed: one truncated to
+       whole hours, so 59 minutes of work paid nothing until the next full
+       hour; the other kept fractions. Fractions won. */
+    EXPECT_TRUE(time_tracker_logic::FormatTotalWorkLabel(3600, 10) == "1.00 / 10.00");
+    EXPECT_TRUE(time_tracker_logic::FormatTotalWorkLabel(5400, 10) == "1.50 / 15.00");
+    EXPECT_TRUE(time_tracker_logic::FormatTotalWorkLabel(59 * 60, 10) == "0.98 / 9.83");
+
+    /* Negative time reads as zero, which the truncating copy clamped too. */
+    EXPECT_TRUE(time_tracker_logic::FormatTotalWorkLabel(-3600, 10) == "0.00 / 0.00");
+    EXPECT_TRUE(time_tracker_logic::FormatTotalWorkLabel(0, 10) == "0.00 / 0.00");
+}
+
