@@ -119,7 +119,9 @@ add_subdirectory(libs)
 if(BUILD_TESTING OR WINDOWSADDON_BUILD_APP OR WINDOWSADDON_BUILD_FUZZERS)
     add_library(windowsaddon_protocols STATIC
         src/CanCodecs.cpp
+        src/MacroKeyFrame.cpp
         src/ModbusClient.cpp
+        src/ModbusItemRender.cpp
         src/SensorDataParser.cpp
         src/TcpMessageParser.cpp
     )
@@ -132,7 +134,10 @@ if(BUILD_TESTING OR WINDOWSADDON_BUILD_APP OR WINDOWSADDON_BUILD_FUZZERS)
         src/automation/ScriptCommandResolver.cpp
         src/automation/ScriptLaunchService.cpp
         src/DirectoryBackupCore.cpp
+        src/DirectoryUsage.cpp
         src/SettingsIniDocument.cpp
+        src/CryptoPriceParser.cpp
+        src/SettingsSchema.cpp
         src/StringToCEscaper.cpp
         src/TimeTrackerLogic.cpp
     )
@@ -291,14 +296,12 @@ set(WINDOWSADDON_SOURCES
     src/CmdExecutor.cpp
     src/CorsairHid.cpp
     src/CryptoPrice.cpp
-    src/CryptoPriceParser.cpp
     src/CustomMacro.cpp
     src/DatabaseImpl.cpp
     src/DatabaseLogic.cpp
     src/DefaultCommandsFile.cpp
     src/DidHandler.cpp
     src/DirectoryBackup.cpp
-    src/DirectoryUsage.cpp
     src/ExceptionHandler.cpp
     src/GraphGenerator.cpp
     src/HotkeyRegistry.cpp
@@ -307,12 +310,10 @@ set(WINDOWSADDON_SOURCES
     src/KeyScanCodes.cpp
     src/Logger.cpp
     src/MacroActions.cpp
-    src/MacroKeyFrame.cpp
     src/MacroSettings.cpp
     src/MeasurementRepository.cpp
     src/ModbusFrameLog.cpp
     src/ModbusHandler.cpp
-    src/ModbusItemRender.cpp
     src/ModbusJsonPersistence.cpp
     src/ModbusMasterSerialPort.cpp
     src/ModbusValueIo.cpp
@@ -327,7 +328,6 @@ set(WINDOWSADDON_SOURCES
     src/Server.cpp
     src/Session.cpp
     src/Settings.cpp
-    src/SettingsSchema.cpp
     src/TcpMessageExecutor.cpp
     src/TerminalHotkey.cpp
     src/Utils.cpp
