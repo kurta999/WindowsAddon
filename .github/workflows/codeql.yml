@@ -20,7 +20,7 @@ concurrency:
 jobs:
   analyze:
     name: C/C++ analysis
-    runs-on: windows-latest
+    runs-on: windows-2025-vs2026
     env:
       VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}\vcpkg-binary-cache,readwrite
       VCPKG_DISABLE_METRICS: 1
@@ -54,7 +54,7 @@ jobs:
         shell: pwsh
         run: >-
           cmake -S . -B build/codeql
-          -G "Visual Studio 17 2022"
+          -G "Visual Studio 18 2026"
           -A x64
           -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
           -DVCPKG_TARGET_TRIPLET=x64-windows
