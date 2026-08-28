@@ -32,10 +32,16 @@ jobs:
             compiler_args: -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
           - name: Ubuntu Clang
             os: ubuntu-latest
-            compiler_args: -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+            compiler_args: -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19
     steps:
       - name: Check out source
         uses: actions/checkout@v6
+
+      # std::expected requires __cpp_concepts >= 202002L, which libstdc++ only
+      # exposes to Clang 19+ (Clang 18 still reports the pre-DR value 201907L).
+      - name: Install Clang 19
+        if: matrix.name == 'Ubuntu Clang'
+        run: sudo apt-get update && sudo apt-get install -y clang-19
 
       - name: Configure dependency-free core
         run: >-
@@ -59,12 +65,17 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
 
+      # std::expected requires __cpp_concepts >= 202002L, which libstdc++ only
+      # exposes to Clang 19+ (Clang 18 still reports the pre-DR value 201907L).
+      - name: Install Clang 19
+        run: sudo apt-get update && sudo apt-get install -y clang-19
+
       - name: Configure sanitizers
         run: >-
           cmake -S . -B build/sanitizers
           -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_C_COMPILER=clang
-          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_C_COMPILER=clang-19
+          -DCMAKE_CXX_COMPILER=clang++-19
           -DWINDOWSADDON_BUILD_APP=OFF
           -DWINDOWSADDON_BUILD_EXTERNAL_TESTS=OFF
           -DWINDOWSADDON_WARNINGS_AS_ERRORS=ON
@@ -87,12 +98,17 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
 
+      # std::expected requires __cpp_concepts >= 202002L, which libstdc++ only
+      # exposes to Clang 19+ (Clang 18 still reports the pre-DR value 201907L).
+      - name: Install Clang 19
+        run: sudo apt-get update && sudo apt-get install -y clang-19
+
       - name: Configure fuzzers
         run: >-
           cmake -S . -B build/fuzz
           -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_C_COMPILER=clang
-          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_C_COMPILER=clang-19
+          -DCMAKE_CXX_COMPILER=clang++-19
           -DWINDOWSADDON_BUILD_APP=OFF
           -DWINDOWSADDON_BUILD_EXTERNAL_TESTS=OFF
           -DWINDOWSADDON_BUILD_FUZZERS=ON
