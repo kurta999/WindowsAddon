@@ -93,8 +93,8 @@ public:
     CanTxEntry(uint32_t id_, uint8_t* data_, uint8_t data_len_, uint32_t period_, uint8_t log_level_, uint8_t favourite_level_,
         const std::string& comment_, std::optional<uint32_t> color_, std::optional<uint32_t> bg_color_,
         std::optional<bool> is_bold_, std::optional<float> scale = {}, std::optional<std::string> font_face = {}) :
-        id(id_), CanEntryBase(data_, data_len_), CanEntryTransmitInfo(period_, log_level_, favourite_level_),
-        comment(comment_), m_color(color_), m_bg_color(bg_color_)
+        CanEntryBase(data_, data_len_), CanEntryTransmitInfo(period_, log_level_, favourite_level_),
+        id(id_), comment(comment_), m_color(color_), m_bg_color(bg_color_)
     {
         if(is_bold_.has_value()) m_is_bold = *is_bold_;
         if(scale.has_value())    m_scale    = *scale;
