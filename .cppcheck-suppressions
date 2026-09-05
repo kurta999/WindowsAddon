@@ -1,0 +1,71 @@
+# Cppcheck suppressions for WindowsAddon.
+# Every entry here is a checked-and-rejected finding, not a "fix later" list.
+# Real findings belong in the code, not in this file. Prefer an inline
+# // cppcheck-suppress <id> comment when a suppression is about one line.
+# (Note: cppcheck rejects a line holding only "#", so keep comments non-empty.)
+
+# --- Analysis-environment noise -------------------------------------------
+# The CI job deliberately does not install wxWidgets, Boost, fmt, SQLite or
+# hidapi: cppcheck does not need them to reason about our own code, and
+# building them would dominate the job.
+missingInclude
+missingIncludeSystem
+
+# Informational footer, not a finding.
+checkersReport
+
+# Needs a whole-program view cppcheck cannot get here; every wx event handler
+# and every interface method reached only through a base pointer is reported.
+unusedFunction
+
+# Style preference. The codebase deliberately keeps some explicit loops.
+useStlAlgorithm
+
+# --- wxString::Format is not printf ---------------------------------------
+# wxWidgets implements Format() as a type-safe vararg template: wxArgNormalizer
+# converts std::string, wxString and the integer types at the call site, so
+# these are never the undefined behaviour cppcheck reports for a C vararg.
+# cppcheck's wxwidgets.cfg still models Format() as a printf-family function.
+# The project has exactly one real printf-family call (the snprintf in
+# src/Logger.hpp), so nothing is lost by silencing the family here.
+invalidPrintfArgType_s
+invalidPrintfArgType_sint
+invalidPrintfArgType_uint
+wrongPrintfScanfArgNum
+
+# --- Verified false positives ---------------------------------------------
+# DirectoryBackup::FileSystem() returns `m_FileSystem ? *m_FileSystem : standard`.
+# [expr.cond] converts the StandardBackupFileSystem lvalue to an
+# IBackupFileSystem lvalue by direct reference binding, so no temporary is
+# materialised and nothing is sliced; verified against GCC and Clang.
+returnTempReference:src/DirectoryBackup.cpp
+
+# The "Test CrashHandler" button writes through a null pointer on purpose, to
+# exercise the crash handler.
+nullPointer:src/gui/DebugPanel.cpp
+
+# wx child windows are owned and destroyed by their parent, so the raw
+# pointers these classes hold are not owned resources needing rule-of-three.
+noCopyConstructor:src/gui/LogRecordingBar.cpp
+noOperatorEq:src/gui/LogRecordingBar.cpp
+
+# Reported only in the non-_WIN32 configuration, where the variable really is
+# the literal `true`; on Windows it is a HWND that can be null.
+knownConditionTrueFalse:src/gui/MainFrame.cpp
+
+# --- Cppcheck parser limitations ------------------------------------------
+# EVT_HOTKEY is not in cppcheck's wxwidgets.cfg.
+unknownMacro:src/gui/MainFrame.cpp
+
+# `if constexpr` in the narrowing-check branch trips the 2.x AST builder; the
+# file is valid C++23 and compiles on all three toolchains.
+internalAstError:src/utils/NumberParsing.hpp
+
+# --- Vendored third-party code --------------------------------------------
+# libs/ is carried verbatim from upstream; it is not ours to restyle.
+# enumser.cpp is stored in its original Windows codepage, which the
+# preprocessor mis-slices.
+*:libs/bitfield/*
+*:libs/enumser/*
+*:libs/isotp/*
+*:libs/sha256/*
