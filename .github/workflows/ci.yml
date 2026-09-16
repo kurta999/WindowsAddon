@@ -35,7 +35,7 @@ jobs:
             compiler_args: -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       # std::expected requires __cpp_concepts >= 202002L, which libstdc++ only
       # exposes to Clang 19+ (Clang 18 still reports the pre-DR value 201907L).
@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       # std::expected requires __cpp_concepts >= 202002L, which libstdc++ only
       # exposes to Clang 19+ (Clang 18 still reports the pre-DR value 201907L).
@@ -96,7 +96,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       # std::expected requires __cpp_concepts >= 202002L, which libstdc++ only
       # exposes to Clang 19+ (Clang 18 still reports the pre-DR value 201907L).
@@ -134,7 +134,7 @@ jobs:
       id-token: write
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Configure coverage
         run: >-
@@ -191,12 +191,12 @@ jobs:
       VCPKG_DISABLE_METRICS: 1
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Check out pinned vcpkg
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: microsoft/vcpkg
           ref: 89dd0f4d241136b843fb55813b2f0fa6448c204d
