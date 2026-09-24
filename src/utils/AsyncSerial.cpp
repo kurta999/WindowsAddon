@@ -81,8 +81,10 @@ public:
     std::mutex writeQueueMutex; ///< Mutex for access to writeQueue
     char readBuffer[AsyncSerial::readBufferSize]; ///< data being read
 
-    /// Read complete callback
+    /// Read complete callback. Set and cleared from the owner's thread while
+    /// the io thread reads it, so every access is under callbackMutex.
     std::function<void (const char*, size_t)> callback;
+    std::mutex callbackMutex;
 };
 
 namespace
@@ -140,6 +142,12 @@ void AsyncSerial::StartIoThread()
     /* The tail both open paths ended with, verbatim: give the io_context its
        first piece of work, run it on the background thread, and only then
        declare the port open and error-free. */
+
+    /* After a read error the previous run() returned with the context
+       stopped; without restart() the new run() returns at once and the port
+       reports open while neither reads nor writes happen. The TCP path
+       already restarted; the serial path did not. */
+    pimpl->io.restart();
     boost::asio::post(pimpl->io, [this]() {
         doRead();
         });
@@ -285,6 +293,7 @@ void AsyncSerial::close()
             });
         JoinBackgroundThread(pimpl->backgroundThread);
         pimpl->io.restart();
+        ResetWriteState();
         if(!pimpl->is_tcp && errorStatus())
         {
             throw(boost::system::system_error(boost::system::error_code(),
@@ -409,10 +418,26 @@ void AsyncSerial::readEnd(const boost::system::error_code& error,
             setErrorStatus(true);
         }
     } else {
-        if(pimpl->callback) pimpl->callback(pimpl->readBuffer,
-                bytes_transferred);
+        std::function<void (const char*, size_t)> callback;
+        {
+            lock_guard<mutex> l(pimpl->callbackMutex);
+            callback = pimpl->callback;
+        }
+        if(callback) callback(pimpl->readBuffer, bytes_transferred);
         doRead();
     }
+}
+
+void AsyncSerial::ResetWriteState()
+{
+    /* writeBuffer doubles as the "write in progress" flag doWrite checks. It
+       was only ever reset on a successful write, so a close during a write
+       left it set and every later write() became a no-op while the queue
+       grew without bound. */
+    lock_guard<mutex> l(pimpl->writeQueueMutex);
+    pimpl->writeBuffer.reset();
+    pimpl->writeBufferSize=0;
+    pimpl->writeQueue.clear();
 }
 
 void AsyncSerial::PumpNextWrite()
@@ -471,6 +496,7 @@ void AsyncSerial::writeEnd(const boost::system::error_code& error)
         }
         PumpNextWrite();
     } else {
+        ResetWriteState();
         setErrorStatus(true);
         doClose();
         pimpl->open = false;
@@ -505,13 +531,19 @@ void AsyncSerial::setErrorStatus(bool e)
 
 void AsyncSerial::setReadCallback(const std::function<void (const char*, size_t)>& callback)
 {
+    lock_guard<mutex> l(pimpl->callbackMutex);
     pimpl->callback=callback;
 }
 
 void AsyncSerial::clearReadCallback()
 {
     std::function<void (const char*, size_t)> empty;
-    pimpl->callback.swap(empty);
+    {
+        lock_guard<mutex> l(pimpl->callbackMutex);
+        pimpl->callback.swap(empty);
+    }
+    /* `empty` now owns the old callable and destroys it here, outside the
+       lock, in case its destructor is not trivial. */
 }
 
 //

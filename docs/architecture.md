@@ -5,11 +5,11 @@ testable libraries. The CMake build currently exposes these production targets:
 
 | Target | Responsibility | GUI-free |
 | --- | --- | --- |
-| `WINDOWSADDON_protocols` | CAN codecs, ISO-TP support, Modbus client, sensor parsing | Yes |
-| `WINDOWSADDON_persistence` | SQLite-backed repositories and storage | Yes |
-| `WINDOWSADDON_automation` | Backup core, script launch policy, string/macro logic | Yes |
-| `WINDOWSADDON_platform` | Standard filesystem, process, and clock adapters | Yes |
-| `WINDOWSADDON_gui` | wxWidgets panels, dialogs, frames, and tray UI | No |
+| `windowsaddon_protocols` | CAN codecs, ISO-TP support, Modbus client, sensor parsing | Yes |
+| `windowsaddon_persistence` | SQLite-backed repositories and storage | Yes |
+| `windowsaddon_automation` | Backup core, script launch policy, string/macro logic | Yes |
+| `windowsaddon_platform` | Standard filesystem, process, and clock adapters | Yes |
+| `windowsaddon_gui` | wxWidgets panels, dialogs, frames, and tray UI | No |
 
 The `WindowsAddon` executable is the composition root. It constructs the real
 platform adapters and injects them into application services. Older services
@@ -19,11 +19,11 @@ libraries.
 
 ```mermaid
 flowchart TD
-    app["WindowsAddon executable<br/>composition root"] --> gui["WINDOWSADDON_gui<br/>wxWidgets adapters"]
-    app --> protocols["WINDOWSADDON_protocols<br/>CAN, ISO-TP, Modbus, TCP, sensors"]
-    app --> persistence["WINDOWSADDON_persistence<br/>SQLite repositories"]
-    app --> automation["WINDOWSADDON_automation<br/>backup, scripts, macros"]
-    app --> platform["WINDOWSADDON_platform<br/>filesystem, process, clock"]
+    app["WindowsAddon executable<br/>composition root"] --> gui["windowsaddon_gui<br/>wxWidgets adapters"]
+    app --> protocols["windowsaddon_protocols<br/>CAN, ISO-TP, Modbus, TCP, sensors"]
+    app --> persistence["windowsaddon_persistence<br/>SQLite repositories"]
+    app --> automation["windowsaddon_automation<br/>backup, scripts, macros"]
+    app --> platform["windowsaddon_platform<br/>filesystem, process, clock"]
 
     gui --> protocols
     gui --> persistence
@@ -146,7 +146,7 @@ copies of their implementation.
 | CAN protocol strategies called `CanSerialPort::Get()` | Devices emit decoded frames through the injected callback; construction moved to `ICanDeviceFactory`. |
 | `GraphGenerator` wrote directly into `Sensors` on a background thread | The generator publishes one owning `GraphData` result, consumed by `Sensors` under its state lock. |
 | Observer/helper pointers could outlive wx panels | Panels explicitly detach; helper calls and detach operations share a lifetime mutex; singleton teardown uses non-creating `TryGet()`. |
-| Sensor, CAN, and Modbus workers updated wx controls directly | GUI adapters marshal callbacks with `CallAfter`; Modbus polling publishes through `IModbusHelper` and no longer receives panel pointers. |
+| Sensor, CAN, and Modbus workers updated wx controls directly | GUI adapters marshal callbacks with `CallAfter`; Modbus polling publishes through `IModbusEntry` and `IModbusLogView` and no longer receives panel pointers. |
 | UI notifications used `deque<vector<any>>` | A closed `AppNotification` variant makes every payload compile-time checked and queue mutation private. |
 | Domain models stored `wxSize` and widget pointers | `LogicalSize`, `TextStyle`, and `DataEntryPresentation` are GUI-free; wx conversion happens in the panel adapter. |
 | Server and backup state was publicly mutable across threads | Both components now expose synchronized commands and value snapshots. |
@@ -169,5 +169,5 @@ byte explicitly, as the STM32 and Modbus codecs do.
 
 When changing a legacy service, move its non-GUI behavior into the matching
 headless target first, inject the smallest required interface, and keep only the
-wxWidgets adapter in `WINDOWSADDON_gui`. The executable should contain wiring,
+wxWidgets adapter in `windowsaddon_gui`. The executable should contain wiring,
 not new business logic.

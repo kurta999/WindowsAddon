@@ -1,0 +1,91 @@
+name: Cppcheck
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cppcheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cppcheck:
+    name: Static analysis / Cppcheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      # Cppcheck reasons about our own sources only, so none of the project
+      # dependencies (wxWidgets, Boost, fmt, SQLite, hidapi) are installed.
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+
+      # --library=wxwidgets teaches cppcheck the event-table macros; without it
+      # the GUI sources are silently skipped as unparsable.
+      - name: Run cppcheck
+        run: >-
+          cppcheck
+          --std=c++23
+          --language=c++
+          --enable=warning,style,performance,portability
+          --inline-suppr
+          --suppressions-list=.cppcheck-suppressions
+          --library=wxwidgets
+          --library=boost
+          -D_WIN32
+          -DWIN32_LEAN_AND_MEAN
+          -DNOMINMAX
+          -I src
+          -I src/interface
+          -I libs
+          --template='{file}:{line}: [{severity}] [{id}] {message}'
+          --output-file=cppcheck-report.txt
+          -j "$(nproc)"
+          src libs tests fuzz
+
+      # Only error-severity findings fail the job; everything else is advisory.
+      - name: Summarize findings
+        run: |
+          count() { grep -c "\[$1\]" cppcheck-report.txt || true; }
+          errors=$(count error)
+          warnings=$(count warning)
+          style=$(count style)
+          performance=$(count performance)
+          portability=$(count portability)
+          {
+            echo "## Cppcheck"
+            echo
+            echo "| Severity | Count |"
+            echo "| --- | --- |"
+            echo "| error | $errors |"
+            echo "| warning | $warnings |"
+            echo "| style | $style |"
+            echo "| performance | $performance |"
+            echo "| portability | $portability |"
+            echo
+            if [ "$errors" != "0" ]; then
+              echo '```'
+              grep "\[error\]" cppcheck-report.txt
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$errors" != "0" ]; then
+            echo "cppcheck reported $errors error-severity finding(s):"
+            grep "\[error\]" cppcheck-report.txt
+            exit 1
+          fi
+
+      - name: Upload full report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cppcheck-report
+          path: cppcheck-report.txt
+          if-no-files-found: warn

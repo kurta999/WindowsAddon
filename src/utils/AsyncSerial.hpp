@@ -157,6 +157,10 @@ private:
 
     void doWrite();
 
+    // !rief Drop the in-flight write buffer and the queue behind it, so the
+    // next write after a close or a failed write can start again.
+    void ResetWriteState();
+
     /**
      * Callback called at the end of an asynchronuous write operation,
      * if there is more data to write, restarts a new write operation.

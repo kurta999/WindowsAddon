@@ -191,9 +191,9 @@ void CanUdsRawDialog::HandleFrameSending()
     m_LastDelayBetweenFrames = GetDelayBetweenFrames();
     m_LastRecvWaitingTime = GetWaitingTimeForFrames();
 
-    can_handler->ClearUdsRawFrames();  /* Clear every older request */
-
     uint32_t old_recv_frame_id = can_handler->GetIsoTpResponseFrameId();
+    can_handler->SetIsoTpResponseFrame(m_LastUdsReceiverId);
+    can_handler->ClearUdsRawFrames();  /* Clear every older request */
 
     /* The syntax is uds_raw::Parse, where it has tests; this loop only sends
        and sleeps - and it does still sleep on purpose: blocking between

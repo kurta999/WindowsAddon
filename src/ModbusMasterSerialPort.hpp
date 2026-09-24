@@ -154,11 +154,18 @@ private:
     std::mutex m_RequestMutex;
     std::mutex m_RecvMutex;
     std::condition_variable_any m_RecvCv;
+    /* Written by the IO thread under m_RecvMutex. */
     std::vector<uint8_t> m_RawRecvData;
     std::vector<uint8_t> m_RecvData;
+    bool m_LastDataCrcOk = true;
+
+    /* The request thread's own copy of the last response, moved out of
+       m_RecvData under the lock by WaitForResponse and parsed without it. */
+    std::vector<uint8_t> m_Response;
+    bool m_ResponseCrcOk = true;
+
     std::vector<uint8_t> m_SentData;
     std::vector<uint8_t> m_LastSentData;
-    bool m_LastDataCrcOk = true;
     uint16_t sequence_id = 0;
     size_t timeout_packets = 0;
     IModbusRecorder* m_recorder = nullptr;

@@ -84,3 +84,9 @@ UnitTests/x64
 
 #Special
 tools/
+
+# Legacy MSBuild unit-test project (not referenced by the solution)
+UnitTests/
+
+# Compiled resource output
+*.res

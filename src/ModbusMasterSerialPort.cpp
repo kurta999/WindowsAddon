@@ -6,8 +6,6 @@
 
 using namespace std::chrono_literals;
 
-constexpr uint32_t RX_QUEUE_MAX_SIZE = 1000;
-
 constexpr auto SERIAL_PORT_TIMEOUT           = 100ms;
 constexpr auto SERIAL_PORT_EXCEPTION_TIMEOUT = 1000ms;
 
@@ -60,6 +58,12 @@ ModbusMasterSerialPort::ModbusMasterSerialPort() = default;
 
 ModbusMasterSerialPort::~ModbusMasterSerialPort()
 {
+    /* The transport worker and its IO thread deliver into OnUartDataReceived
+       and OnDataSent. Join them while m_RecvMutex, the buffers and the
+       condition variable still exist; the base-class destructor runs after
+       they are gone. */
+    DeInitInternal();
+
     std::unique_lock lock{ m_RecvMutex };
     m_RecvData.push_back(10);
     m_RecvCv.notify_all();
@@ -79,8 +83,21 @@ size_t ModbusMasterSerialPort::TrimmedLen(size_t raw_len) const
 bool ModbusMasterSerialPort::WaitForResponse()
 {
     std::unique_lock lock{ m_RecvMutex };
-    return m_RecvCv.wait_for(lock, *m_stopToken, std::chrono::milliseconds(m_ResponseTimeout),
+    const bool received = m_RecvCv.wait_for(lock, *m_stopToken, std::chrono::milliseconds(m_ResponseTimeout),
         [this]() { return m_RecvData.size() > 0; });
+
+    /* Taken out of the shared buffer under the lock. The request thread used
+       to parse m_RecvData directly while the IO thread could still assign to
+       it - a response arriving just after the timeout freed the vector under
+       the parser. Everything after this point reads m_Response, which only
+       this thread touches. */
+    if(received)
+    {
+        m_Response = std::move(m_RecvData);
+        m_RecvData.clear();
+        m_ResponseCrcOk = m_LastDataCrcOk;
+    }
+    return received;
 }
 
 ModbusMasterSerialPort::ResponseStatus ModbusMasterSerialPort::NotifyAndWaitForResponse(const std::vector<uint8_t>& vec)
@@ -91,6 +108,8 @@ ModbusMasterSerialPort::ResponseStatus ModbusMasterSerialPort::NotifyAndWaitForR
         m_RecvData.clear();
         m_LastDataCrcOk = true;
     }
+    m_Response.clear();
+    m_ResponseCrcOk = true;
     m_SentData = vec;
     NotifiyMainThread();
 
@@ -101,30 +120,30 @@ ModbusMasterSerialPort::ResponseStatus ModbusMasterSerialPort::NotifyAndWaitForR
     {
         if(IsTcp())
         {
-            m_LastDataCrcOk = m_RecvData.size() >= 6;
-            if(m_LastDataCrcOk)
+            m_ResponseCrcOk = m_Response.size() >= 6;
+            if(m_ResponseCrcOk)
             {
-                const uint16_t length = static_cast<uint16_t>((m_RecvData[4] << 8) | m_RecvData[5]);
-                m_LastDataCrcOk = length == m_RecvData.size() - 6;
+                const uint16_t length = static_cast<uint16_t>((m_Response[4] << 8) | m_Response[5]);
+                m_ResponseCrcOk = length == m_Response.size() - 6;
             }
         }
 
         if (m_recorder && m_recorder->IsRecording())
         {
-            ModbusErrorType error_type = m_LastDataCrcOk ? ModbusErrorType::MB_ERR_OK : ModbusErrorType::MB_ERR_CRC;
-            m_recorder->RecordFrame(MODBUS_LOG_DIR_RX, ExtractFunctionCode(m_RecvData),
-                error_type, m_RecvData.data(), TrimmedLen(m_RecvData.size()));
+            ModbusErrorType error_type = m_ResponseCrcOk ? ModbusErrorType::MB_ERR_OK : ModbusErrorType::MB_ERR_CRC;
+            m_recorder->RecordFrame(MODBUS_LOG_DIR_RX, ExtractFunctionCode(m_Response),
+                error_type, m_Response.data(), TrimmedLen(m_Response.size()));
         }
 
         timeout_packets = 0;
-        if(!m_LastDataCrcOk)
+        if(!m_ResponseCrcOk)
         {
             ret = ResponseStatus::CrcError;
         }
         else
         {
             ret = ResponseStatus::Ok;
-            const uint8_t function_code = ExtractFunctionCode(m_RecvData);
+            const uint8_t function_code = ExtractFunctionCode(m_Response);
             if((function_code & 0x80) != 0)
             {
                 modbusErrorCount[function_code]++;
@@ -190,9 +209,9 @@ std::expected<std::vector<uint8_t>, ModbusError> ModbusMasterSerialPort::ReadCoi
     if(!transaction)
         return std::unexpected(transaction.error());
 
-    const auto parsed = modbus::ParseReadBitsResponse(ToTransport(IsTcp()), m_RecvData, slave_id,
+    const auto parsed = modbus::ParseReadBitsResponse(ToTransport(IsTcp()), m_Response, slave_id,
         FC_ReadCoilStatus, read_count, false, *transaction);
-    m_RecvData.clear();
+    m_Response.clear();
     if(!parsed.Ok())
         return std::unexpected(ToModbusError(parsed.error));
     return parsed.packed_bits;
@@ -211,10 +230,10 @@ std::expected<std::vector<uint8_t>, ModbusError> ModbusMasterSerialPort::ForceSi
     if(!transaction)
         return std::unexpected(transaction.error());
 
-    const auto parsed = modbus::ParseWriteResponse(ToTransport(IsTcp()), m_RecvData, slave_id,
+    const auto parsed = modbus::ParseWriteResponse(ToTransport(IsTcp()), m_Response, slave_id,
         FC_ForceSingleCoil, write_offset, status ? uint16_t{0xFF00} : uint16_t{0}, false,
         *transaction);
-    m_RecvData.clear();
+    m_Response.clear();
     if(!parsed.Ok())
         return std::unexpected(ToModbusError(parsed.error));
     return vec;
@@ -227,9 +246,9 @@ std::expected<std::vector<uint8_t>, ModbusError> ModbusMasterSerialPort::ReadInp
     if(!transaction)
         return std::unexpected(transaction.error());
 
-    const auto parsed = modbus::ParseReadBitsResponse(ToTransport(IsTcp()), m_RecvData, slave_id,
+    const auto parsed = modbus::ParseReadBitsResponse(ToTransport(IsTcp()), m_Response, slave_id,
         FC_ReadInputStatus, read_count, false, *transaction);
-    m_RecvData.clear();
+    m_Response.clear();
     if(!parsed.Ok())
         return std::unexpected(ToModbusError(parsed.error));
     return parsed.packed_bits;
@@ -242,9 +261,9 @@ std::expected<std::vector<uint16_t>, ModbusError> ModbusMasterSerialPort::ReadHo
     if(!transaction)
         return std::unexpected(transaction.error());
 
-    const auto parsed = modbus::ParseReadRegistersResponse(ToTransport(IsTcp()), m_RecvData, slave_id,
+    const auto parsed = modbus::ParseReadRegistersResponse(ToTransport(IsTcp()), m_Response, slave_id,
         FC_ReadHoldingRegister, read_count, false, *transaction);
-    m_RecvData.clear();
+    m_Response.clear();
     if(!parsed.Ok())
         return std::unexpected(ToModbusError(parsed.error));
     return parsed.registers;
@@ -278,9 +297,9 @@ std::expected<std::vector<uint8_t>, ModbusError> ModbusMasterSerialPort::WriteHo
 
     const uint8_t function_code = write_count == 1 ? FC_WriteSingleRegister : FC_WriteMultipleRegister;
     const uint16_t echoed_value = write_count == 1 ? buffer[0] : write_count;
-    const auto parsed = modbus::ParseWriteResponse(ToTransport(IsTcp()), m_RecvData, slave_id,
+    const auto parsed = modbus::ParseWriteResponse(ToTransport(IsTcp()), m_Response, slave_id,
         function_code, write_offset, echoed_value, false, *transaction);
-    m_RecvData.clear();
+    m_Response.clear();
     if(!parsed.Ok())
         return std::unexpected(ToModbusError(parsed.error));
     return vec;
@@ -293,9 +312,9 @@ std::expected<std::vector<uint16_t>, ModbusError> ModbusMasterSerialPort::ReadIn
     if(!transaction)
         return std::unexpected(transaction.error());
 
-    const auto parsed = modbus::ParseReadRegistersResponse(ToTransport(IsTcp()), m_RecvData, slave_id,
+    const auto parsed = modbus::ParseReadRegistersResponse(ToTransport(IsTcp()), m_Response, slave_id,
         FC_ReadInputRegister, read_count, false, *transaction);
-    m_RecvData.clear();
+    m_Response.clear();
     if(!parsed.Ok())
         return std::unexpected(ToModbusError(parsed.error));
     return parsed.registers;
@@ -315,8 +334,8 @@ ModbusCustomCommandResult ModbusMasterSerialPort::SendCustomCommand(const std::v
     const std::scoped_lock request_lock(m_RequestMutex);
     ModbusCustomCommandResult result;
     const auto response = NotifyAndWaitForResponse(frame);
-    result.response = m_RecvData;
-    m_RecvData.clear();
+    result.response = m_Response;
+    m_Response.clear();
     if(response == ResponseStatus::ModbusException)
         result.error = ModbusError::ExceptionResponse;
     else if(response == ResponseStatus::CrcError)
